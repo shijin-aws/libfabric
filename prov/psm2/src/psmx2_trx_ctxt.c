@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2018 Intel Corporation. All rights reserved.
+ * Copyright (c) 2013-2019 Intel Corporation. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -47,30 +47,36 @@ int psmx2_trx_ctxt_cnt = 0;
  */
 
 struct disconnect_args {
-	psm2_ep_t	ep;
-	psm2_epaddr_t	epaddr;
+	struct psmx2_trx_ctxt	*trx_ctxt;
+	psm2_epaddr_t		epaddr;
 };
 
 static void *disconnect_func(void *args)
 {
 	struct disconnect_args *disconn = args;
+	struct psmx2_trx_ctxt *trx_ctxt = disconn->trx_ctxt;
+	struct psmx2_epaddr_context *epaddr_context;
 	psm2_error_t errors;
 
 	FI_INFO(&psmx2_prov, FI_LOG_CORE,
-		"psm2_ep: %p, epaddr: %p\n", disconn->ep, disconn->epaddr);
+		"psm2_ep: %p, epaddr: %p\n", trx_ctxt->psm2_ep, disconn->epaddr);
 
-	psm2_ep_disconnect2(disconn->ep, 1, &disconn->epaddr, NULL,
+	trx_ctxt->domain->peer_lock_fn(&trx_ctxt->peer_lock, 2);
+	dlist_remove_first_match(&trx_ctxt->peer_list,
+				 psmx2_peer_match, disconn->epaddr);
+	trx_ctxt->domain->peer_unlock_fn(&trx_ctxt->peer_lock, 2);
+	if (trx_ctxt->ep && trx_ctxt->ep->av)
+		psmx2_av_remove_conn(trx_ctxt->ep->av, trx_ctxt, disconn->epaddr);
+
+	epaddr_context = psm2_epaddr_getctxt(disconn->epaddr);
+	psm2_epaddr_setctxt(disconn->epaddr, NULL);
+	free(epaddr_context);
+
+	psm2_ep_disconnect2(trx_ctxt->psm2_ep, 1, &disconn->epaddr, NULL,
 			    &errors, PSM2_EP_DISCONNECT_FORCE, 0);
+
 	free(args);
 	return NULL;
-}
-
-static int psmx2_peer_match(struct dlist_entry *item, const void *arg)
-{
-	struct psmx2_epaddr_context *peer;
-
-	peer = container_of(item, struct psmx2_epaddr_context, entry);
-	return  (peer->epaddr == arg);
 }
 
 int psmx2_am_trx_ctxt_handler(psm2_am_token_t token, psm2_amarg_t *args,
@@ -93,16 +99,14 @@ int psmx2_am_trx_ctxt_handler(psm2_am_token_t token, psm2_amarg_t *args,
 		 * we can't call psm2_ep_disconnect from the AM
 		 * handler. instead, create a thread to do the work.
 		 * the performance of this operation is not important.
+		 *
+		 * also put the av cleanup operations into the thread
+		 * to avoid deadlock because the AM handler may be
+		 * called with the av lock held.
 		 */
 		disconn = malloc(sizeof(*disconn));
 		if (disconn) {
-			trx_ctxt->domain->peer_lock_fn(&trx_ctxt->peer_lock, 2);
-			dlist_remove_first_match(&trx_ctxt->peer_list,
-						 psmx2_peer_match, epaddr);
-			trx_ctxt->domain->peer_unlock_fn(&trx_ctxt->peer_lock, 2);
-			if (trx_ctxt->ep && trx_ctxt->ep->av)
-				psmx2_av_remove_conn(trx_ctxt->ep->av, trx_ctxt, epaddr);
-			disconn->ep = trx_ctxt->psm2_ep;
+			disconn->trx_ctxt = trx_ctxt;
 			disconn->epaddr = epaddr;
 			pthread_create(&disconnect_thread, NULL,
 				       disconnect_func, disconn);
@@ -124,6 +128,7 @@ void psmx2_trx_ctxt_disconnect_peers(struct psmx2_trx_ctxt *trx_ctxt)
 	struct psmx2_epaddr_context *peer;
 	struct dlist_entry peer_list;
 	psm2_amarg_t arg;
+	int err;
 
 	arg.u32w0 = PSMX2_AM_REQ_TRX_CTXT_DISCONNECT;
 
@@ -138,9 +143,17 @@ void psmx2_trx_ctxt_disconnect_peers(struct psmx2_trx_ctxt *trx_ctxt)
 
 	dlist_foreach_safe(&peer_list, item, tmp) {
 		peer = container_of(item, struct psmx2_epaddr_context, entry);
-		FI_INFO(&psmx2_prov, FI_LOG_CORE, "epaddr: %p\n", peer->epaddr);
-		psm2_am_request_short(peer->epaddr, PSMX2_AM_TRX_CTXT_HANDLER,
-				      &arg, 1, NULL, 0, 0, NULL, NULL);
+		if (trx_ctxt->domain->params.disconnect) {
+			FI_INFO(&psmx2_prov, FI_LOG_CORE, "epaddr: %p\n", peer->epaddr);
+			err = psm2_am_request_short(peer->epaddr,
+						    PSMX2_AM_TRX_CTXT_HANDLER,
+						    &arg, 1, NULL, 0, 0, NULL,
+						    NULL);
+			if (err)
+				FI_INFO(&psmx2_prov, FI_LOG_CORE,
+					"failed to send disconnect, err %d\n",
+					err);
+		}
 		psm2_epaddr_setctxt(peer->epaddr, NULL);
 		free(peer);
 	}
@@ -183,8 +196,7 @@ void psmx2_trx_ctxt_free(struct psmx2_trx_ctxt *trx_ctxt, int usage_flags)
 	dlist_remove(&trx_ctxt->entry);
 	trx_ctxt->domain->trx_ctxt_unlock_fn(&trx_ctxt->domain->trx_ctxt_lock, 1);
 
-	if (psmx2_env.disconnect)
-		psmx2_trx_ctxt_disconnect_peers(trx_ctxt);
+	psmx2_trx_ctxt_disconnect_peers(trx_ctxt);
 
 	if (trx_ctxt->am_initialized)
 		psmx2_am_fini(trx_ctxt);
@@ -224,7 +236,8 @@ void psmx2_trx_ctxt_free(struct psmx2_trx_ctxt *trx_ctxt, int usage_flags)
 struct psmx2_trx_ctxt *psmx2_trx_ctxt_alloc(struct psmx2_fid_domain *domain,
 					    struct psmx2_ep_name *src_addr,
 					    int sep_ctxt_idx,
-					    int usage_flags)
+					    int usage_flags,
+					    uint8_t *uuid)
 {
 	struct psmx2_trx_ctxt *trx_ctxt;
 	struct psm2_ep_open_opts opts;
@@ -234,12 +247,16 @@ struct psmx2_trx_ctxt *psmx2_trx_ctxt_alloc(struct psmx2_fid_domain *domain,
 	int asked_flags = usage_flags & PSMX2_TX_RX;
 	int compatible_flags = ~asked_flags & PSMX2_TX_RX;
 
+	if (!uuid)
+		uuid = domain->uuid;
+
 	/* Check existing allocations first if only Tx or Rx is needed */
 	if (compatible_flags) {
 		domain->trx_ctxt_lock_fn(&domain->trx_ctxt_lock, 1);
 		dlist_foreach(&domain->trx_ctxt_list, item) {
 			trx_ctxt = container_of(item, struct psmx2_trx_ctxt, entry);
-			if (compatible_flags == trx_ctxt->usage_flags) {
+			if (compatible_flags == trx_ctxt->usage_flags &&
+			    !memcmp(uuid, trx_ctxt->uuid, sizeof(psm2_uuid_t))) {
 				trx_ctxt->usage_flags |= asked_flags;
 				domain->trx_ctxt_unlock_fn(&domain->trx_ctxt_lock, 1);
 				FI_INFO(&psmx2_prov, FI_LOG_CORE,
@@ -252,10 +269,10 @@ struct psmx2_trx_ctxt *psmx2_trx_ctxt_alloc(struct psmx2_fid_domain *domain,
 		domain->trx_ctxt_unlock_fn(&domain->trx_ctxt_lock, 1);
 	}
 
-	if (psmx2_trx_ctxt_cnt >= psmx2_env.max_trx_ctxt) {
+	if (psmx2_trx_ctxt_cnt >= psmx2_hfi_info.max_trx_ctxt) {
 		FI_WARN(&psmx2_prov, FI_LOG_CORE,
 			"number of Tx/Rx contexts exceeds limit (%d).\n",
-			psmx2_env.max_trx_ctxt);
+			psmx2_hfi_info.max_trx_ctxt);
 		return NULL;
 	}
 
@@ -276,8 +293,9 @@ struct psmx2_trx_ctxt *psmx2_trx_ctxt_alloc(struct psmx2_fid_domain *domain,
 	}
 
 	psm2_ep_open_opts_get_defaults(&opts);
+	memcpy(trx_ctxt->uuid, uuid, sizeof(psm2_uuid_t));
 	FI_INFO(&psmx2_prov, FI_LOG_CORE,
-		"uuid: %s\n", psmx2_uuid_to_string(domain->fabric->uuid));
+		"uuid: %s\n", psmx2_uuid_to_string(uuid));
 
 	opts.unit = src_addr ? src_addr->unit : PSMX2_DEFAULT_UNIT;
 	opts.port = src_addr ? src_addr->port : PSMX2_DEFAULT_PORT;
@@ -291,7 +309,7 @@ struct psmx2_trx_ctxt *psmx2_trx_ctxt_alloc(struct psmx2_fid_domain *domain,
 			"sep %d: ep_open_opts: unit=%d\n", sep_ctxt_idx, opts.unit);
 	}
 
-	err = psm2_ep_open(domain->fabric->uuid, &opts,
+	err = psm2_ep_open(uuid, &opts,
 			   &trx_ctxt->psm2_ep, &trx_ctxt->psm2_epid);
 	if (err != PSM2_OK) {
 		FI_WARN(&psmx2_prov, FI_LOG_CORE,
@@ -301,7 +319,7 @@ struct psmx2_trx_ctxt *psmx2_trx_ctxt_alloc(struct psmx2_fid_domain *domain,
 
 		/* When round-robin fails, retry w/o explicit assignment */
 		opts.unit = -1;
-		err = psm2_ep_open(domain->fabric->uuid, &opts,
+		err = psm2_ep_open(uuid, &opts,
 				   &trx_ctxt->psm2_ep, &trx_ctxt->psm2_epid);
 		if (err != PSM2_OK) {
 			FI_WARN(&psmx2_prov, FI_LOG_CORE,

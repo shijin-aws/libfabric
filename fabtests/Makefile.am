@@ -4,10 +4,12 @@ ACLOCAL_AMFLAGS = -I config
 
 if MACOS
 os_excludes = -f ./test_configs/osx.exclude
+AM_CFLAGS += -I$(srcdir)/include/osx
 endif
 
 if FREEBSD
 os_excludes = -f ./test_configs/freebsd.exclude
+AM_CFLAGS += -I$(srcdir)/include/freebsd
 endif
 
 bin_PROGRAMS = \
@@ -16,7 +18,7 @@ bin_PROGRAMS = \
 	functional/fi_stream_msg \
 	functional/fi_msg_sockets \
 	functional/fi_rdm \
-	functional/fi_rdm_rma_simple \
+	functional/fi_rdm_rma_event \
 	functional/fi_rdm_rma_trigger \
 	functional/fi_rdm_deferred_wq \
 	functional/fi_dgram \
@@ -52,12 +54,14 @@ bin_PROGRAMS = \
 	unit/fi_eq_test \
 	unit/fi_cq_test \
 	unit/fi_mr_test \
+	unit/fi_mr_cache_evict \
 	unit/fi_cntr_test \
 	unit/fi_av_test \
 	unit/fi_dom_test \
 	unit/fi_getinfo_test \
-	unit/fi_resource_freeing \
-	ubertest/fi_ubertest
+	ubertest/fi_ubertest	\
+	multinode/fi_multinode	\
+	multinode/fi_multinode_coll
 
 dist_bin_SCRIPTS = \
 	scripts/runfabtests.sh \
@@ -82,17 +86,22 @@ nobase_dist_config_DATA = \
         test_configs/tcp/tcp.exclude \
         test_configs/verbs/all.test \
         test_configs/verbs/quick.test \
-	test_configs/verbs/exclude \
+	test_configs/verbs/verbs.exclude \
 	test_configs/usnic/all.test \
 	test_configs/usnic/quick.test \
 	test_configs/psm/all.test \
 	test_configs/psm2/all.test \
 	test_configs/psm2/verify.test \
 	test_configs/psm2/psm2.exclude \
-	test_configs/ofi_rxm/verbs/all.test \
-	test_configs/ofi_rxm/verbs/exclude \
-	test_configs/ofi_rxd/ofi_rxd.exclude \
+	test_configs/psm3/all.test \
+	test_configs/psm3/verify.test \
+	test_configs/psm3/psm3.exclude \
+	test_configs/ofi_rxm/tcp.test \
+	test_configs/ofi_rxm/verbs.test \
+	test_configs/ofi_rxm/ofi_rxm.exclude \
 	test_configs/ofi_rxd/udp.test \
+	test_configs/ofi_rxd/verbs.test \
+	test_configs/ofi_rxd/ofi_rxd.exclude \
 	test_configs/shm/all.test \
 	test_configs/shm/shm.exclude \
 	test_configs/shm/quick.test \
@@ -100,10 +109,16 @@ nobase_dist_config_DATA = \
 	test_configs/efa/efa.exclude
 
 noinst_LTLIBRARIES = libfabtests.la
+
 libfabtests_la_SOURCES = \
 	common/shared.c \
 	common/jsmn.c \
+	common/hmem.c \
+	common/hmem_cuda.c \
+	common/hmem_rocr.c \
+	common/hmem_ze.c \
 	include/shared.h \
+	include/hmem.h \
 	include/jsmn.h \
 	include/unix/osd.h \
 	include/ft_osd.h
@@ -150,9 +165,9 @@ functional_fi_rdm_shared_av_SOURCES = \
 	functional/rdm_shared_av.c
 functional_fi_rdm_shared_av_LDADD = libfabtests.la
 
-functional_fi_rdm_rma_simple_SOURCES = \
-	functional/rdm_rma_simple.c
-functional_fi_rdm_rma_simple_LDADD = libfabtests.la
+functional_fi_rdm_rma_event_SOURCES = \
+	functional/rdm_rma_event.c
+functional_fi_rdm_rma_event_LDADD = libfabtests.la
 
 functional_fi_rdm_rma_trigger_SOURCES = \
 	functional/rdm_rma_trigger.c
@@ -298,6 +313,11 @@ unit_fi_mr_test_SOURCES = \
 	$(unit_srcs)
 unit_fi_mr_test_LDADD = libfabtests.la
 
+unit_fi_mr_cache_evict_SOURCES = \
+	unit/mr_cache_evict.c \
+	$(unit_srcs)
+unit_fi_mr_cache_evict_LDADD = libfabtests.la
+
 unit_fi_cntr_test_SOURCES = \
 	unit/cntr_test.c \
 	$(unit_srcs)
@@ -318,10 +338,6 @@ unit_fi_getinfo_test_SOURCES = \
 	$(unit_srcs)
 unit_fi_getinfo_test_LDADD = libfabtests.la
 
-unit_fi_resource_freeing_SOURCES = \
-	unit/resource_freeing.c
-unit_fi_resource_freeing_LDADD = libfabtests.la
-
 ubertest_fi_ubertest_SOURCES = \
 	ubertest/fabtest.h \
 	ubertest/ofi_atomic.h \
@@ -336,6 +352,31 @@ ubertest_fi_ubertest_SOURCES = \
 	ubertest/verify.c \
 	ubertest/test_ctrl.c
 ubertest_fi_ubertest_LDADD = libfabtests.la
+
+multinode_fi_multinode_SOURCES = \
+	multinode/src/harness.c \
+	multinode/src/pattern.c \
+	multinode/include/pattern.h \
+	multinode/src/core.c \
+	multinode/include/core.h
+
+multinode_fi_multinode_LDADD = 	libfabtests.la
+
+multinode_fi_multinode_CFLAGS = \
+	$(AM_CFLAGS) \
+	-I$(srcdir)/multinode/include
+
+multinode_fi_multinode_coll_SOURCES = \
+	multinode/src/harness.c \
+	multinode/src/core_coll.c \
+	multinode/include/coll_test.h \
+	multinode/include/core.h
+
+multinode_fi_multinode_coll_LDADD = 	libfabtests.la
+
+multinode_fi_multinode_coll_CFLAGS = \
+	$(AM_CFLAGS) \
+	-I$(srcdir)/multinode/include
 
 real_man_pages = \
 	 man/man7/fabtests.7
@@ -359,7 +400,7 @@ dummy_man_pages = \
 	man/man1/fi_rdm_deferred_wq.1 \
 	man/man1/fi_rdm_multi_domain.1 \
 	man/man1/fi_multi_recv.1 \
-	man/man1/fi_rdm_rma_simple.1 \
+	man/man1/fi_rdm_rma_event.1 \
 	man/man1/fi_rdm_rma_trigger.1 \
 	man/man1/fi_rdm_shared_av.1 \
 	man/man1/fi_rdm_tagged_peek.1 \
@@ -384,7 +425,6 @@ dummy_man_pages = \
 	man/man1/fi_eq_test.1 \
 	man/man1/fi_getinfo_test.1 \
 	man/man1/fi_mr_test.1 \
-	man/man1/fi_resource_freeing.1 \
 	man/man1/fi_bw.1 \
 	man/man1/fi_ubertest.1
 

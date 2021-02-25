@@ -54,13 +54,9 @@ static struct rxd_x_entry *rxd_tx_entry_init_atomic(struct rxd_ep *ep, fi_addr_t
 	OFI_UNUSED(len);
 
 	tx_entry = rxd_tx_entry_init_common(ep, addr, op, iov, iov_count, 0,
-					    data, flags, context);
+					    data, flags, context, &base_hdr, &ptr);
 	if (!tx_entry)
 		return NULL;
-
-	base_hdr = rxd_get_base_hdr(tx_entry->pkt);
-	ptr = (void *) base_hdr;
-	rxd_init_base_hdr(ep, &ptr, tx_entry);
 
 	if (res_count) {
 		tx_entry->res_count = res_count;
@@ -98,8 +94,8 @@ static struct rxd_x_entry *rxd_tx_entry_init_atomic(struct rxd_ep *ep, fi_addr_t
 			assert(len == tx_entry->bytes_done);
 		}
 	}
-	tx_entry->pkt->pkt_size = ((char *) ptr - (char *) base_hdr) +
-				ep->tx_prefix_size;
+
+	tx_entry->pkt->pkt_size = rxd_pkt_size(ep, base_hdr, ptr);
 
 	return tx_entry;
 }
@@ -137,8 +133,11 @@ static ssize_t rxd_generic_atomic(struct rxd_ep *rxd_ep,
 
 	if (ofi_cirque_isfull(rxd_ep->util_ep.tx_cq->cirq))
 		goto out;
-
-	rxd_addr = rxd_ep_av(rxd_ep)->fi_addr_table[addr];
+	
+	rxd_addr = (intptr_t) ofi_idx_lookup(&(rxd_ep_av(rxd_ep)->fi_addr_idx),
+					     RXD_IDX_OFFSET(addr));
+	if (!rxd_addr)
+		goto out;
 	ret = rxd_send_rts_if_needed(rxd_ep, rxd_addr);
 	if (ret)
 		goto out;
@@ -149,7 +148,7 @@ static ssize_t rxd_generic_atomic(struct rxd_ep *rxd_ep,
 	if (!tx_entry)
 		goto out;
 
-	if (rxd_ep->peers[rxd_addr].peer_addr != FI_ADDR_UNSPEC)
+	if (rxd_peer(rxd_ep, rxd_addr)->peer_addr != RXD_ADDR_INVALID)
 		(void) rxd_start_xfer(rxd_ep, tx_entry);
 
 out:
@@ -238,8 +237,11 @@ static ssize_t rxd_atomic_inject(struct fid_ep *ep_fid, const void *buf,
 
 	if (ofi_cirque_isfull(rxd_ep->util_ep.tx_cq->cirq))
 		goto out;
+	rxd_addr = (intptr_t) ofi_idx_lookup(&(rxd_ep_av(rxd_ep)->fi_addr_idx), 
+					     RXD_IDX_OFFSET(addr));
+	if (!rxd_addr)
+		goto out;
 
-	rxd_addr = rxd_ep_av(rxd_ep)->fi_addr_table[addr];
 	ret = rxd_send_rts_if_needed(rxd_ep, rxd_addr);
 	if (ret)
 		goto out;
@@ -250,7 +252,7 @@ static ssize_t rxd_atomic_inject(struct fid_ep *ep_fid, const void *buf,
 	if (!tx_entry)
 		goto out;
 
-	if (rxd_ep->peers[rxd_addr].peer_addr == FI_ADDR_UNSPEC)
+	if (rxd_peer(rxd_ep, rxd_addr)->peer_addr == RXD_ADDR_INVALID)
 		goto out;
 
 	(void) rxd_start_xfer(rxd_ep, tx_entry);

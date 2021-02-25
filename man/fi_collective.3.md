@@ -15,22 +15,33 @@ fi_barrier
   the barrier call.
 
 fi_broadcast
-: A single sender transmits data to all receiver peers.
+: A single sender transmits data to all peers, including itself.
+
+fi_alltoall
+: Each peer distributes a slice of its local data to all peers.
 
 fi_allreduce
 : Collective operation where all peers broadcast an atomic operation to all
   other peers.
+
+fi_allgather
+: Each peer sends a complete copy of its local data to all peers.
 
 fi_reduce_scatter
 : Collective call where data is collected from all peers and merged (reduced).
   The results of the reduction is distributed back to the peers, with each
   peer receiving a slice of the results.
 
-fi_alltoall
-: Each peer distributes a slice of its local data to all peers.
+fi_reduce
+: Collective call where data is collected from all peers to a root peer
+   and merged (reduced).
 
-fi_allgather
-: Each peer sends a complete copy of its local data to all peers.
+fi_scatter
+: A single sender distributes (scatters) a slice of its local data to
+  all peers.
+
+fi_gather
+: All peers send their data to a root peer.
 
 fi_query_collective
 : Returns information about which collective operations are supported by a
@@ -49,17 +60,7 @@ ssize_t fi_barrier(struct fid_ep *ep, fi_addr_t coll_addr,
 	void *context);
 
 ssize_t fi_broadcast(struct fid_ep *ep, void *buf, size_t count, void *desc,
-	fi_addr_t coll_addr, enum fi_datatype datatype, enum fi_op op,
-	uint64_t flags, void *context);
-
-ssize_t fi_allreduce(struct fid_ep *ep, const void *buf, size_t count,
-	void *desc, void *result, void *result_desc,
-	fi_addr_t coll_addr, enum fi_datatype datatype, enum fi_op op,
-	uint64_t flags, void *context);
-
-ssize_t fi_reduce_scatter(struct fid_ep *ep, const void *buf, size_t count,
-	void *desc, void *result, void *result_desc,
-	fi_addr_t coll_addr, enum fi_datatype datatype, enum fi_op op,
+	fi_addr_t coll_addr, fi_addr_t root_addr, enum fi_datatype datatype,
 	uint64_t flags, void *context);
 
 ssize_t fi_alltoall(struct fid_ep *ep, const void *buf, size_t count,
@@ -67,14 +68,38 @@ ssize_t fi_alltoall(struct fid_ep *ep, const void *buf, size_t count,
 	fi_addr_t coll_addr, enum fi_datatype datatype,
 	uint64_t flags, void *context);
 
+ssize_t fi_allreduce(struct fid_ep *ep, const void *buf, size_t count,
+	void *desc, void *result, void *result_desc,
+	fi_addr_t coll_addr, enum fi_datatype datatype, enum fi_op op,
+	uint64_t flags, void *context);
+
 ssize_t fi_allgather(struct fid_ep *ep, const void *buf, size_t count,
 	void *desc, void *result, void *result_desc,
 	fi_addr_t coll_addr, enum fi_datatype datatype,
 	uint64_t flags, void *context);
 
+ssize_t fi_reduce_scatter(struct fid_ep *ep, const void *buf, size_t count,
+	void *desc, void *result, void *result_desc,
+	fi_addr_t coll_addr, enum fi_datatype datatype, enum fi_op op,
+	uint64_t flags, void *context);
+
+ssize_t fi_reduce(struct fid_ep *ep, const void *buf, size_t count,
+	void *desc, void *result, void *result_desc, fi_addr_t coll_addr,
+	fi_addr_t root_addr, enum fi_datatype datatype, enum fi_op op,
+	uint64_t flags, void *context);
+
+ssize_t fi_scatter(struct fid_ep *ep, const void *buf, size_t count,
+	void *desc, void *result, void *result_desc, fi_addr_t coll_addr,
+	fi_addr_t root_addr, enum fi_datatype datatype,
+	uint64_t flags, void *context);
+
+ssize_t fi_gather(struct fid_ep *ep, const void *buf, size_t count,
+	void *desc, void *result, void *result_desc, fi_addr_t coll_addr,
+	fi_addr_t root_addr, enum fi_datatype datatype,
+	uint64_t flags, void *context);
+
 int fi_query_collective(struct fid_domain *domain,
-	enum fi_datatype datatype, enum fi_op op,
-	struct fi_collective_attr *attr, uint64_t flags);
+	fi_collective_op coll, struct fi_collective_attr *attr, uint64_t flags);
 ```
 
 # ARGUMENTS
@@ -107,6 +132,9 @@ int fi_query_collective(struct fid_domain *domain,
 *coll_addr*
 : Address referring to the collective group of endpoints.
 
+*root_addr*
+: Single endpoint that is the source or destination of collective data.
+
 *flags*
 : Additional flags to apply for the atomic operation
 
@@ -115,7 +143,13 @@ int fi_query_collective(struct fid_domain *domain,
   ignored if the operation will not generate a successful completion, unless
   an op flag specifies the context parameter be used for required input.
 
-# DESCRIPTION
+# DESCRIPTION (EXPERIMENTAL APIs)
+
+The collective APIs are new to the 1.9 libfabric release.  Although, efforts
+have been made to design the APIs such that they align well with applications
+and are implementable by the providers, the APIs should be considered
+experimental and may be subject to change in future versions of the
+library until the experimental tag has been removed.
 
 In general collective operations can be thought of as coordinated atomic
 operations between a set of peer endpoints.  Readers should refer to the
@@ -166,9 +200,8 @@ associated synchronously with an AV using the fi_ep_bind() call.  Upon
 completion of the fi_join_collective operation, an fi_addr is provided that
 is used as the target address when invoking a collective operation.
 
-For developer convenience, a set of collective APIs are defined.  However,
-these are inline wrappers around the atomic interfaces.  Collective APIs
-differ from message and RMA interfaces in that the format of the data is
+For developer convenience, a set of collective APIs are defined.  Collective
+APIs differ from message and RMA interfaces in that the format of the data is
 known to the provider, and the collective may perform an operation on that
 data.  This aligns collective operations closely with the atomic interfaces.
 
@@ -198,12 +231,12 @@ will report that the join has completed.  Application managed collective
 memberships are an exception.  With application managed memberships, the
 fi_join_collective call may be completed locally without fabric communication.
 For provider managed memberships, the join collective call requires as
-input a coll_addr that refers to an existing collective group.  The
-fi_join_collective call will create a new collective subgroup.  If there is
-no existing collective group (e.g. this is the first group being created),
-or if application managed memberships are used, coll_addr should be set to
-FI_ADDR_UNAVAIL.  For provider managed memberships, this will result in
-using all entries in the associated AV as the base.
+input a coll_addr that refers to either an address associated with an
+AV set (see fi_av_set_addr) or an existing collective group (obtained through
+a previous call to fi_join_collective).  The
+fi_join_collective call will create a new collective subgroup.
+If application managed memberships are used, coll_addr should be set to
+FI_ADDR_UNAVAIL.
 
 Applications must call fi_close on the collective group to disconnect the
 endpoint from the group.  After a join operation has completed, the
@@ -222,11 +255,9 @@ completed prior to them calling barrier has finished.
 ## Broadcast (fi_broadcast)
 
 fi_broadcast transfers an array of data from a single sender to all other
-members of the collective group.  The sender of the broadcast data must
-specify the FI_SEND flag, while receivers use the FI_RECV flag.  The input
-buf parameter is treated as either the transmit buffer, if FI_SEND is set, or
-the receive buffer, if FI_RECV is set.  Either the FI_SEND or FI_RECV flag
-must be set.  The broadcast operation acts as an atomic write or read to a
+members of the collective group.  The input buf parameter is treated as the
+transmit buffer if the local rank is the root, otherwise it is the receive
+buffer.  The broadcast operation acts as an atomic write or read to a
 data array.  As a result, the format of the data in buf is specified through
 the datatype parameter.  Any non-void datatype may be broadcast.
 
@@ -241,6 +272,31 @@ array of integers to a group of peers.
  |_________|
  broadcast
 ```
+
+## All to All (fi_alltoall)
+
+The fi_alltoall collective involves distributing (or scattering) different
+portions of an array of data to peers.  It is best explained using an
+example.  Here three peers perform an all to all collective to exchange
+different entries in an integer array.
+
+```
+[1]   [2]   [3]
+[5]   [6]   [7]
+[9]  [10]  [11]
+   \   |   /
+   All to all
+   /   |   \
+[1]   [5]   [9]
+[2]   [6]  [10]
+[3]   [7]  [11]
+```
+
+Each peer sends a piece of its data to the other peers.
+
+All to all operations may be performed on any non-void datatype.  However,
+all to all does not perform an operation on the data itself, so no operation
+is specified.
 
 ## All Reduce (fi_allreduce)
 
@@ -270,28 +326,25 @@ between three peers.
   All Reduce
 ```
 
-## All to All (fi_alltoall)
+## All Gather (fi_allgather)
 
-The fi_alltoall collective involves distributing (or scattering) different
-portions of an array of data to peers.  It is best explained using an
-example.  Here three peers perform an all to all collective to exchange
-different entries in an integer array.
+Conceptually, all gather can be viewed as the opposite of the scatter
+component from reduce-scatter.  All gather collects data from all peers into
+a single array, then copies that array back to each peer.
 
 ```
-[1]   [2]   [3]
-[5]   [6]   [7]
-[9]  [10]  [11]
-   \   |   /
-   All to all
-   /   |   \
-[1]   [5]   [9]
-[5]   [6]   [7]
-[9]  [10]  [11]
+[1]  [5]  [9]
+  \   |   /
+ All gather
+  /   |   \
+[1]  [1]  [1]
+[5]  [5]  [5]
+[9]  [9]  [9]
 ```
 
-All to all operations may be performed on any non-void datatype.  However,
-all to all does not perform an operation on the data itself, so no operation
-is specified.
+All gather may be performed on any non-void datatype.  However, all gather
+does not perform an operation on the data itself, so no operation is
+specified.
 
 ## Reduce-Scatter (fi_reduce_scatter)
 
@@ -321,25 +374,69 @@ This is shown by the following example:
 The reduce scatter call supports the same datatype and atomic operation as
 fi_allreduce.
 
-## All Gather (fi_allgather)
+## Reduce (fi_reduce)
 
-Conceptually, all gather can be viewed as the opposite of the scatter
-component from reduce-scatter.  All gather collects data from all peers into
-a single array, then copies that array back to each peer.
+The fi_reduce collective is the first half of an fi_allreduce operation.
+With reduce, all peers provide input into an atomic operation, with the
+the results collected by a single 'root' endpoint.
+
+This is shown by the following example, with the leftmost peer identified
+as the root:
+
+```
+[1]  [1]  [1]
+[5]  [5]  [5]
+[9]  [9]  [9]
+  \   |   /
+     sum (reduce)
+    /
+ [3]
+[15]
+[27]
+```
+
+The reduce call supports the same datatype and atomic operation as
+fi_allreduce.
+
+## Scatter (fi_scatter)
+
+The fi_scatter collective is the second half of an fi_reduce_scatter operation.
+The data from a single 'root' endpoint is split and distributed to all peers.
+
+This is shown by the following example:
+
+```
+ [3]
+[15]
+[27]
+    \
+   scatter
+  /   |   \
+[3] [15] [27]
+```
+
+The scatter operation is used to distribute results to the peers.  No atomic
+operation is performed on the data.
+
+## Gather (fi_gather)
+
+The fi_gather operation is used to collect (gather) the results from all peers
+and store them at a 'root' peer.
+
+This is shown by the following example, with the leftmost peer identified
+as the root.
 
 ```
 [1]  [5]  [9]
   \   |   /
- All gather
-  /   |   \
-[1]  [1]  [1]
-[5]  [5]  [5]
-[9]  [9]  [9]
+    gather
+   /
+[1]
+[5]
+[9]
 ```
 
-All gather may be performed on any non-void datatype.  However, all gather
-does not perform an operation on the data itself, so no operation is
-specified.
+The gather operation does not perform any operation on the data itself.
 
 ## Query Collective Attributes (fi_query_collective)
 
@@ -350,33 +447,46 @@ by the provider must be implemented by the application.  The query
 call checks whether a provider supports a specific collective operation
 for a given datatype and operation, if applicable.
 
-The datatype and operation of the collective are provided as input
-into fi_query_collective.  For operations that do not exchange
-application data, such as fi_barrier, the datatype should be set to
-FI_VOID.  The op parameter may reference one of these atomic opcodes:
-FI_MIN, FI_MAX, FI_SUM, FI_PROD, FI_LOR, FI_LAND, FI_BOR, FI_BAND,
-FI_LXOR, FI_BXOR, or a collective operation: FI_BARRIER, FI_BROADCAST,
-FI_ALLTOALL, FI_ALLGATHER.  The use of an atomic opcode will indicate
-if the provider supports the fi_allreduce() call for the given
-operation and datatype, unless the FI_SCATTER flag has been specified.  If
-FI_SCATTER has been set, query will return if the provider supports the
-fi_reduce_scatter() call for the given operation and datatype.
-Specifying a collective operation for the op parameter queries support
-for the corresponding collective.
+The name of the collective, as well as the datatype and associated
+operation, if applicable, and are provided as input
+into fi_query_collective.
 
-On success, fi_query_collective will provide information about
-the supported limits through the struct fi_collective_attr parameter.
+The coll parameter may reference one of these collectives:
+FI_BARRIER, FI_BROADCAST, FI_ALLTOALL, FI_ALLREDUCE, FI_ALLGATHER,
+FI_REDUCE_SCATTER, FI_REDUCE, FI_SCATTER, or FI_GATHER.  Additional
+details on the collective operation is specified through the struct
+fi_collective_attr parameter.  For collectives that act on data, the
+operation and related data type must be specified through the given
+attributes.
 
 {% highlight c %}
 struct fi_collective_attr {
-	struct fi_atomic_attr datatype_attr;
-	size_t max_members;
-	uint64_t mode;
+    enum fi_op op;
+    enum fi_datatype datatype;
+    struct fi_atomic_attr datatype_attr;
+    size_t max_members;
+      uint64_t mode;
 };
 {% endhighlight %}
 
 For a description of struct fi_atomic_attr, see
 [`fi_atomic`(3)](fi_atomic.3.html).
+
+*op*
+: On input, this specifies the atomic operation involved with the collective
+  call.  This should be set to one of the following values: FI_MIN, FI_MAX,
+  FI_SUM, FI_PROD, FI_LOR, FI_LAND, FI_BOR, FI_BAND, FI_LXOR, FI_BXOR,
+  FI_ATOMIC_READ, FI_ATOMIC_WRITE, of FI_NOOP.  For collectives that do
+  not exchange application data (fi_barrier), this should be set to FI_NOOP.
+
+*datatype*
+: On onput, specifies the datatype of the data being modified by the
+  collective.  This should be set to one of the following values:
+  FI_INT8, FI_UINT8, FI_INT16, FI_UINT16, FI_INT32, FI_UINT32, FI_INT64,
+  FI_UINT64, FI_FLOAT, FI_DOUBLE, FI_FLOAT_COMPLEX, FI_DOUBLE_COMPLEX,
+  FI_LONG_DOUBLE, FI_LONG_DOUBLE_COMPLEX, or FI_VOID.  For collectives
+  that do not exchange application data (fi_barrier), this should be set
+  to FI_VOID.
 
 *datatype_attr.count*
 : The maximum number of elements that may be used with the collective.
@@ -393,7 +503,7 @@ For a description of struct fi_atomic_attr, see
 *mode*
 : This field is reserved and should be 0.
 
-If a collective operation is supported, the query call will return 0,
+If a collective operation is supported, the query call will return FI_SUCCESS,
 along with attributes on the limits for using that collective operation
 through the provider.
 
@@ -408,15 +518,6 @@ point atomic operations.
 # FLAGS
 
 The following flags are defined for the specified operations.
-
-*FI_SEND*
-: Applies to fi_broadcast() operations.  This indicates that the caller
-  is the transmitter of the broadcast data.  There should only be a single
-  transmitter for each broadcast collective operation.
-
-*FI_RECV*
-: Applies to fi_broadcast() operation.  This indicates that the caller
-  is the receiver of broadcase data.
 
 *FI_SCATTER*
 : Applies to fi_query_collective.  When set, requests attribute information

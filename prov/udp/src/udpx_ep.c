@@ -219,7 +219,7 @@ static void udpx_tx_comp(struct udpx_ep *ep, void *context)
 {
 	struct fi_cq_tagged_entry *comp;
 
-	comp = ofi_cirque_tail(ep->util_ep.tx_cq->cirq);
+	comp = ofi_cirque_next(ep->util_ep.tx_cq->cirq);
 	comp->op_context = context;
 	comp->flags = FI_SEND;
 	comp->len = 0;
@@ -239,7 +239,7 @@ static void udpx_rx_comp(struct udpx_ep *ep, void *context, uint64_t flags,
 {
 	struct fi_cq_tagged_entry *comp;
 
-	comp = ofi_cirque_tail(ep->util_ep.rx_cq->cirq);
+	comp = ofi_cirque_next(ep->util_ep.rx_cq->cirq);
 	comp->op_context = context;
 	comp->flags = FI_RECV | flags;
 	comp->len = len;
@@ -316,7 +316,7 @@ static ssize_t udpx_recvmsg(struct fid_ep *ep_fid, const struct fi_msg *msg,
 		goto out;
 	}
 
-	entry = ofi_cirque_tail(ep->rxq);
+	entry = ofi_cirque_next(ep->rxq);
 	entry->context = msg->context;
 	for (entry->iov_count = 0; entry->iov_count < msg->iov_count;
 	     entry->iov_count++) {
@@ -357,7 +357,7 @@ static ssize_t udpx_recv(struct fid_ep *ep_fid, void *buf, size_t len,
 		goto out;
 	}
 
-	entry = ofi_cirque_tail(ep->rxq);
+	entry = ofi_cirque_next(ep->rxq);
 	entry->context = context;
 	entry->iov_count = 1;
 	entry->iov[0].iov_base = buf;
@@ -561,7 +561,7 @@ static int udpx_ep_close(struct fid *fid)
 		if (ep->util_ep.rx_cq->wait) {
 			wait = container_of(ep->util_ep.rx_cq->wait,
 					    struct util_wait_fd, util_wait);
-			fi_epoll_del(wait->epoll_fd, (int)ep->sock);
+			ofi_epoll_del(wait->epoll_fd, (int)ep->sock);
 		}
 		fid_list_remove(&ep->util_ep.rx_cq->ep_list,
 				&ep->util_ep.rx_cq->ep_list_lock,
@@ -604,8 +604,8 @@ static int udpx_ep_bind_cq(struct udpx_ep *ep, struct util_cq *cq,
 
 			wait = container_of(cq->wait,
 					    struct util_wait_fd, util_wait);
-			ret = fi_epoll_add(wait->epoll_fd, (int)ep->sock,
-					   FI_EPOLL_IN, &ep->util_ep.ep_fid.fid);
+			ret = ofi_epoll_add(wait->epoll_fd, (int)ep->sock,
+					   OFI_EPOLL_IN, &ep->util_ep.ep_fid.fid);
 			if (ret)
 				return ret;
 		} else {
@@ -698,7 +698,8 @@ static int udpx_ep_ctrl(struct fid *fid, int command, void *arg)
 	ep = container_of(fid, struct udpx_ep, util_ep.ep_fid.fid);
 	switch (command) {
 	case FI_ENABLE:
-		if (!ep->util_ep.rx_cq || !ep->util_ep.tx_cq)
+		if ((ofi_needs_rx(ep->util_ep.caps) && !ep->util_ep.rx_cq) ||
+		    (ofi_needs_tx(ep->util_ep.caps) && !ep->util_ep.tx_cq))
 			return -FI_ENOCQ;
 		if (!ep->util_ep.av)
 			return -FI_ENOAV;

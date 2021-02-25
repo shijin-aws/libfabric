@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014 Intel Corporation.  All rights reserved.
+ * Copyright (c) 2013-2020 Intel Corporation.  All rights reserved.
  * Copyright (c) 2016 Cisco Systems, Inc.  All rights reserved.
  *
  * This software is available to you under the BSD license below:
@@ -45,11 +45,13 @@ static char *node, *port;
 static int ver = 0;
 static int list_providers = 0;
 static int verbose = 0, env = 0;
+static char *envstr;
 
 /* options and matching help strings need to be kept in sync */
 
 static const struct option longopts[] = {
 	{"help", no_argument, NULL, 'h'},
+	{"src_addr", required_argument, NULL, 's'},
 	{"node", required_argument, NULL, 'n'},
 	{"port", required_argument, NULL, 'P'},
 	{"caps", required_argument, NULL, 'c'},
@@ -60,6 +62,7 @@ static const struct option longopts[] = {
 	{"addr_format", required_argument, NULL, 'a'},
 	{"provider", required_argument, NULL, 'p'},
 	{"env", no_argument, NULL, 'e'},
+	{"getenv", required_argument, NULL, 'g'},
 	{"list", no_argument, NULL, 'l'},
 	{"verbose", no_argument, NULL, 'v'},
 	{"version", no_argument, &ver, 1},
@@ -68,7 +71,8 @@ static const struct option longopts[] = {
 
 static const char *help_strings[][2] = {
 	{"", "\t\tdisplay this help and exit"},
-	{"NAME", "\t\tnode name or address"},
+	{"ADDR", "\t\tsource name or address"},
+	{"NAME", "\t\tdest node name or address"},
 	{"PNUM", "\t\tport number"},
 	{"CAP1|CAP2..", "\tone or more capabilities: FI_MSG|FI_RMA..."},
 	{"MOD1|MOD2..", "\tone or more modes, default all modes"},
@@ -78,6 +82,7 @@ static const char *help_strings[][2] = {
 	{"FMT", "\t\tspecify accepted address format: FI_FORMAT_UNSPEC, FI_SOCKADDR..."},
 	{"PROV", "\t\tspecify provider explicitly"},
 	{"", "\t\tprint libfabric environment variables"},
+	{"SUBSTR", "\t\tprint libfabric environment variables with substr"},
 	{"", "\t\tlist available libfabric providers"},
 	{"", "\t\tverbose output"},
 	{"", "\t\tprint version info and exit"},
@@ -116,6 +121,7 @@ static int str2cap(char *inputstr, uint64_t *value)
 	ORCASE(FI_TAGGED);
 	ORCASE(FI_ATOMIC);
 	ORCASE(FI_MULTICAST);
+	ORCASE(FI_COLLECTIVE);
 
 	ORCASE(FI_READ);
 	ORCASE(FI_WRITE);
@@ -139,6 +145,7 @@ static int str2cap(char *inputstr, uint64_t *value)
 	ORCASE(FI_SOURCE);
 	ORCASE(FI_NAMED_RX_CTX);
 	ORCASE(FI_DIRECTED_RECV);
+	ORCASE(FI_HMEM);
 
 	fprintf(stderr, "error: Unrecognized capability: %s\n", inputstr);
 
@@ -230,38 +237,18 @@ static const char *param_type(enum fi_param_type type)
 	}
 }
 
-static char * get_var_prefix(const char *prov_name)
-{
-	int i;
-	char *prefix;
-
-	if (!prov_name) {
-		return NULL;
-	} else {
-		if (asprintf(&prefix, "FI_%s", prov_name) < 0)
-			return NULL;
-		for (i = 0; i < strlen(prefix); ++i)
-			prefix[i] = toupper((unsigned char) prefix[i]);
-	}
-
-	return prefix;
-}
-
 static int print_vars(void)
 {
 	int ret, count, i;
 	struct fi_param *params;
 	char delim;
-	char *var_prefix;
 
 	ret = fi_getparams(&params, &count);
 	if (ret)
 		return ret;
 
-	var_prefix = get_var_prefix(hints->fabric_attr->prov_name);
-
 	for (i = 0; i < count; ++i) {
-		if (var_prefix && strncmp(params[i].name, var_prefix, strlen(var_prefix)))
+		if (envstr && !strcasestr(params[i].name, envstr))
 			continue;
 
 		printf("# %s: %s\n", params[i].name, param_type(params[i].type));
@@ -276,7 +263,6 @@ static int print_vars(void)
 		printf("\n");
 	}
 
-	free(var_prefix);
 	fi_freeparams(params);
 	return ret;
 }
@@ -320,15 +306,13 @@ static int print_long_info(struct fi_info *info)
 	return EXIT_SUCCESS;
 }
 
-static int run(struct fi_info *hints, char *node, char *port)
+static int run(struct fi_info *hints, char *node, char *port, uint64_t flags)
 {
 	struct fi_info *info;
 	int ret;
-	uint64_t flags;
 
-	flags = list_providers ? FI_PROV_ATTR_ONLY : 0;
 	ret = fi_getinfo(FI_VERSION(FI_MAJOR_VERSION, FI_MINOR_VERSION),
-			node, port, flags, hints, &info);
+			 node, port, flags, hints, &info);
 	if (ret) {
 		fprintf(stderr, "fi_getinfo: %d\n", ret);
 		return ret;
@@ -349,6 +333,7 @@ static int run(struct fi_info *hints, char *node, char *port)
 
 int main(int argc, char **argv)
 {
+	uint64_t flags = 0;
 	int op, ret, option_index;
 	int use_hints = 0;
 
@@ -360,7 +345,7 @@ int main(int argc, char **argv)
 	hints->domain_attr->mode = ~0;
 	hints->domain_attr->mr_mode = ~(FI_MR_BASIC | FI_MR_SCALABLE);
 
-	while ((op = getopt_long(argc, argv, "n:P:c:m:t:a:p:d:f:elhv", longopts,
+	while ((op = getopt_long(argc, argv, "s:n:P:c:m:t:a:p:d:f:eg:lhv", longopts,
 				 &option_index)) != -1) {
 		switch (op) {
 		case 0:
@@ -373,6 +358,10 @@ int main(int argc, char **argv)
 				return EXIT_SUCCESS;
 			}
 			goto print_help;
+		case 's':
+			node = optarg;
+			flags |= FI_SOURCE;
+			break;
 		case 'n':
 			node = optarg;
 			break;
@@ -421,11 +410,15 @@ int main(int argc, char **argv)
 			hints->fabric_attr->name = strdup(optarg);
 			use_hints = 1;
 			break;
+		case 'g':
+			envstr = optarg;
+			/* fall through */
 		case 'e':
 			env = 1;
 			break;
 		case 'l':
 			list_providers = 1;
+			flags |= FI_PROV_ATTR_ONLY;
 			break;
 		case 'v':
 			verbose = 1;
@@ -439,7 +432,7 @@ print_help:
 		}
 	}
 
-	ret = run(use_hints ? hints : NULL, node, port);
+	ret = run(use_hints ? hints : NULL, node, port, flags);
 
 out:
 	fi_freeinfo(hints);

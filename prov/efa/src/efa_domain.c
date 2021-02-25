@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2015 Intel Corporation, Inc.  All rights reserved.
- * Copyright (c) 2017-2018 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2017-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -35,33 +35,56 @@
 
 #include <ofi_util.h>
 #include "efa.h"
-#include "efa_verbs.h"
+#include "rxr_cntr.h"
+
+fastlock_t pd_list_lock;
+struct efa_pd *pd_list = NULL;
 
 static int efa_domain_close(fid_t fid)
 {
 	struct efa_domain *domain;
+	struct efa_pd *efa_pd;
 	int ret;
 
 	domain = container_of(fid, struct efa_domain,
 			      util_domain.domain_fid.fid);
 
-	if (efa_mr_cache_enable)
-		ofi_mr_cache_cleanup(&domain->cache);
+	if (efa_is_cache_available(domain)) {
+		ofi_mr_cache_cleanup(domain->cache);
+		free(domain->cache);
+		domain->cache = NULL;
+	}
 
-	if (domain->pd) {
-		ret = efa_cmd_dealloc_pd(domain->pd);
-		if (ret) {
-			EFA_INFO_ERRNO(FI_LOG_DOMAIN, "efa_cmd_dealloc_pd", ret);
-			return ret;
+	if (domain->ibv_pd) {
+		fastlock_acquire(&pd_list_lock);
+		efa_pd = &pd_list[domain->ctx->dev_idx];
+		if (efa_pd->use_cnt == 1) {
+			ret = -ibv_dealloc_pd(domain->ibv_pd);
+			if (ret) {
+				fastlock_release(&pd_list_lock);
+				EFA_INFO_ERRNO(FI_LOG_DOMAIN, "ibv_dealloc_pd",
+				               ret);
+				return ret;
+			}
+			efa_pd->ibv_pd = NULL;
 		}
-		domain->pd = NULL;
+		efa_pd->use_cnt--;
+		domain->ibv_pd = NULL;
+		fastlock_release(&pd_list_lock);
 	}
 
 	ret = ofi_domain_close(&domain->util_domain);
 	if (ret)
 		return ret;
 
+	if (domain->shm_domain) {
+		ret = fi_close(&domain->shm_domain->fid);
+		if (ret)
+			return ret;
+	}
+
 	fi_freeinfo(domain->info);
+	free(domain->qp_table);
 	free(domain);
 	return 0;
 }
@@ -80,21 +103,81 @@ static int efa_open_device_by_name(struct efa_domain *domain, const char *name)
 	if (!ctx_list)
 		return -errno;
 
-	if (domain->rdm)
+	if (domain->type == EFA_DOMAIN_RDM)
 		name_len = strlen(name) - strlen(efa_rdm_domain.suffix);
 	else
 		name_len = strlen(name) - strlen(efa_dgrm_domain.suffix);
 
 	for (i = 0; i < num_ctx; i++) {
-		ret = strncmp(name, ctx_list[i]->ibv_ctx.device->name, name_len);
+		ret = strncmp(name, ctx_list[i]->ibv_ctx->device->name, name_len);
 		if (!ret) {
 			domain->ctx = ctx_list[i];
 			break;
 		}
 	}
 
+	/*
+	 * Check if a PD has already been allocated for this device and reuse
+	 * it if this is the case.
+	 */
+	fastlock_acquire(&pd_list_lock);
+	if (pd_list[i].ibv_pd) {
+		domain->ibv_pd = pd_list[i].ibv_pd;
+		pd_list[i].use_cnt++;
+	} else {
+		domain->ibv_pd = ibv_alloc_pd(domain->ctx->ibv_ctx);
+		if (!domain->ibv_pd) {
+			ret = -errno;
+		} else {
+			pd_list[i].ibv_pd = domain->ibv_pd;
+			pd_list[i].use_cnt++;
+		}
+	}
+	fastlock_release(&pd_list_lock);
+
 	efa_device_free_context_list(ctx_list);
 	return ret;
+}
+
+/*
+ * Register a temporary buffer and call ibv_fork_init() to determine if fork
+ * support is enabled.
+ *
+ * This relies on internal behavior in rdma-core and is a temporary workaround.
+ */
+static int efa_check_fork_enabled(struct fid_domain *domain_fid)
+{
+	struct fid_mr *mr;
+	char *buf;
+	int ret;
+
+	buf = malloc(ofi_get_page_size());
+	if (!buf)
+		return -FI_ENOMEM;
+
+	ret = fi_mr_reg(domain_fid, buf, ofi_get_page_size(),
+			FI_SEND, 0, 0, 0, &mr, NULL);
+	if (ret) {
+		free(buf);
+		return ret;
+	}
+
+	/*
+	 * libibverbs maintains a global variable to determine if any
+	 * registrations have occurred before ibv_fork_init() is called.
+	 * EINVAL is returned if a memory region was registered before
+	 * ibv_fork_init() was called and returns 0 if fork support is
+	 * initialized already.
+	 */
+	ret = ibv_fork_init();
+
+	fi_close(&mr->fid);
+	free(buf);
+
+	if (ret == EINVAL)
+		return 0;
+
+	return 1;
 }
 
 static struct fi_ops efa_fid_ops = {
@@ -111,11 +194,12 @@ static struct fi_ops_domain efa_domain_ops = {
 	.cq_open = efa_cq_open,
 	.endpoint = efa_ep_open,
 	.scalable_ep = fi_no_scalable_ep,
-	.cntr_open = fi_no_cntr_open,
+	.cntr_open = efa_cntr_open,
 	.poll_open = fi_no_poll_open,
 	.stx_ctx = fi_no_stx_context,
 	.srx_ctx = fi_no_srx_context,
 	.query_atomic = fi_no_query_atomic,
+	.query_collective = fi_no_query_collective,
 };
 
 int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
@@ -124,7 +208,12 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	struct efa_domain *domain;
 	struct efa_fabric *fabric;
 	const struct fi_info *fi;
+	size_t qp_table_size;
+	bool app_mr_local;
 	int ret;
+	struct ofi_mem_monitor *memory_monitors[OFI_HMEM_MAX] = {
+		[FI_HMEM_SYSTEM] = uffd_monitor,
+	};
 
 	fi = efa_get_efa_info(info->domain_attr->name);
 	if (!fi)
@@ -141,10 +230,18 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	if (!domain)
 		return -FI_ENOMEM;
 
+	qp_table_size = roundup_power_of_two(info->domain_attr->ep_cnt);
+	domain->qp_table_sz_m1 = qp_table_size - 1;
+	domain->qp_table = calloc(qp_table_size, sizeof(*domain->qp_table));
+	if (!domain->qp_table) {
+		ret = -FI_ENOMEM;
+		goto err_free_domain;
+	}
+
 	ret = ofi_domain_init(fabric_fid, info, &domain->util_domain,
 			      context);
 	if (ret)
-		goto err_free_domain;
+		goto err_free_qp_table;
 
 	domain->info = fi_dupinfo(info);
 	if (!domain->info) {
@@ -152,56 +249,99 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 		goto err_close_domain;
 	}
 
-	domain->rdm = EFA_EP_TYPE_IS_RDM(info);
+	if (EFA_EP_TYPE_IS_RDM(info)) {
+		struct rxr_domain *rxr_domain;
+		domain->type = EFA_DOMAIN_RDM;
+		rxr_domain = container_of(domain_fid, struct rxr_domain,
+					  rdm_domain);
+		app_mr_local = rxr_domain->rxr_mr_local;
+	} else {
+		domain->type = EFA_DOMAIN_DGRAM;
+		/* DGRAM always requires FI_MR_LOCAL */
+		app_mr_local = true;
+	}
 
 	ret = efa_open_device_by_name(domain, info->domain_attr->name);
 	if (ret)
 		goto err_free_info;
 
-	domain->pd = efa_cmd_alloc_pd(domain->ctx);
-	if (!domain->pd) {
-		ret = -errno;
-		goto err_free_info;
-	}
-
-	EFA_INFO(FI_LOG_DOMAIN, "Allocated pd[%u].\n", domain->pd->pdn);
-
 	domain->util_domain.domain_fid.fid.ops = &efa_fid_ops;
 	domain->util_domain.domain_fid.ops = &efa_domain_ops;
-
+	/* RMA mr_modes are being removed, since EFA layer
+	 * does not have RMA capabilities. Hence, adding FI_MR_VIRT_ADDR
+	 * until RMA capabilities are added to EFA layer
+	 */
+	domain->util_domain.mr_map.mode |= FI_MR_VIRT_ADDR;
+	/*
+	 * ofi_domain_init() would have stored the EFA mr_modes in the mr_map,
+	 * but we need the rbtree insertions and lookups to use EFA provider's
+	 * specific key, so unset the FI_MR_PROV_KEY bit for mr_map.
+	 */
+	domain->util_domain.mr_map.mode &= ~FI_MR_PROV_KEY;
 	domain->fab = fabric;
+
+	domain->util_domain.domain_fid.mr = &efa_domain_mr_ops;
 
 	*domain_fid = &domain->util_domain.domain_fid;
 
-	if (efa_mr_cache_enable) {
-		if (!efa_mr_max_cached_count)
-			efa_mr_max_cached_count = info->domain_attr->mr_cnt /
-						  EFA_DEF_NUM_MR_CACHE;
-		if (!efa_mr_max_cached_size)
-			efa_mr_max_cached_size = domain->ctx->max_mr_size /
-						 EFA_DEF_NUM_MR_CACHE;
-		cache_params.max_cnt = efa_mr_max_cached_count;
-		cache_params.max_size = efa_mr_max_cached_size;
-		cache_params.merge_regions = efa_mr_cache_merge_regions;
-		domain->cache.entry_data_size = sizeof(struct efa_mem_desc);
-		domain->cache.add_region = efa_mr_cache_entry_reg;
-		domain->cache.delete_region = efa_mr_cache_entry_dereg;
-		ret = ofi_mr_cache_init(&domain->util_domain, uffd_monitor,
-					&domain->cache);
-		if (!ret) {
-			domain->util_domain.domain_fid.mr = &efa_domain_mr_cache_ops;
-			return 0;
-		}
+	domain->cache = NULL;
+
+	/*
+	 * Check whether fork support is enabled when app does not request
+	 * FI_MR_LOCAL even if the cache is disabled.
+	 */
+	if (!app_mr_local && efa_check_fork_enabled(*domain_fid)) {
+		fprintf(stderr,
+		         "\nlibibverbs fork support is not supported by the EFA Libfabric\n"
+			 "provider when memory registrations are handled by the provider.\n"
+			 "\nFork support may currently be enabled via the RDMAV_FORK_SAFE\n"
+			 "or IBV_FORK_SAFE environment variable or another library in your\n"
+			 "application may be calling ibv_fork_init().\n"
+			 "\nPlease refer to https://github.com/ofiwg/libfabric/issues/6332\n"
+			 "for more information. Your job will now abort.\n");
+		abort();
 	}
 
-	domain->util_domain.domain_fid.mr = &efa_domain_mr_ops;
-	efa_mr_cache_enable = 0;
+	/*
+	 * If FI_MR_LOCAL is set, we do not want to use the MR cache.
+	 */
+	if (!app_mr_local && efa_mr_cache_enable) {
+		domain->cache = (struct ofi_mr_cache *)calloc(1, sizeof(struct ofi_mr_cache));
+		if (!domain->cache) {
+			ret = -FI_ENOMEM;
+			goto err_free_info;
+		}
+
+		if (!efa_mr_max_cached_count)
+			efa_mr_max_cached_count = info->domain_attr->mr_cnt *
+			                          EFA_MR_CACHE_LIMIT_MULT;
+		if (!efa_mr_max_cached_size)
+			efa_mr_max_cached_size = domain->ctx->max_mr_size *
+			                         EFA_MR_CACHE_LIMIT_MULT;
+		cache_params.max_cnt = efa_mr_max_cached_count;
+		cache_params.max_size = efa_mr_max_cached_size;
+		domain->cache->entry_data_size = sizeof(struct efa_mr);
+		domain->cache->add_region = efa_mr_cache_entry_reg;
+		domain->cache->delete_region = efa_mr_cache_entry_dereg;
+		ret = ofi_mr_cache_init(&domain->util_domain, memory_monitors,
+					domain->cache);
+		if (!ret) {
+			domain->util_domain.domain_fid.mr = &efa_domain_mr_cache_ops;
+			EFA_INFO(FI_LOG_DOMAIN, "EFA MR cache enabled, max_cnt: %zu max_size: %zu\n",
+			         cache_params.max_cnt, cache_params.max_size);
+		} else {
+			free(domain->cache);
+			domain->cache = NULL;
+		}
+	}
 
 	return 0;
 err_free_info:
 	fi_freeinfo(domain->info);
 err_close_domain:
 	ofi_domain_close(&domain->util_domain);
+err_free_qp_table:
+	free(domain->qp_table);
 err_free_domain:
 	free(domain);
 	return ret;

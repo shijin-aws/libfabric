@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018 Cray Inc.  All rights reserved.
+ * Copyright (c) 2019 System Fabric Works, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -45,19 +46,24 @@
 #define IBV_SRQ_INIT_ATTR_CQ 3ull
 
 #define IBV_SRQT_XRC 1ull
-#define FI_IBV_SET_REMOTE_SRQN(var, val) do { } while (0)
+#define VRB_SET_REMOTE_SRQN(var, val) do { } while (0)
 #define FI_VERBS_XRC_ONLY __attribute__((unused))
 
 #define ibv_get_srq_num(srq, srqn) do { } while (0)
 #define ibv_create_srq_ex(context, attr) (NULL)
 #else /* !VERBS_HAVE_XRC */
 
-#define FI_IBV_SET_REMOTE_SRQN(var, val) \
+#define VRB_SET_REMOTE_SRQN(var, val) \
 	do { \
 		(var).qp_type.xrc.remote_srqn = (val); \
 	} while (0)
 
 #define FI_VERBS_XRC_ONLY
 #endif /* VERBS_HAVE_XRC */
+
+#if !VERBS_HAVE_RDMA_ESTABLISH
+/* If older rdma-core this function does not exist/is not needed */
+#define rdma_establish(id) do { } while (0)
+#endif
 
 #endif /* OFI_VERBS_PRIV_H */

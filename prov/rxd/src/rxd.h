@@ -54,26 +54,25 @@
 #include <ofi_util.h>
 #include <ofi_tree.h>
 #include <ofi_atomic.h>
+#include <ofi_indexer.h>
 #include "rxd_proto.h"
 
 #ifndef _RXD_H_
 #define _RXD_H_
 
-#define RXD_MAJOR_VERSION 	(1)
-#define RXD_MINOR_VERSION 	(0)
 #define RXD_PROTOCOL_VERSION 	(2)
 
 #define RXD_MAX_MTU_SIZE	4096
 
 #define RXD_MAX_TX_BITS 	10
 #define RXD_MAX_RX_BITS 	10
-#define RXD_DEFAULT_AV_SIZE	1024
 
 #define RXD_BUF_POOL_ALIGNMENT	16
 #define RXD_TX_POOL_CHUNK_CNT	1024
 #define RXD_RX_POOL_CHUNK_CNT	1024
 #define RXD_MAX_PENDING		128
 #define RXD_MAX_PKT_RETRY	50
+#define RXD_ADDR_INVALID	0
 
 #define RXD_PKT_IN_USE		(1 << 0)
 #define RXD_PKT_ACKED		(1 << 1)
@@ -85,6 +84,8 @@
 #define RXD_TAG_HDR		(1 << 4)
 #define RXD_INLINE		(1 << 5)
 #define RXD_MULTI_RECV		(1 << 6)
+
+#define RXD_IDX_OFFSET(x)	(x + 1)	
 
 struct rxd_env {
 	int spin_count;
@@ -154,14 +155,12 @@ struct rxd_av {
 	struct util_av util_av;
 	struct fid_av *dg_av;
 	struct ofi_rbmap rbmap;
-	int fi_addr_idx;
-	int rxd_addr_idx;
 
 	int dg_av_used;
 	size_t dg_addrlen;
-
-	fi_addr_t *fi_addr_table;
-	struct rxd_addr *rxd_addr_table;
+	struct indexer fi_addr_idx;	
+	struct indexer rxdaddr_dg_idx;
+	struct index_map rxdaddr_fi_idm;
 };
 
 struct rxd_cq;
@@ -219,9 +218,14 @@ struct rxd_ep {
 	struct dlist_entry rts_sent_list;
 	struct dlist_entry ctrl_pkts;
 
-	struct rxd_peer peers[];
+	struct index_map peers_idm;
 };
+/* ensure ep lock is held before this function is called */
+static inline struct rxd_peer *rxd_peer(struct rxd_ep *ep, fi_addr_t rxd_addr)
+{
+	return ofi_idm_lookup(&ep->peers_idm, rxd_addr);
 
+}
 static inline struct rxd_domain *rxd_ep_domain(struct rxd_ep *ep)
 {
 	return container_of(ep->util_ep.domain, struct rxd_domain, util_domain);
@@ -364,6 +368,25 @@ static inline void *rxd_pkt_start(struct rxd_pkt_entry *pkt_entry)
 	return (void *) ((char *) pkt_entry + sizeof(*pkt_entry));
 }
 
+static inline size_t rxd_pkt_size(struct rxd_ep *ep, struct rxd_base_hdr *base_hdr,
+				   void *ptr)
+{
+	return ((char *) ptr - (char *) base_hdr) + ep->tx_prefix_size;
+}
+
+static inline void rxd_remove_free_pkt_entry(struct rxd_pkt_entry *pkt_entry)
+{
+	dlist_remove(&pkt_entry->d_entry);
+	ofi_buf_free(pkt_entry);
+}
+
+static inline void rxd_free_unexp_msg(struct rxd_unexp_msg *unexp_msg)
+{
+	ofi_buf_free(unexp_msg->pkt_entry);
+	dlist_remove(&unexp_msg->entry);
+	free(unexp_msg);
+}
+
 struct rxd_match_attr {
 	fi_addr_t	peer;
 	uint64_t	tag;
@@ -372,7 +395,7 @@ struct rxd_match_attr {
 
 static inline int rxd_match_addr(fi_addr_t addr, fi_addr_t match_addr)
 {
-	return (addr == FI_ADDR_UNSPEC || addr == match_addr);
+	return (addr == RXD_ADDR_INVALID || addr == match_addr);
 }
 
 static inline int rxd_match_tag(uint64_t tag, uint64_t ignore, uint64_t match_tag)
@@ -381,9 +404,9 @@ static inline int rxd_match_tag(uint64_t tag, uint64_t ignore, uint64_t match_ta
 }
 
 int rxd_info_to_core(uint32_t version, const struct fi_info *rxd_info,
-		     struct fi_info *core_info);
+		     const struct fi_info *base_info, struct fi_info *core_info);
 int rxd_info_to_rxd(uint32_t version, const struct fi_info *core_info,
-		    struct fi_info *info);
+		    const struct fi_info *base_info, struct fi_info *info);
 
 int rxd_fabric(struct fi_fabric_attr *attr,
 	       struct fid_fabric **fabric, void *context);
@@ -433,7 +456,7 @@ size_t rxd_init_msg(void **ptr, const struct iovec *iov, size_t iov_count,
 		    size_t total_len, size_t avail_len);
 static inline void rxd_check_init_cq_data(void **ptr, struct rxd_x_entry *tx_entry,
 			      		  size_t *max_inline)
-{	
+{
 	if (tx_entry->flags & RXD_REMOTE_CQ_DATA) {
 		rxd_init_data_hdr(ptr, tx_entry);
 		*max_inline -= sizeof(tx_entry->cq_entry.data);
@@ -443,7 +466,8 @@ static inline void rxd_check_init_cq_data(void **ptr, struct rxd_x_entry *tx_ent
 /* Tx/Rx entry sub-functions */
 struct rxd_x_entry *rxd_tx_entry_init_common(struct rxd_ep *ep, fi_addr_t addr,
 			uint32_t op, const struct iovec *iov, size_t iov_count,
-			uint64_t tag, uint64_t data, uint32_t flags, void *context);
+			uint64_t tag, uint64_t data, uint32_t flags, void *context,
+			struct rxd_base_hdr **base_hdr, void **ptr);
 struct rxd_x_entry *rxd_rx_entry_init(struct rxd_ep *ep,
 			const struct iovec *iov, size_t iov_count, uint64_t tag,
 			uint64_t ignore, void *context, fi_addr_t addr,
@@ -488,9 +512,13 @@ struct rxd_x_entry *rxd_progress_multi_recv(struct rxd_ep *ep,
 					    struct rxd_x_entry *rx_entry,
 					    size_t total_size);
 void rxd_ep_progress(struct util_ep *util_ep);
+void rxd_cleanup_unexp_msg(struct rxd_unexp_msg *unexp_msg);
 
 /* CQ sub-functions */
 void rxd_cq_report_error(struct rxd_cq *cq, struct fi_cq_err_entry *err_entry);
 void rxd_cq_report_tx_comp(struct rxd_cq *cq, struct rxd_x_entry *tx_entry);
+
+
+int rxd_create_peer(struct rxd_ep *ep, uint64_t rxd_addr);
 
 #endif

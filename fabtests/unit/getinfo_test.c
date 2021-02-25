@@ -45,8 +45,11 @@
 					    getinfo_ ## name ## _desc)
 
 typedef int (*ft_getinfo_init)(struct fi_info *);
-typedef int (*ft_getinfo_test)(char *, char *, uint64_t, struct fi_info *, struct fi_info **);
+typedef int (*ft_getinfo_test)(char *, char *, uint64_t, struct fi_info *,
+				struct fi_info **);
 typedef int (*ft_getinfo_check)(struct fi_info *);
+typedef int (*ft_getinfo_init_val)(struct fi_info *, uint64_t);
+typedef int (*ft_getinfo_check_val)(struct fi_info *, uint64_t);
 
 static char err_buf[512];
 static char new_prov_var[128];
@@ -110,91 +113,204 @@ static int invalid_dom(struct fi_info *hints)
 	return 0;
 }
 
-static int validate_msg_ordering_bits(char *node, char *service, uint64_t flags,
-		struct fi_info *hints, struct fi_info **info)
+static int validate_bit_combos(char *node, char *service, uint64_t flags,
+		struct fi_info *hints, struct fi_info **info, uint64_t bits,
+		ft_getinfo_init_val init, ft_getinfo_check_val check)
 {
 	int i, ret;
-	uint64_t ordering_bits = (FI_ORDER_STRICT | FI_ORDER_DATA);
-	uint64_t *msg_order_combinations;
-	int cnt;
+	uint64_t *combinations;
+	int cnt, fail, skipped;
 
-	ret = ft_alloc_bit_combo(0, ordering_bits, &msg_order_combinations, &cnt);
+	ret = ft_alloc_bit_combo(0, bits, &combinations, &cnt);
 	if (ret) {
 		FT_UNIT_STRERR(err_buf, "ft_alloc_bit_combo failed", ret);
 		return ret;
 	}
 
-	/* test for what ordering support exists on this provider */
-	/* test ordering support in TX ATTRIBUTE */
-	for (i = 0; i < cnt; i++) {
-		hints->tx_attr->msg_order = msg_order_combinations[i];
+	for (i = 0, fail = skipped = 0; i < cnt; i++) {
+		init(hints, combinations[i]);
 		ret = fi_getinfo(FT_FIVERSION, node, service, flags, hints, info);
 		if (ret) {
-			if (ret == -FI_ENODATA)
+			if (ret == -FI_ENODATA) {
+				skipped++;
 				continue;
+			}
 			FT_UNIT_STRERR(err_buf, "fi_getinfo failed", ret);
-			goto failed_getinfo;
+			goto out;
 		}
 
-		ft_foreach_info(fi, *info) {
-			FT_DEBUG("\nTesting for fabric: %s, domain: %s, endpoint type: %d",
-					fi->fabric_attr->name, fi->domain_attr->name,
-					fi->ep_attr->type);
-			if (hints->tx_attr->msg_order) {
-				if ((fi->tx_attr->msg_order & hints->tx_attr->msg_order) !=
-				    hints->tx_attr->msg_order) {
-					FT_DEBUG("tx msg_order not matching - hints: %"
-						 PRIx64 " prov: %" PRIx64 "\n",
-						 hints->tx_attr->msg_order,
-						 fi->tx_attr->msg_order);
-					ret = -FI_EOTHER;
-					fi_freeinfo(*info);
-					goto failed_getinfo;
-				}
+		for (fi = *info; fi; fi = fi->next) {
+			if (check && check(fi, combinations[i])) {
+				FT_DEBUG("%s:failed check for caps [%s]\n",
+					 fi->fabric_attr->prov_name,
+					 fi_tostr(&combinations[i],
+					 FI_TYPE_CAPS));
+				ret = -FI_EIO;
 			}
 		}
-		fi_freeinfo(*info);
-	}
+		if (ret)
+			fail++;
 
-	/* test ordering support in RX ATTRIBUTE */
-	for (i = 0; i < cnt; i++) {
-		hints->tx_attr->msg_order = 0;
-		hints->rx_attr->msg_order = msg_order_combinations[i];
-		ret = fi_getinfo(FT_FIVERSION, node, service, flags, hints, info);
-		if (ret) {
-			if (ret == -FI_ENODATA)
-				continue;
-			FT_UNIT_STRERR(err_buf, "fi_getinfo failed", ret);
-			goto failed_getinfo;
-		}
-		ft_foreach_info(fi, *info) {
-			FT_DEBUG("\nTesting for fabric: %s, domain: %s, endpoint type: %d",
-					fi->fabric_attr->name, fi->domain_attr->name,
-					fi->ep_attr->type);
-			if (hints->rx_attr->msg_order) {
-				if ((fi->rx_attr->msg_order & hints->rx_attr->msg_order) !=
-				    hints->rx_attr->msg_order) {
-					FT_DEBUG("rx msg_order not matching - hints: %"
-						 PRIx64 " prov: %" PRIx64 "\n",
-						 hints->rx_attr->msg_order,
-						 fi->rx_attr->msg_order);
-					ret = -FI_EOTHER;
-					fi_freeinfo(*info);
-					goto failed_getinfo;
-				}
-			}
-		}
 		fi_freeinfo(*info);
+		*info = NULL;
 	}
+	ret = 0;
+	printf("(passed)(skipped) (%d)(%d)/%d combinations\n",
+		cnt - (fail + skipped), skipped, cnt);
+out:
+	fi = NULL;
+	ft_free_bit_combo(combinations);
+	return fail ? -FI_EIO : ret;
+}
 
-	*info = NULL;
-	ft_free_bit_combo(msg_order_combinations);
+#define check_has_bits(val, bits)	(((val) & (bits)) != (bits))
+#define check_only_has_bits(val, bits)	((val) & ~(bits))
+
+static int init_tx_order(struct fi_info *hints, uint64_t order)
+{
+	hints->tx_attr->msg_order = order;
 	return 0;
+}
 
-failed_getinfo:
-	*info = NULL;
-	ft_free_bit_combo(msg_order_combinations);
-	return ret;
+static int check_tx_order(struct fi_info *info, uint64_t order)
+{
+	return check_has_bits(info->tx_attr->msg_order, order);
+}
+
+static int validate_tx_ordering_bits(char *node, char *service, uint64_t flags,
+		struct fi_info *hints, struct fi_info **info)
+{
+	return validate_bit_combos(node, service, flags, hints, info,
+				   FI_ORDER_STRICT | FI_ORDER_DATA,
+				   init_tx_order, check_tx_order);
+}
+
+static int init_rx_order(struct fi_info *hints, uint64_t order)
+{
+	hints->rx_attr->msg_order = order;
+	return 0;
+}
+
+static int check_rx_order(struct fi_info *info, uint64_t order)
+{
+	return check_has_bits(info->rx_attr->msg_order, order);
+}
+
+static int validate_rx_ordering_bits(char *node, char *service, uint64_t flags,
+		struct fi_info *hints, struct fi_info **info)
+{
+	return validate_bit_combos(node, service, flags, hints, info,
+				   FI_ORDER_STRICT | FI_ORDER_DATA,
+				   init_rx_order, check_rx_order);
+}
+
+static int init_caps(struct fi_info *hints, uint64_t bits)
+{
+	hints->caps = bits;
+	return 0;
+}
+
+#define PRIMARY_TX_CAPS	(FI_MSG | FI_RMA | FI_TAGGED | FI_ATOMIC | \
+			 FI_MULTICAST | FI_NAMED_RX_CTX | FI_HMEM | \
+			 FI_COLLECTIVE)
+#define PRIMARY_RX_CAPS (FI_MSG | FI_RMA | FI_TAGGED | FI_ATOMIC | \
+			 FI_DIRECTED_RECV | FI_VARIABLE_MSG | \
+			 FI_HMEM | FI_COLLECTIVE)
+
+#define PRIMARY_CAPS (PRIMARY_TX_CAPS | PRIMARY_RX_CAPS)
+#define DOMAIN_CAPS (FI_LOCAL_COMM | FI_REMOTE_COMM | FI_SHARED_AV)
+#define SEC_TX_CAPS (FI_TRIGGER | FI_FENCE | FI_RMA_PMEM)
+#define SEC_RX_CAPS (FI_RMA_PMEM | FI_SOURCE | FI_SOURCE_ERR | \
+		     FI_RMA_EVENT | FI_MULTI_RECV | FI_TRIGGER)
+#define MOD_TX_CAPS (FI_SEND | FI_READ | FI_WRITE)
+#define MOD_RX_CAPS (FI_RECV | FI_REMOTE_READ | FI_REMOTE_WRITE)
+#define OPT_TX_CAPS (MOD_TX_CAPS | SEC_TX_CAPS)
+#define OPT_RX_CAPS (MOD_RX_CAPS | SEC_RX_CAPS)
+#define OPT_CAPS (DOMAIN_CAPS | OPT_TX_CAPS | OPT_RX_CAPS)
+
+static void print_incorrect_caps(char *prov, char *attr,
+				 uint64_t expected, uint64_t actual)
+{
+	FT_DEBUG("%s: %s->caps has unexpected caps -\n", prov, attr);
+	FT_DEBUG("expected\t[%s]\n", fi_tostr(&expected, FI_TYPE_CAPS));
+	FT_DEBUG("actual\t[%s]\n", fi_tostr(&actual, FI_TYPE_CAPS));
+}
+
+static int check_no_extra_caps(struct fi_info *info, uint64_t caps)
+{
+	if (caps & check_only_has_bits(info->caps, caps | OPT_CAPS)) {
+		print_incorrect_caps(info->fabric_attr->prov_name, "info",
+				caps & PRIMARY_CAPS, info->caps & ~OPT_CAPS);
+		return 1;
+	}
+	if (check_only_has_bits(info->tx_attr->caps,
+				PRIMARY_TX_CAPS | OPT_TX_CAPS)) {
+		print_incorrect_caps(info->fabric_attr->prov_name, "tx_attr",
+				     caps & PRIMARY_TX_CAPS,
+				     info->tx_attr->caps & ~OPT_TX_CAPS);
+		return 1;
+	}
+	if (check_only_has_bits(info->tx_attr->caps, info->caps)) {
+		print_incorrect_caps(info->fabric_attr->prov_name, "tx_attr",
+				     info->caps & (PRIMARY_TX_CAPS | OPT_TX_CAPS),
+				     info->tx_attr->caps);
+	}
+	if (check_only_has_bits(info->rx_attr->caps,
+				PRIMARY_RX_CAPS | OPT_RX_CAPS)) {
+		print_incorrect_caps(info->fabric_attr->prov_name, "rx_attr",
+				     caps & PRIMARY_RX_CAPS,
+				     info->rx_attr->caps & ~OPT_RX_CAPS);
+		return 1;
+	}
+	if (check_only_has_bits(info->rx_attr->caps, info->caps)) {
+		print_incorrect_caps(info->fabric_attr->prov_name, "rx_attr",
+				     info->caps & (PRIMARY_RX_CAPS | OPT_RX_CAPS),
+				     info->rx_attr->caps);
+		return 1;
+	}
+	return 0;
+}
+
+static int check_caps(struct fi_info *info, uint64_t caps)
+{
+	int ret;
+
+	ret = check_no_extra_caps(info, caps);
+	if (!caps)
+		return ret;
+
+	if (check_has_bits(info->caps, caps)) {
+		print_incorrect_caps(info->fabric_attr->prov_name, "info",
+				caps & PRIMARY_CAPS, info->caps & ~OPT_CAPS);
+		return 1;
+	}
+	if (check_has_bits(info->tx_attr->caps, caps & PRIMARY_TX_CAPS)) {
+		print_incorrect_caps(info->fabric_attr->prov_name, "tx_attr",
+				     caps & PRIMARY_TX_CAPS,
+				     info->tx_attr->caps & ~OPT_TX_CAPS);
+		return 1;
+	}
+	if (check_has_bits(info->rx_attr->caps, caps & PRIMARY_RX_CAPS)) {
+		print_incorrect_caps(info->fabric_attr->prov_name, "rx_attr",
+				     caps & PRIMARY_RX_CAPS,
+				     info->rx_attr->caps & ~OPT_RX_CAPS);
+		return 1;
+	}
+
+	return 0;
+}
+
+static int validate_primary_caps(char *node, char *service, uint64_t flags,
+		struct fi_info *hints, struct fi_info **info)
+{
+	return validate_bit_combos(node, service, flags, hints, info,
+				   PRIMARY_TX_CAPS | PRIMARY_RX_CAPS,
+				   init_caps, check_caps);
+}
+
+static int test_null_hints_caps(struct fi_info *info)
+{
+	return check_no_extra_caps(info, 0);
 }
 
 static int init_valid_rma_RAW_ordering_no_set_size(struct fi_info *hints)
@@ -218,11 +334,14 @@ static int init_valid_rma_RAW_ordering_set_size(struct fi_info *hints)
 
 	ret = fi_getinfo(FT_FIVERSION, NULL, NULL, 0, hints, &fi);
 	if (ret) {
-		sprintf(err_buf, "fi_getinfo failed %s(%d)", fi_strerror(-ret), -ret);
+		sprintf(err_buf, "fi_getinfo returned %d - %s",
+			-ret, fi_strerror(-ret));
 		return ret;
 	}
-	if (fi->ep_attr->max_order_raw_size > 0)
-		hints->ep_attr->max_order_raw_size = fi->ep_attr->max_order_raw_size - 1;
+	if (fi->ep_attr->max_order_raw_size > 0) {
+		hints->ep_attr->max_order_raw_size =
+				fi->ep_attr->max_order_raw_size - 1;
+	}
 
 	fi_freeinfo(fi);
 
@@ -250,11 +369,14 @@ static int init_valid_rma_WAR_ordering_set_size(struct fi_info *hints)
 
 	ret = fi_getinfo(FT_FIVERSION, NULL, NULL, 0, hints, &fi);
 	if (ret) {
-		sprintf(err_buf, "fi_getinfo failed %s(%d)", fi_strerror(-ret), -ret);
+		sprintf(err_buf, "fi_getinfo returned %d - %s",
+			-ret, fi_strerror(-ret));
 		return ret;
 	}
-	if (fi->ep_attr->max_order_war_size > 0)
-		hints->ep_attr->max_order_war_size = fi->ep_attr->max_order_war_size - 1;
+	if (fi->ep_attr->max_order_war_size > 0) {
+		hints->ep_attr->max_order_war_size =
+				fi->ep_attr->max_order_war_size - 1;
+	}
 
 	fi_freeinfo(fi);
 
@@ -281,11 +403,14 @@ static int init_valid_rma_WAW_ordering_set_size(struct fi_info *hints)
 	hints->rx_attr->msg_order = FI_ORDER_WAW;
 	ret = fi_getinfo(FT_FIVERSION, NULL, NULL, 0, hints, &fi);
 	if (ret) {
-		sprintf(err_buf, "fi_getinfo failed %s(%d)", fi_strerror(-ret), -ret);
+		sprintf(err_buf, "fi_getinfo returned %d - %s",
+			-ret, fi_strerror(-ret));
 		return ret;
 	}
-	if (fi->ep_attr->max_order_waw_size > 0)
-		hints->ep_attr->max_order_waw_size = fi->ep_attr->max_order_waw_size - 1;
+	if (fi->ep_attr->max_order_waw_size > 0) {
+		hints->ep_attr->max_order_waw_size =
+				fi->ep_attr->max_order_waw_size - 1;
+	}
 
 	fi_freeinfo(fi);
 
@@ -299,7 +424,8 @@ static int check_valid_rma_ordering_sizes(struct fi_info *info)
 		if (info->ep_attr->max_order_raw_size <= 0)
 			return EXIT_FAILURE;
 		if (hints->ep_attr->max_order_raw_size) {
-			if (info->ep_attr->max_order_raw_size < hints->ep_attr->max_order_raw_size)
+			if (info->ep_attr->max_order_raw_size <
+			    hints->ep_attr->max_order_raw_size)
 				return EXIT_FAILURE;
 		}
 	}
@@ -308,7 +434,8 @@ static int check_valid_rma_ordering_sizes(struct fi_info *info)
 		if (info->ep_attr->max_order_war_size <= 0)
 			return EXIT_FAILURE;
 		if (hints->ep_attr->max_order_war_size) {
-			if (info->ep_attr->max_order_war_size < hints->ep_attr->max_order_war_size)
+			if (info->ep_attr->max_order_war_size <
+			    hints->ep_attr->max_order_war_size)
 				return EXIT_FAILURE;
 		}
 	}
@@ -317,7 +444,8 @@ static int check_valid_rma_ordering_sizes(struct fi_info *info)
 		if (info->ep_attr->max_order_waw_size <= 0)
 			return EXIT_FAILURE;
 		if (hints->ep_attr->max_order_waw_size) {
-			if (info->ep_attr->max_order_waw_size < hints->ep_attr->max_order_waw_size)
+			if (info->ep_attr->max_order_waw_size <
+			    hints->ep_attr->max_order_waw_size)
 				return EXIT_FAILURE;
 		}
 	}
@@ -338,12 +466,15 @@ static int init_invalid_rma_RAW_ordering_size(struct fi_info *hints)
 
 	ret = fi_getinfo(FT_FIVERSION, NULL, NULL, 0, hints, &fi);
 	if (ret) {
-		sprintf(err_buf, "fi_getinfo failed %s(%d)", fi_strerror(-ret), -ret);
+		sprintf(err_buf, "fi_getinfo returned %d - %s",
+			-ret, fi_strerror(-ret));
 		return ret;
 	}
 
-	if (fi->ep_attr->max_order_raw_size)
-		hints->ep_attr->max_order_raw_size = fi->ep_attr->max_order_raw_size + 1;
+	if (fi->ep_attr->max_order_raw_size) {
+		hints->ep_attr->max_order_raw_size =
+				fi->ep_attr->max_order_raw_size + 1;
+	}
 
 	fi_freeinfo(fi);
 
@@ -363,12 +494,15 @@ static int init_invalid_rma_WAR_ordering_size(struct fi_info *hints)
 
 	ret = fi_getinfo(FT_FIVERSION, NULL, NULL, 0, hints, &fi);
 	if (ret) {
-		sprintf(err_buf, "fi_getinfo failed %s(%d)", fi_strerror(-ret), -ret);
+		sprintf(err_buf, "fi_getinfo returned %d - %s",
+			-ret, fi_strerror(-ret));
 		return ret;
 	}
 
-	if (fi->ep_attr->max_order_war_size)
-		hints->ep_attr->max_order_war_size = fi->ep_attr->max_order_war_size + 1;
+	if (fi->ep_attr->max_order_war_size) {
+		hints->ep_attr->max_order_war_size =
+				fi->ep_attr->max_order_war_size + 1;
+	}
 
 	fi_freeinfo(fi);
 
@@ -388,12 +522,15 @@ static int init_invalid_rma_WAW_ordering_size(struct fi_info *hints)
 
 	ret = fi_getinfo(FT_FIVERSION, NULL, NULL, 0, hints, &fi);
 	if (ret) {
-		sprintf(err_buf, "fi_getinfo failed %s(%d)", fi_strerror(-ret), -ret);
+		sprintf(err_buf, "fi_getinfo returned %d - %s",
+			-ret, fi_strerror(-ret));
 		return ret;
 	}
 
-	if (fi->ep_attr->max_order_waw_size)
-		hints->ep_attr->max_order_waw_size = fi->ep_attr->max_order_waw_size + 1;
+	if (fi->ep_attr->max_order_waw_size) {
+		hints->ep_attr->max_order_waw_size =
+				fi->ep_attr->max_order_waw_size + 1;
+	}
 
 	fi_freeinfo(fi);
 
@@ -440,7 +577,8 @@ static int init_mr_unspec(struct fi_info *hints)
 static int test_mr_v1_0(char *node, char *service, uint64_t flags,
 			struct fi_info *test_hints, struct fi_info **info)
 {
-	return fi_getinfo(FI_VERSION(1, 0), node, service, flags, test_hints, info);
+	return fi_getinfo(FI_VERSION(1, 0), node, service, flags,
+			  test_hints, info);
 }
 
 static int check_mr_unspec(struct fi_info *info)
@@ -450,43 +588,145 @@ static int check_mr_unspec(struct fi_info *info)
 		EXIT_FAILURE : 0;
 }
 
-static int test_mr_modes(char *node, char *service, uint64_t flags,
-			 struct fi_info *hints, struct fi_info **info)
+static int init_mr_mode(struct fi_info *hints, uint64_t mode)
+{
+	hints->domain_attr->mr_mode = (uint32_t) mode;
+	return 0;
+}
+
+static int check_mr_mode(struct fi_info *info, uint64_t mode)
+{
+	return check_only_has_bits(info->domain_attr->mr_mode, mode);
+}
+
+static int validate_mr_modes(char *node, char *service, uint64_t flags,
+		struct fi_info *hints, struct fi_info **info)
+{
+	uint64_t mode_bits = FI_MR_LOCAL | FI_MR_RAW | FI_MR_VIRT_ADDR |
+			FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_MMU_NOTIFY |
+			FI_MR_RMA_EVENT | FI_MR_ENDPOINT;
+
+	return validate_bit_combos(node, service, flags, hints, info, mode_bits,
+				   init_mr_mode, check_mr_mode);
+}
+
+/*
+ * Progress checks
+ */
+static int init_data_manual(struct fi_info *hints)
+{
+	hints->domain_attr->data_progress = FI_PROGRESS_MANUAL;
+	return 0;
+}
+
+static int init_data_auto(struct fi_info *hints)
+{
+	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
+	return 0;
+}
+
+static int init_ctrl_manual(struct fi_info *hints)
+{
+	hints->domain_attr->control_progress = FI_PROGRESS_MANUAL;
+	return 0;
+}
+
+static int init_ctrl_auto(struct fi_info *hints)
+{
+	hints->domain_attr->control_progress = FI_PROGRESS_AUTO;
+	return 0;
+}
+
+static int check_data_manual(struct fi_info *info)
+{
+	return (info->domain_attr->data_progress != FI_PROGRESS_MANUAL) ?
+		EXIT_FAILURE : 0;
+}
+
+static int check_data_auto(struct fi_info *info)
+{
+	return (info->domain_attr->data_progress != FI_PROGRESS_AUTO) ?
+		EXIT_FAILURE : 0;
+}
+
+static int check_ctrl_manual(struct fi_info *info)
+{
+	return (info->domain_attr->control_progress != FI_PROGRESS_MANUAL) ?
+		EXIT_FAILURE : 0;
+}
+
+static int check_ctrl_auto(struct fi_info *info)
+{
+	return (info->domain_attr->control_progress != FI_PROGRESS_AUTO) ?
+		EXIT_FAILURE : 0;
+}
+
+
+static int init_domain_caps(struct fi_info *hints, uint64_t caps)
+{
+	hints->domain_attr->caps = caps;
+	return 0;
+}
+
+static int check_domain_caps(struct fi_info *info, uint64_t caps)
+{
+	return check_has_bits(info->domain_attr->caps, caps);
+}
+
+static int validate_domain_caps(char *node, char *service, uint64_t flags,
+		struct fi_info *hints, struct fi_info **info)
+{
+	return validate_bit_combos(node, service, flags, hints, info,
+				   FI_LOCAL_COMM | FI_REMOTE_COMM | FI_SHARED_AV,
+				   init_domain_caps, check_domain_caps);
+}
+
+/* Some apps (MPI) request all fi_info structures, and use the output to
+ * form the hints for a second call.  This usage breaks if the provider
+ * adds a new capability bit that also requires setting a mode or mr_mode
+ * bit (new or otherwise), which the app does not set.
+ * This is really a problem with the app, but avoid a regression
+ * by verifying that providers do not add new requirements for apps that
+ * inadvertently pick up a new capability bit.
+ */
+static int test_caps_regression(char *node, char *service, uint64_t flags,
+		struct fi_info *hints, struct fi_info **info)
 {
 	struct fi_info *fi;
-	uint64_t *mr_modes;
-	int i, cnt, ret;
+	int ret;
 
-	ret = ft_alloc_bit_combo(0, FI_MR_LOCAL | FI_MR_RAW | FI_MR_VIRT_ADDR |
-			FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_MMU_NOTIFY |
-			FI_MR_RMA_EVENT | FI_MR_ENDPOINT, &mr_modes, &cnt);
+	ret = fi_getinfo(FT_FIVERSION, node, service, flags, NULL, info);
 	if (ret)
 		return ret;
 
-	for (i = 0; i < cnt; i++) {
-		hints->domain_attr->mr_mode = (uint32_t) mr_modes[i];
-		ret = fi_getinfo(FT_FIVERSION, node, service, flags, hints, info);
-		if (ret) {
-			if (ret == -FI_ENODATA)
-				continue;
-			FT_UNIT_STRERR(err_buf, "fi_getinfo failed", ret);
-			goto out;
+	if (!hints || !hints->fabric_attr || !hints->fabric_attr->prov_name) {
+		fi = *info;
+	} else {
+		for (fi = *info; fi; fi = fi->next) {
+			if (!strcasecmp(hints->fabric_attr->prov_name,
+					(*info)->fabric_attr->prov_name))
+				break;
 		}
-
-		ft_foreach_info(fi, *info) {
-			if (fi->domain_attr->mr_mode & ~hints->domain_attr->mr_mode) {
-				ret = -FI_EOTHER;
-				fi_freeinfo(*info);
-				goto out;
-			}
-		}
-		fi_freeinfo(*info);
 	}
 
-out:
+	if (!fi)
+		return 0;
+
+	/* Limit mode bits to common, older options only */
+	hints->caps |= fi->caps;
+	hints->mode = FI_CONTEXT;
+	hints->domain_attr->mr_mode = FI_MR_LOCAL | OFI_MR_BASIC_MAP;
+
+	fi_freeinfo(*info);
 	*info = NULL;
-	ft_free_bit_combo(mr_modes);
-	return ret;
+
+	ret = fi_getinfo(FT_FIVERSION, node, service, flags, hints, info);
+	if (ret) {
+		printf("regression: new mode/mr_mode bits required...");
+		return -FI_EINVAL;
+	}
+
+	return 0;
 }
 
 
@@ -494,8 +734,8 @@ out:
  * getinfo test
  */
 static int getinfo_unit_test(char *node, char *service, uint64_t flags,
-		struct fi_info *base_hints, ft_getinfo_init init, ft_getinfo_test test,
-		ft_getinfo_check check, int ret_exp)
+		struct fi_info *base_hints, ft_getinfo_init init,
+		ft_getinfo_test test, ft_getinfo_check check, int ret_exp)
 {
 	struct fi_info *info = NULL, *fi, *test_hints = NULL;
 	int ret;
@@ -512,27 +752,30 @@ static int getinfo_unit_test(char *node, char *service, uint64_t flags,
 			goto out;
 	}
 
-	if (test)
+	if (test) {
 		ret = test(node, service, flags, test_hints, &info);
-	else
-		ret = fi_getinfo(FT_FIVERSION, node, service, flags, test_hints, &info);
+	} else {
+		ret = fi_getinfo(FT_FIVERSION, node, service, flags,
+				 test_hints, &info);
+	}
 	if (ret) {
 		if (ret == ret_exp) {
 			ret = 0;
 			goto out;
 		}
-		sprintf(err_buf, "fi_getinfo failed %s(%d)", fi_strerror(-ret), -ret);
+		sprintf(err_buf, "fi_getinfo returned %d - %s",
+			-ret, fi_strerror(-ret));
 		goto out;
 	}
 
 	if (!info || !check)
 		goto out;
 
-	ft_foreach_info(fi, info) {
+	for (fi = info; fi; fi = fi->next) {
 		FT_DEBUG("\nTesting for fabric: %s, domain: %s, endpoint type: %d",
-				fi->fabric_attr->name, fi->domain_attr->name,
-				fi->ep_attr->type);
-		ret = check(info);
+			 fi->fabric_attr->prov_name, fi->domain_attr->name,
+			 fi->ep_attr->type);
+		ret = check(fi);
 		if (ret)
 			break;
 	}
@@ -542,19 +785,19 @@ out:
 	return ret;
 }
 
-#define getinfo_test(name, num, desc, node, service, flags, hints, init, test, check,	\
-		ret_exp)							\
-char *getinfo_ ## name ## num ## _desc = desc;					\
-static int getinfo_ ## name ## num(void)					\
-{										\
-	int ret, testret = FAIL;						\
-	ret = getinfo_unit_test(node, service, flags, hints, init, test, check,	\
-			ret_exp);						\
-	if (ret)								\
-		goto fail;							\
-	testret = PASS;								\
-fail:										\
-	return TEST_RET_VAL(ret, testret);					\
+#define getinfo_test(name, num, desc, node, service, flags, hints, 	\
+		     init, test, check, ret_exp)			\
+char *getinfo_ ## name ## num ## _desc = desc;				\
+static int getinfo_ ## name ## num(void)				\
+{									\
+	int ret, testret = FAIL;					\
+	ret = getinfo_unit_test(node, service, flags, hints, init,	\
+				test, check, ret_exp);			\
+	if (ret)							\
+		goto fail;						\
+	testret = PASS;							\
+fail:									\
+	return TEST_RET_VAL(ret, testret);				\
 }
 
 /*
@@ -570,82 +813,85 @@ fail:										\
 
 /* 1.1 Source address only tests */
 getinfo_test(no_hints, 1, "Test with no node, service, flags or hints",
-		NULL, NULL, 0, NULL, NULL, NULL, check_srcaddr, 0)
-getinfo_test(no_hints, 2, "Test with node, no service, FI_SOURCE flag and no hints",
-		opts.src_addr ? opts.src_addr : "localhost", NULL, FI_SOURCE,
-		NULL, NULL, NULL, check_srcaddr, 0)
-getinfo_test(no_hints, 3, "Test with service, FI_SOURCE flag and no node or hints",
+	     NULL, NULL, 0, NULL, NULL, NULL, check_srcaddr, 0)
+getinfo_test(no_hints, 2, "Test with node, no service, FI_SOURCE flag, no hints",
+	     opts.src_addr ? opts.src_addr : "localhost", NULL, FI_SOURCE,
+	     NULL, NULL, NULL, check_srcaddr, 0)
+getinfo_test(no_hints, 3, "Test with service, FI_SOURCE flag, no node, no hints",
 		 NULL, opts.src_port, FI_SOURCE, NULL, NULL,
-		 NULL, check_srcaddr, 0)	// TODO should we check for wildcard addr?
-getinfo_test(no_hints, 4, "Test with node, service, FI_SOURCE flags and no hints",
-		opts.src_addr ? opts.src_addr : "localhost", opts.src_port,
-		FI_SOURCE, NULL, NULL, NULL, check_srcaddr, 0)
+		 NULL, check_srcaddr, 0)
+getinfo_test(no_hints, 4, "Test with node, service, FI_SOURCE flag, no hints",
+	     opts.src_addr ? opts.src_addr : "localhost", opts.src_port,
+	     FI_SOURCE, NULL, NULL, NULL, check_srcaddr, 0)
 
 /* 1.2 Source and destination address tests */
-getinfo_test(no_hints, 5, "Test with node, service and no hints",
-		opts.dst_addr ? opts.dst_addr : "localhost", opts.dst_port,
-		0, NULL, NULL, NULL, check_src_dest_addr, 0)
+getinfo_test(no_hints, 5, "Test with node, service, no hints",
+	     opts.dst_addr ? opts.dst_addr : "localhost", opts.dst_port,
+	     0, NULL, NULL, NULL, check_src_dest_addr, 0)
 
-/* 2. Test with hints */
+/* 2. Tests, most with hints */
 /* 2.1 Source address only tests */
 getinfo_test(src, 1, "Test with no node, service, or flags",
-		NULL, NULL, 0, hints, NULL, NULL, check_srcaddr, 0)
+	     NULL, NULL, 0, hints, NULL, NULL, check_srcaddr, 0)
 getinfo_test(src, 2, "Test with node, no service, FI_SOURCE flag",
-		opts.src_addr ? opts.src_addr : "localhost", NULL, FI_SOURCE,
-		hints, NULL, NULL, check_srcaddr, 0)
-getinfo_test(src, 3, "Test with service, FI_SOURCE flag and no node",
-		 NULL, opts.src_port, FI_SOURCE, hints, NULL,
-		 NULL, check_srcaddr, 0)	// TODO should we check for wildcard addr?
-getinfo_test(src, 4, "Test with node, service, FI_SOURCE flags",
-		opts.src_addr ? opts.src_addr : "localhost", opts.src_port,
-		FI_SOURCE, hints, NULL, NULL, check_srcaddr, 0)
+	     opts.src_addr ? opts.src_addr : "localhost", NULL, FI_SOURCE,
+	     hints, NULL, NULL, check_srcaddr, 0)
+getinfo_test(src, 3, "Test with service, FI_SOURCE flag, no node",
+	     NULL, opts.src_port, FI_SOURCE, hints, NULL,
+	     NULL, check_srcaddr, 0)
+getinfo_test(src, 4, "Test with node, service, FI_SOURCE flag",
+	     opts.src_addr ? opts.src_addr : "localhost", opts.src_port,
+	     FI_SOURCE, hints, NULL, NULL, check_srcaddr, 0)
 
 /* 2.2 Source and destination address tests */
 getinfo_test(src_dest, 1, "Test with node, service",
-		opts.dst_addr ? opts.dst_addr : "localhost", opts.dst_port,
-		0, hints, NULL, NULL, check_src_dest_addr, 0)
+	     opts.dst_addr ? opts.dst_addr : "localhost", opts.dst_port,
+	     0, hints, NULL, NULL, check_src_dest_addr, 0)
 
 getinfo_test(src_dest, 2, "Test API version",
-		NULL, NULL, 0, hints, NULL, NULL, check_api_version , 0)
+	     NULL, NULL, 0, hints, NULL, NULL, check_api_version , 0)
 
 /* Negative tests */
 getinfo_test(neg, 1, "Test with non-existent domain name",
-		NULL, NULL, 0, hints, invalid_dom, NULL, NULL, -FI_ENODATA)
+	     NULL, NULL, 0, hints, invalid_dom, NULL, NULL, -FI_ENODATA)
 
 /* Utility provider tests */
 getinfo_test(util, 1, "Test if we get utility provider when requested",
-		NULL, NULL, 0, hints, NULL, NULL, check_util_prov, 0)
+	     NULL, NULL, 0, hints, NULL, NULL, check_util_prov, 0)
 
 /* Message Ordering Tests */
-getinfo_test(msg_ordering, 1, "Test msg ordering bits supported are set",
-		NULL, NULL, 0, hints, NULL, validate_msg_ordering_bits, NULL, 0)
+getinfo_test(msg_ordering, 1, "Test tx ordering bits supported are set",
+	     NULL, NULL, 0, hints, NULL, validate_tx_ordering_bits, NULL, 0)
+getinfo_test(msg_ordering, 2, "Test rx ordering bits supported are set",
+	     NULL, NULL, 0, hints, NULL, validate_rx_ordering_bits, NULL, 0)
+
 getinfo_test(raw_ordering, 1, "Test rma RAW ordering size is set",
-		NULL, NULL, 0, hints, init_valid_rma_RAW_ordering_no_set_size,
-		NULL, check_valid_rma_ordering_sizes, 0)
+	     NULL, NULL, 0, hints, init_valid_rma_RAW_ordering_no_set_size,
+	     NULL, check_valid_rma_ordering_sizes, 0)
 getinfo_test(raw_ordering, 2, "Test rma RAW ordering size is set to hints",
-		NULL, NULL, 0, hints, init_valid_rma_RAW_ordering_set_size,
-		NULL, check_valid_rma_ordering_sizes, 0)
+	     NULL, NULL, 0, hints, init_valid_rma_RAW_ordering_set_size,
+	     NULL, check_valid_rma_ordering_sizes, 0)
 getinfo_test(war_ordering, 1, "Test rma WAR ordering size is set",
-		NULL, NULL, 0, hints, init_valid_rma_WAR_ordering_no_set_size,
-		NULL, check_valid_rma_ordering_sizes, 0)
+	     NULL, NULL, 0, hints, init_valid_rma_WAR_ordering_no_set_size,
+	     NULL, check_valid_rma_ordering_sizes, 0)
 getinfo_test(war_ordering, 2, "Test rma WAR ordering size is set to hints",
-		NULL, NULL, 0, hints, init_valid_rma_WAR_ordering_set_size,
-		NULL, check_valid_rma_ordering_sizes, 0)
+	     NULL, NULL, 0, hints, init_valid_rma_WAR_ordering_set_size,
+	     NULL, check_valid_rma_ordering_sizes, 0)
 getinfo_test(waw_ordering, 1, "Test rma WAW ordering size is set",
-		NULL, NULL, 0, hints, init_valid_rma_WAW_ordering_no_set_size,
-		NULL, check_valid_rma_ordering_sizes, 0)
+	     NULL, NULL, 0, hints, init_valid_rma_WAW_ordering_no_set_size,
+	     NULL, check_valid_rma_ordering_sizes, 0)
 getinfo_test(waw_ordering, 2, "Test rma WAW ordering size is set to hints",
-		NULL, NULL, 0, hints, init_valid_rma_WAW_ordering_set_size,
-		NULL, check_valid_rma_ordering_sizes, 0)
+	     NULL, NULL, 0, hints, init_valid_rma_WAW_ordering_set_size,
+	     NULL, check_valid_rma_ordering_sizes, 0)
 getinfo_test(bad_raw_ordering, 1, "Test invalid rma RAW ordering size",
-		NULL, NULL, 0, hints, init_invalid_rma_RAW_ordering_size,
-		NULL, NULL, -FI_ENODATA)
+	     NULL, NULL, 0, hints, init_invalid_rma_RAW_ordering_size,
+	     NULL, NULL, -FI_ENODATA)
 getinfo_test(bad_war_ordering, 1, "Test invalid rma WAR ordering size",
-		NULL, NULL, 0, hints, init_invalid_rma_WAR_ordering_size,
-		NULL, NULL, -FI_ENODATA)
+	     NULL, NULL, 0, hints, init_invalid_rma_WAR_ordering_size,
+	     NULL, NULL, -FI_ENODATA)
 getinfo_test(bad_waw_ordering, 1, "Test invalid rma WAW ordering size",
-		NULL, NULL, 0, hints, init_invalid_rma_WAW_ordering_size,
-		NULL, NULL, -FI_ENODATA)
+	     NULL, NULL, 0, hints, init_invalid_rma_WAW_ordering_size,
+	     NULL, NULL, -FI_ENODATA)
 
 /* MR mode tests */
 getinfo_test(mr_mode, 1, "Test FI_MR_BASIC", NULL, NULL, 0,
@@ -657,15 +903,37 @@ getinfo_test(mr_mode, 3, "Test FI_MR_UNSPEC (v1.0)", NULL, NULL, 0,
 getinfo_test(mr_mode, 4, "Test FI_MR_BASIC (v1.0)", NULL, NULL, 0,
 	     hints, init_mr_basic, test_mr_v1_0, check_mr_basic, -FI_ENODATA)
 getinfo_test(mr_mode, 5, "Test FI_MR_SCALABLE (v1.0)", NULL, NULL, 0,
-     	     hints, init_mr_scalable, test_mr_v1_0, check_mr_scalable, -FI_ENODATA)
+     	     hints, init_mr_scalable, test_mr_v1_0, check_mr_scalable,
+	     -FI_ENODATA)
 getinfo_test(mr_mode, 6, "Test mr_mode bits", NULL, NULL, 0,
-	     hints, NULL, test_mr_modes, NULL, 0)
+	     hints, NULL, validate_mr_modes, NULL, 0)
+
+/* Progress tests */
+getinfo_test(progress, 1, "Test data manual progress", NULL, NULL, 0,
+	     hints, init_data_manual, NULL, check_data_manual, 0)
+getinfo_test(progress, 2, "Test data auto progress", NULL, NULL, 0,
+	     hints, init_data_auto, NULL, check_data_auto, 0)
+getinfo_test(progress, 3, "Test ctrl manual progress", NULL, NULL, 0,
+	     hints, init_ctrl_manual, NULL, check_ctrl_manual, 0)
+getinfo_test(progress, 4, "Test ctrl auto progress", NULL, NULL, 0,
+	     hints, init_ctrl_auto, NULL, check_ctrl_auto, 0)
+
+/* Capability test */
+getinfo_test(caps, 1, "Test capability bits supported are set",
+	     NULL, NULL, 0, hints, NULL, validate_primary_caps, NULL, 0)
+getinfo_test(caps, 2, "Test capability with no hints",
+	     NULL, NULL, 0, NULL, NULL, NULL, test_null_hints_caps, 0)
+getinfo_test(caps, 3, "Test domain capabilities", NULL, NULL, 0,
+	     hints, NULL, validate_domain_caps, NULL, 0)
+getinfo_test(caps, 4, "Test for capability bit regression",
+	     NULL, NULL, 0, hints, NULL, test_caps_regression, NULL, 0)
 
 
 static void usage(void)
 {
 	ft_unit_usage("getinfo_test", "Unit tests for fi_getinfo");
-	FT_PRINT_OPTS_USAGE("-e <ep_type>", "Endpoint type: msg|rdm|dgram (default:rdm)");
+	FT_PRINT_OPTS_USAGE("-e <ep_type>",
+			    "Endpoint type: msg|rdm|dgram (default:rdm)");
 	ft_addr_usage();
 }
 
@@ -718,6 +986,7 @@ int main(int argc, char **argv)
 		TEST_ENTRY_GETINFO(src_dest1),
 		TEST_ENTRY_GETINFO(src_dest2),
 		TEST_ENTRY_GETINFO(msg_ordering1),
+		TEST_ENTRY_GETINFO(msg_ordering2),
 		TEST_ENTRY_GETINFO(raw_ordering1),
 		TEST_ENTRY_GETINFO(raw_ordering2),
 		TEST_ENTRY_GETINFO(war_ordering1),
@@ -734,6 +1003,14 @@ int main(int argc, char **argv)
 		TEST_ENTRY_GETINFO(mr_mode4),
 		TEST_ENTRY_GETINFO(mr_mode5),
 		TEST_ENTRY_GETINFO(mr_mode6),
+		TEST_ENTRY_GETINFO(progress1),
+		TEST_ENTRY_GETINFO(progress2),
+		TEST_ENTRY_GETINFO(progress3),
+		TEST_ENTRY_GETINFO(progress4),
+		TEST_ENTRY_GETINFO(caps1),
+		TEST_ENTRY_GETINFO(caps2),
+		TEST_ENTRY_GETINFO(caps3),
+		TEST_ENTRY_GETINFO(caps4),
 		{ NULL, "" }
 	};
 
@@ -771,15 +1048,16 @@ int main(int argc, char **argv)
 		opts.src_port = "9228";
 
 	hints->mode = ~0;
+	hints->domain_attr->mr_mode = opts.mr_mode;
 
 	if (hints->fabric_attr->prov_name) {
 		if (set_prov(hints->fabric_attr->prov_name))
 			return EXIT_FAILURE;
 	} else {
-	       FT_WARN("\nTests getinfo1 to getinfo5 may not run exclusively "
-		       "for a particular provider since we don't pass hints.\n"
-		       "So the failures in any of those tests may not be "
-		       "attributable to a single provider.\n");
+	       FT_WARN("\nSome tests do not pass in hints, and may not run "
+		       "exclusively for a particular provider.\n"
+		       "Failures in any of those tests may not be "
+		       "attributable to a specific provider.\n");
 	}
 
 	failed = run_tests(no_hint_tests, err_buf);

@@ -77,6 +77,7 @@ static int hook_mr_regv(struct fid *fid, const struct iovec *iov,
 	attr.context = context;
 	attr.auth_key_size = 0;
 	attr.auth_key = NULL;
+	attr.iface = FI_HMEM_SYSTEM;
 
 	return hook_mr_regattr(fid, &attr, flags, mr);
 }
@@ -108,6 +109,14 @@ int hook_query_atomic(struct fid_domain *domain, enum fi_datatype datatype,
 	return fi_query_atomic(dom->hdomain, datatype, op, attr, flags);
 }
 
+static int hook_query_collective(struct fid_domain *domain, enum fi_collective_op coll,
+				 struct fi_collective_attr *attr, uint64_t flags)
+{
+	struct hook_domain *dom = container_of(domain, struct hook_domain, domain);
+
+	return fi_query_collective(dom->hdomain, coll, attr, flags);
+}
+
 struct fi_ops_domain hook_domain_ops = {
 	.size = sizeof(struct fi_ops_domain),
 	.av_open = hook_av_open,
@@ -119,6 +128,7 @@ struct fi_ops_domain hook_domain_ops = {
 	.stx_ctx = hook_stx_ctx,
 	.srx_ctx = hook_srx_ctx,
 	.query_atomic = hook_query_atomic,
+	.query_collective = hook_query_collective,
 };
 
 

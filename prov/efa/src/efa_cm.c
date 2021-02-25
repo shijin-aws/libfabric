@@ -50,15 +50,17 @@ static int efa_ep_getname(fid_t ep_fid, void *addr, size_t *addrlen)
 	struct efa_ep *ep;
 	char str[INET6_ADDRSTRLEN] = {};
 
-	ep = container_of(ep_fid, struct efa_ep, ep_fid);
+	ep = container_of(ep_fid, struct efa_ep, util_ep.ep_fid);
 
 	ep_addr = (struct efa_ep_addr *)ep->src_addr;
 	ep_addr->qpn = ep->qp->qp_num;
+	ep_addr->pad = 0;
+	ep_addr->qkey = ep->qp->qkey;
 
 	inet_ntop(AF_INET6, ep_addr->raw, str, INET6_ADDRSTRLEN);
 
-	EFA_INFO(FI_LOG_EP_CTRL, "EP addr: GID[%s] QP[%d] (length %zu)\n",
-		 str, ep_addr->qpn, *addrlen);
+	EFA_INFO(FI_LOG_EP_CTRL, "EP addr: GID[%s] QP[%d] QKEY[%d] (length %zu)\n",
+		 str, ep_addr->qpn, ep_addr->qkey, *addrlen);
 
 	return efa_copy_addr(addr, addrlen, ep_addr);
 }

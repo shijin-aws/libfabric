@@ -33,6 +33,14 @@ This distribution of libfabric contains the following providers
 : High-speed InfiniBand networking from Intel.  See
   [`fi_psm`(7)](fi_psm.7.html) for more information.
 
+*PSM2*
+: High-speed Omni-Path networking from Intel.  See
+  [`fi_psm2`(7)](fi_psm2.7.html) for more information.
+
+*PSM3*
+: High-speed Ethernet networking from Intel.  See
+  [`fi_psm3`(7)](fi_psm3.7.html) for more information.
+
 *Sockets*
 : A general purpose provider that can be used on any network that
   supports TCP/UDP sockets.  This provider is not intended to provide
@@ -64,12 +72,24 @@ This distribution of libfabric contains the following providers
   hardware interface for inter-instance communication on EC2.
   See [`fi_efa`(7)](fi_efa.7.html) for more information.
 
+*SHM*
+: A provider for intranode communication using shared memory.
+  The provider makes use of the Linux kernel feature Cross Memory
+  Attach (CMA) which allows processes to have full access to another
+  process' address space.
+  See [`fi_shm`(7)](fi_shm.7.html) for more information. 
+
 ## Utility providers
 
 *RxM*
 : The RxM provider (ofi_rxm) is an utility provider that supports RDM
   endpoints emulated over MSG endpoints of a core provider.
   See [`fi_rxm`(7)](fi_rxm.7.html) for more information.
+
+*RxD*
+: The RxD provider (ofi_rxd) is a utility provider that supports RDM
+  endpoints emulated over DGRAM endpoints of a core provider.
+  See [`fi_rxd`(7)](fi_rxd.7.html) for more information.
 
 ## Special providers
 

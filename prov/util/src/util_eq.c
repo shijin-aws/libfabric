@@ -41,7 +41,8 @@ void ofi_eq_handle_err_entry(uint32_t api_version, uint64_t flags,
 			     struct fi_eq_err_entry *user_err_entry)
 {
 	if ((FI_VERSION_GE(api_version, FI_VERSION(1, 5)))
-	    && user_err_entry->err_data && user_err_entry->err_data_size) {
+	    && user_err_entry->err_data && user_err_entry->err_data_size
+	    && err_entry->err_data && err_entry->err_data_size) {
 		void *err_data = user_err_entry->err_data;
 		size_t err_data_size = MIN(err_entry->err_data_size,
 					   user_err_entry->err_data_size);
@@ -67,6 +68,11 @@ void ofi_eq_handle_err_entry(uint32_t api_version, uint64_t flags,
 	}
 }
 
+/*
+ * fi_eq_read and fi_eq_readerr share this common code path.
+ * If flags contains UTIL_FLAG_ERROR, then we are processing
+ * fi_eq_readerr.
+ */
 ssize_t ofi_eq_read(struct fid_eq *eq_fid, uint32_t *event,
 		    void *buf, size_t len, uint64_t flags)
 {
@@ -104,7 +110,7 @@ ssize_t ofi_eq_read(struct fid_eq *eq_fid, uint32_t *event,
 
 			ofi_eq_handle_err_entry(eq->fabric->fabric_fid.api_version,
 						flags, err_entry, buf);
-			ret = (ssize_t) entry->size;
+			ret = entry->size;
 
 			if (!(flags & FI_PEEK))
 				eq->saved_err_data = err_entry->err_data;
@@ -143,7 +149,7 @@ ssize_t ofi_eq_write(struct fid_eq *eq_fid, uint32_t event,
 	if (!entry)
 		return -FI_ENOMEM;
 
-	entry->size = (int) len;
+	entry->size = len;
 	entry->event = event;
 	entry->err = !!(flags & UTIL_FLAG_ERROR);
 	memcpy(entry->data, buf, len);
@@ -202,6 +208,7 @@ int ofi_eq_control(struct fid *fid, int command, void *arg)
 
 	switch (command) {
 	case FI_GETWAIT:
+	case FI_GETWAITOBJ:
 		ret = fi_control(&eq->wait->wait_fid.fid, command, arg);
 		break;
 	default:
@@ -289,7 +296,9 @@ static int util_eq_init(struct fid_fabric *fabric, struct util_eq *eq,
 		break;
 	case FI_WAIT_UNSPEC:
 	case FI_WAIT_FD:
+	case FI_WAIT_POLLFD:
 	case FI_WAIT_MUTEX_COND:
+	case FI_WAIT_YIELD:
 		memset(&wait_attr, 0, sizeof wait_attr);
 		wait_attr.wait_obj = attr->wait_obj;
 		eq->internal_wait = 1;
@@ -362,7 +371,9 @@ static int util_verify_eq_attr(const struct fi_provider *prov,
 	case FI_WAIT_NONE:
 	case FI_WAIT_UNSPEC:
 	case FI_WAIT_FD:
+	case FI_WAIT_POLLFD:
 	case FI_WAIT_MUTEX_COND:
+	case FI_WAIT_YIELD:
 		break;
 	case FI_WAIT_SET:
 		if (!attr->wait_set) {

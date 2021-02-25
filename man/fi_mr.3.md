@@ -32,7 +32,7 @@ fi_mr_unmap_key
 : Releases a previously mapped raw memory region key.
 
 fi_mr_bind
-: Associate a registered memory region with a completion counter.
+: Associate a registered memory region with a completion counter or an endpoint.
 
 fi_mr_refresh
 : Updates the memory pages associated with a memory region.
@@ -93,10 +93,10 @@ int fi_mr_enable(struct fid_mr *mr);
 : User specified context associated with the memory region.
 
 *buf*
-: Memory buffer to register with the fabric hardware
+: Memory buffer to register with the fabric hardware.
 
 *len*
-: Length of memory buffer to register
+: Length of memory buffer to register.  Must be > 0.
 
 *iov*
 : Vectored memory buffer.
@@ -129,29 +129,44 @@ of a remote RMA or atomic data transfer.  Additionally, a fabric
 provider may require that data buffers be registered before being used
 in local transfers.  Memory registration restrictions are controlled
 using a separate set of mode bits, specified through the domain
-attributes (mr_mode field).
+attributes (mr_mode field).  Each mr_mode bit requires that an
+application take specific steps in order to use memory buffers with
+libfabric interfaces.
 
 The following apply to memory registration.
 
-*Scalable Memory Registration*
-: By default, memory registration is considered scalable.  (For library versions
-  1.4 and earlier, this is indicated by setting mr_mode to FI_MR_SCALABLE,
-  with the fi_info mode bit FI_LOCAL_MR set to 0).  For versions 1.5 and later,
-  scalable is implied by the lack of any mr_mode bits being set.  The setting
-  of mr_mode bits therefore adjusts application behavior as described below.
-  Default, scalable registration has several properties.
+*Default Memory Registration*
+: If no mr_mode bits are set, the default behaviors describe below are
+  followed.  Historically, these defaults were collectively referred to as
+  scalable memory registration.  The default requirements are outlined below,
+  followed by definitions of how each mr_mode bit alters the definition.
 
-  In scalable mode, registration occurs on memory address ranges.
-  Because registration refers to memory regions, versus data buffers, the
-  address ranges given for a registration request do not need to map to
+  Compatibility: For library versions 1.4 and earlier, this was indicated by
+  setting mr_mode to FI_MR_SCALABLE and the fi_info mode bit FI_LOCAL_MR to 0.
+  FI_MR_SCALABLE and FI_LOCAL_MR were deprecated in libfabric version 1.5,
+  though they are supported for backwards compatibility purposes.
+
+  For security, memory registration is required for data buffers that are
+  accessed directly by a peer process.  For example, registration is
+  required for RMA target buffers (read or written to), and those accessed
+  by atomic or collective operations.
+
+  By default, registration occurs on virtual address ranges.
+  Because registration refers to address ranges, rather than allocated
+  data buffers, the address ranges do not need to map to
   data buffers allocated by the application at the time the registration
   call is made.  That is, an application can register any
   range of addresses in their virtual address space, whether or not those
   addresses are backed by physical pages or have been allocated.
 
-  The resulting memory regions are accessible by peers starting at a base
-  address of 0.  That is, the target address that is specified is a byte
-  offset into the registered region.
+  Note that physical pages must back addresses prior to the addresses being
+  accessed as part of a data transfer operation, or the data transfers will
+  fail.  Additionally, depending on the operation, this could result in the
+  local process receiving a segmentation fault for accessing invalid memory.
+
+  Once registered, the resulting memory regions are accessible by peers starting
+  at a base address of 0.  That is, the target address that is specified is a
+  byte offset into the registered region.
 
   The application also selects the access key associated with the MR.  The
   key size is restricted to a maximum of 8 bytes.
@@ -161,14 +176,30 @@ The following apply to memory registration.
   tagged sends, RMA, and atomics -- as well as buffers posted for receive
   and tagged receive operations.
 
+  Although the default memory registration behavior is convenient for
+  application developers, it is difficult to implement in hardware.
+  Attempts to hide the hardware requirements from the application often
+  results in significant and unacceptable impacts to performance.  The
+  following mr_mode bits are provided as input into fi_getinfo.  If a
+  provider requires the behavior defined for an mr_mode bit, it will leave
+  the bit set on output to fi_getinfo.  Otherwise, the provider can clear
+  the bit to indicate that the behavior is not needed.
+
+  By setting an mr_mode bit, the application has agreed to adjust its
+  behavior as indicated.  Importantly, applications that choose to support
+  an mr_mode must be prepared to handle the case where the mr_mode is
+  not required.  A provider will clear an mr_mode bit if it is not needed.
+
 *FI_MR_LOCAL*
 : When the FI_MR_LOCAL mode bit is set, applications must register all
   data buffers that will be accessed by the local hardware and provide
-  a valid mem_desc parameter into applicable data transfer operations.
+  a valid desc parameter into applicable data transfer operations.
   When FI_MR_LOCAL is zero, applications are not required to register
   data buffers before using them for local operations (e.g. send and
-  receive data buffers), and the mem_desc parameter into data transfer
-  operations is ignored.
+  receive data buffers).  The desc parameter into data transfer
+  operations will be ignored in this case, unless otherwise required
+  (e.g. se  FI_MR_HMEM).  It is recommended that applications pass in
+  NULL for desc when not required.
 
   A provider may hide local registration requirements from applications
   by making use of an internal registration cache or similar mechanisms.
@@ -245,18 +276,36 @@ The following apply to memory registration.
   MR with an endpoint, the application must use fi_mr_bind().  To
   enable the memory region, the application must call fi_mr_enable().
 
+*FI_MR_HMEM*
+: This mode bit is associated with the FI_HMEM capability.
+  If FI_MR_HMEM is set, the application must register buffers that
+  were allocated using a device call and provide a valid desc
+  parameter into applicable data transfer operations even if they are
+  only used for local operations (e.g. send and receive data buffers).
+  Device memory must be registered using the fi_mr_regattr call, with
+  the iface and device fields filled out.
+
+  If FI_MR_HMEM is set, but FI_MR_LOCAL is unset, only device buffers
+  must be registered when used locally.  In this case, the desc parameter
+  passed into data transfer operations must either be valid or NULL.
+  Similarly, if FI_MR_LOCAL is set, but FI_MR_HMEM is not, the desc
+  parameter must either be valid or NULL.
+
 *Basic Memory Registration*
-: Basic memory registration is indicated by the FI_MR_BASIC mr_mode bit.
-  FI_MR_BASIC is maintained for backwards compatibility (libfabric version
-  1.4 or earlier).  The behavior of basic registration is equivalent
-  to setting the following mr_mode bits to one: FI_MR_VIRT_ADDR,
+: Basic memory registration was deprecated in libfabric version 1.5, but
+  is supported for backwards compatibility.  Basic memory registration
+  is indicated by setting mr_mode equal to FI_MR_BASIC.
+  FI_MR_BASIC must be set alone and not paired with mr_mode bits.
+  Unlike other mr_mode bits, if FI_MR_BASIC is set on input to fi_getinfo(),
+  it will not be cleared by the provider.  That is, setting mr_mode equal to
+  FI_MR_BASIC forces basic registration if the provider supports it.
+
+  The behavior of basic registration is equivalent
+  to requiring the following mr_mode bits: FI_MR_VIRT_ADDR,
   FI_MR_ALLOCATED, and FI_MR_PROV_KEY.  Additionally, providers that
-  support basic registration usually required FI_MR_LOCAL.  FI_MR_BASIC 
-  must either be set alone, or in conjunction with FI_MR_LOCAL.  Other
-  mr_mode bit pairings are invalid.  Unlike other mr_mode bits, if
-  FI_MR_BASIC is set on input to fi_getinfo(),  it will not be cleared
-  by the provider.  That is, setting FI_MR_BASIC
-  to one requests basic registration.
+  support basic registration usually require the (deprecated) fi_info mode
+  bit FI_LOCAL_MR, which was incorporated into the FI_MR_LOCAL mr_mode
+  bit.
 
 The registrations functions -- fi_mr_reg, fi_mr_regv, and
 fi_mr_regattr -- are used to register one or more memory regions with
@@ -452,6 +501,12 @@ struct fi_mr_attr {
 	void               *context;
 	size_t             auth_key_size;
 	uint8_t            *auth_key;
+	enum fi_hmem_iface iface;
+	union {
+		uint64_t         reserved;
+		int              cuda;
+		int		 ze
+	} device;
 };
 ```
 ## mr_iov
@@ -540,9 +595,39 @@ version 1.5 or greater.
 Indicates the key to associate with this memory registration.  Authorization
 keys are used to limit communication between endpoints.  Only peer endpoints
 that are programmed to use the same authorization key may access the memory
-region.  The domain authorization key will be used if the auth_key_size 
-provided is 0.  This field is ignored unless the fabric is opened with API 
+region.  The domain authorization key will be used if the auth_key_size
+provided is 0.  This field is ignored unless the fabric is opened with API
 version 1.5 or greater.
+
+## iface
+Indicates the software interfaces used by the application to allocate and
+manage the memory region. This field is ignored unless the application has
+requested the FI_HMEM capability.
+
+*FI_HMEM_SYSTEM*
+: Uses standard operating system calls and libraries, such as malloc,
+  calloc, realloc, mmap, and free.
+
+*FI_HMEM_CUDA*
+: Uses Nvidia CUDA interfaces such as cuMemAlloc, cuMemAllocHost,
+  cuMemAllocManaged, cuMemFree, cudaMalloc, cudaFree.
+
+*FI_HMEM_ROCR*
+: Uses AMD ROCR interfaces such as hsa_memory_allocate and hsa_memory_free.
+
+*FI_HMEM_ZE*
+: Uses Intel L0 ZE interfaces such as zeDriverAllocSharedMem,
+  zeDriverFreeMem.
+
+## device
+Reserved 64 bits for device identifier if using non-standard HMEM interface.
+This field is ignore unless the iface field is valid.
+
+*cuda*
+: For FI_HMEM_CUDA, this is equivalent to CUdevice (int).
+
+*ze*
+: For FI_HMEM_ZE, this is equivalent to the ze_device_handle_t index (int).
 
 # NOTES
 
@@ -612,12 +697,17 @@ Fabric errno values are defined in
 Many hardware NICs accessed by libfabric require that data buffers be
 registered with the hardware while the hardware accesses it.  This ensures
 that the virtual to physical address mappings for those buffers do not change
-while the transfer is ocurring.  The performance impact of registering
+while the transfer is occurring.  The performance impact of registering
 memory regions can be significant.  As a result, some providers make use
 of a registration cache, particularly when working with applications that
 are unable to manage their own network buffers.  A registration cache avoids
 the overhead of registering and unregistering a data buffer with each
 transfer.
+
+If a registration cache is going to be used for host and device memory, the
+device must support unified virtual addressing. If the device does not
+support unified virtual addressing, either an additional registration cache
+is required to track this device memory, or device memory cannot be cached.
 
 As a general rule, if hardware requires the FI_MR_LOCAL mode bit described
 above, but this is not supported by the application, a memory registration
@@ -639,14 +729,30 @@ configure registration caches.
   are not actively being used as part of a data transfer.  Setting this to
   zero will disable registration caching.
 
-*FI_MR_CACHE_MERGE_REGIONS*
-: If this variable is set to true, yes, or 1, then memory regions that are
-  adjacent or overlapping will be merged into a single larger region.  Merging
-  regions reduces the total cache size and the number of regions managed by
-  the cache.  However, merging regions can have a negative impact on
-  performance if a large number of adjacent regions are sent as separate data
-  transfers (such as sending elements of an array to peer(s)), and the larger
-  region is access infrequently.  By default merging regions is disabled.
+*FI_MR_CACHE_MONITOR*
+: The cache monitor is responsible for detecting system memory (FI_HMEM_SYSTEM)
+  changes made between the virtual addresses used by an application and the
+  underlying physical pages. Valid monitor options are: userfaultfd, memhooks,
+  and disabled.  Selecting disabled will turn off the registration cache.
+  Userfaultfd is a Linux kernel feature used to report virtual to physical
+  address mapping changes to user space. Memhooks operates by intercepting
+  relevant memory allocation and deallocation calls which may result in the
+  mappings changing, such as malloc, mmap, free, etc.  Note that memhooks
+  operates at the elf linker layer, and does not use glibc memory hooks.
+
+*FI_MR_CUDA_CACHE_MONITOR_ENABLED*
+: The CUDA cache monitor is responsible for detecting CUDA device memory
+  (FI_HMEM_CUDA) changes made between the device virtual addresses used by an
+  application and the underlying device physical pages. Valid monitor options
+  are: 0 or 1. Note that the CUDA memory monitor requires a CUDA toolkit version
+  with unified virtual addressing enabled.
+
+*FI_MR_ROCR_CACHE_MONITOR_ENABLED*
+: The ROCR cache monitor is responsible for detecting ROCR device memory
+  (FI_HMEM_ROCR) changes made between the device virtual addresses used by an
+  application and the underlying device physical pages. Valid monitor options
+  are: 0 or 1. Note that the ROCR memory monitor requires a ROCR version with
+  unified virtual addressing enabled.
 
 # SEE ALSO
 

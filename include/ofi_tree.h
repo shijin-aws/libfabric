@@ -64,6 +64,7 @@ struct ofi_rbnode {
 struct ofi_rbmap {
 	struct ofi_rbnode	*root;
 	struct ofi_rbnode	sentinel;
+	struct ofi_rbnode	*free_list;
 
 	/* compare()
 	 *	= 0: a == b
@@ -81,12 +82,14 @@ void ofi_rbmap_init(struct ofi_rbmap *map,
 		int (*compare)(struct ofi_rbmap *map, void *key, void *data));
 void ofi_rbmap_cleanup(struct ofi_rbmap *map);
 
+struct ofi_rbnode *ofi_rbmap_get_root(struct ofi_rbmap *map);
 struct ofi_rbnode *ofi_rbmap_find(struct ofi_rbmap *map, void *key);
 struct ofi_rbnode *ofi_rbmap_search(struct ofi_rbmap *map, void *key,
 		int (*compare)(struct ofi_rbmap *map, void *key, void *data));
 int ofi_rbmap_insert(struct ofi_rbmap *map, void *key, void *data,
 		struct ofi_rbnode **node);
 void ofi_rbmap_delete(struct ofi_rbmap *map, struct ofi_rbnode *node);
+int ofi_rbmap_find_delete(struct ofi_rbmap *map, void *key);
 int ofi_rbmap_empty(struct ofi_rbmap *map);
 
 

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2013-2015 Intel Corporation, Inc.  All rights reserved.
- * Copyright (c) 2017-2018 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2017-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -32,313 +32,148 @@
  */
 
 #include "config.h"
-
 #include "efa.h"
-#include "efa_verbs.h"
-#include "efa_ib.h"
-#include "efa_io_defs.h"
 
-static void efa_ep_init_qp_indices(struct efa_qp *qp)
+#include <sys/time.h>
+#include <infiniband/efadv.h>
+#define EFA_CQ_PROGRESS_ENTRIES 500
+
+static int efa_generate_qkey()
 {
-	qp->sq.wq.wqe_posted = 0;
-	qp->sq.wq.wqe_completed = 0;
-	qp->sq.wq.desc_idx = 0;
-	qp->sq.wq.wrid_idx_pool_next = 0;
-
-	qp->rq.wq.wqe_posted = 0;
-	qp->rq.wq.wqe_completed = 0;
-	qp->rq.wq.desc_idx = 0;
-	qp->rq.wq.wrid_idx_pool_next = 0;
-}
-
-static void efa_ep_setup_qp(struct efa_qp *qp,
-			    struct ibv_qp_cap *cap,
-			    size_t page_size)
-{
-	uint16_t rq_desc_cnt;
-
-	efa_ep_init_qp_indices(qp);
-
-	qp->sq.wq.wqe_cnt = align_up_queue_size(cap->max_send_wr);
-	qp->sq.wq.max_sge = cap->max_send_sge;
-	qp->sq.wq.desc_mask = qp->sq.wq.wqe_cnt - 1;
-
-	qp->rq.wq.max_sge = cap->max_recv_sge;
-	rq_desc_cnt = align_up_queue_size(cap->max_recv_sge * cap->max_recv_wr);
-	qp->rq.wq.desc_mask = rq_desc_cnt - 1;
-	qp->rq.wq.wqe_cnt = rq_desc_cnt / qp->rq.wq.max_sge;
-
-	qp->page_size = page_size;
-}
-
-static void efa_ep_wq_terminate(struct efa_wq *wq)
-{
-	free(wq->wrid_idx_pool);
-	free(wq->wrid);
-}
-
-static int efa_ep_wq_initialize(struct efa_wq *wq)
-{
-	int i, err;
-
-	wq->wrid = malloc(wq->wqe_cnt * sizeof(*wq->wrid));
-	if (!wq->wrid)
-		return -ENOMEM;
-
-	wq->wrid_idx_pool = malloc(wq->wqe_cnt * sizeof(__u32));
-	if (!wq->wrid_idx_pool) {
-		err = -ENOMEM;
-		goto err_free_wrid;
-	}
-
-	/* Initialize the wrid free indexes pool. */
-	for (i = 0; i < wq->wqe_cnt; i++)
-		wq->wrid_idx_pool[i] = i;
-
-	return 0;
-
-err_free_wrid:
-	free(wq->wrid);
-
-	return err;
-}
-
-static int efa_ep_sq_initialize(struct efa_qp *qp, struct efa_create_qp_resp *resp, int fd)
-{
-	size_t desc_ring_size;
-	uint8_t *db_base;
+	struct timeval tv;
+	struct timezone tz;
+	uint32_t val;
 	int err;
 
-	if (!qp->sq.wq.wqe_cnt)
+	err = gettimeofday(&tv, &tz);
+	if (err) {
+		EFA_WARN(FI_LOG_EP_CTRL, "Cannot gettimeofday, err=%d.\n", err);
 		return 0;
-
-	err = efa_ep_wq_initialize(&qp->sq.wq);
-	if (err)
-		return err;
-
-	qp->sq.immediate_data_width = 8;
-	qp->sq.desc_offset = resp->efa_resp.llq_desc_offset;
-	desc_ring_size = qp->sq.wq.wqe_cnt * sizeof(struct efa_io_tx_wqe);
-	qp->sq.desc_ring_mmap_size = align(desc_ring_size + qp->sq.desc_offset, qp->page_size);
-	qp->sq.max_inline_data = resp->ibv_resp.max_inline_data;
-
-	qp->sq.desc = mmap(NULL, qp->sq.desc_ring_mmap_size, PROT_WRITE,
-			   MAP_SHARED, fd, resp->efa_resp.llq_desc_mmap_key);
-	if (qp->sq.desc == MAP_FAILED)
-		goto err_terminate_wq;
-	qp->sq.desc += qp->sq.desc_offset;
-
-	db_base = mmap(NULL, qp->page_size, PROT_WRITE, MAP_SHARED, fd, resp->efa_resp.sq_db_mmap_key);
-	if (db_base == MAP_FAILED)
-		goto err_unmap_desc_ring;
-	qp->sq.db = (uint32_t *)(db_base + resp->efa_resp.sq_db_offset);
-	qp->sq.sub_cq_idx = resp->efa_resp.send_sub_cq_idx;
-
-	return 0;
-
-err_unmap_desc_ring:
-	if (munmap(qp->sq.desc - qp->sq.desc_offset, qp->sq.desc_ring_mmap_size))
-		EFA_WARN(FI_LOG_EP_CTRL, "qp[%u]: desc unmap failed!\n", qp->qp_num);
-err_terminate_wq:
-	efa_ep_wq_terminate(&qp->sq.wq);
-	return -EINVAL;
-}
-
-static void efa_ep_sq_terminate(struct efa_qp *qp)
-{
-	void *db_aligned;
-
-	if (!qp->sq.wq.wrid)
-		return;
-
-	db_aligned = (void *)((__u64)qp->sq.db & ~(qp->page_size - 1));
-	if (munmap(db_aligned, qp->page_size))
-		EFA_WARN(FI_LOG_EP_CTRL, "qp[%u]: sq db unmap failed!\n", qp->qp_num);
-	if (munmap(qp->sq.desc - qp->sq.desc_offset, qp->sq.desc_ring_mmap_size))
-		EFA_WARN(FI_LOG_EP_CTRL, "qp[%u]: desc data unmap failed!\n", qp->qp_num);
-
-	efa_ep_wq_terminate(&qp->sq.wq);
-}
-
-static void efa_ep_rq_terminate(struct efa_qp *qp)
-{
-	void *db_aligned;
-
-	if (!qp->rq.wq.wrid)
-		return;
-
-	db_aligned = (void *)((__u64)qp->rq.db & ~(qp->page_size - 1));
-	if (munmap(db_aligned, qp->page_size))
-		EFA_WARN(FI_LOG_EP_CTRL, "qp[%u]: rq db unmap failed!\n", qp->qp_num);
-	if (munmap(qp->rq.buf, qp->rq.buf_size))
-		EFA_WARN(FI_LOG_EP_CTRL, "qp[%u]: rq buffer unmap failed!\n", qp->qp_num);
-
-	efa_ep_wq_terminate(&qp->rq.wq);
-}
-
-static int efa_ep_rq_initialize(struct efa_qp *qp, struct efa_create_qp_resp *resp, int fd)
-{
-	uint8_t *db_base;
-	int err;
-
-	if (!qp->rq.wq.wqe_cnt)
-		return 0;
-
-	err = efa_ep_wq_initialize(&qp->rq.wq);
-	if (err)
-		return err;
-
-	qp->rq.buf_size = resp->efa_resp.rq_mmap_size;
-	qp->rq.buf = mmap(NULL, qp->rq.buf_size, PROT_WRITE, MAP_SHARED, fd, resp->efa_resp.rq_mmap_key);
-	if (qp->rq.buf == MAP_FAILED)
-		goto err_terminate_wq;
-
-	db_base = mmap(NULL, qp->page_size, PROT_WRITE, MAP_SHARED, fd, resp->efa_resp.rq_db_mmap_key);
-	if (db_base == MAP_FAILED)
-		goto err_unmap_rq_buf;
-	qp->rq.db = (uint32_t *)(db_base + resp->efa_resp.rq_db_offset);
-	qp->rq.sub_cq_idx = resp->efa_resp.recv_sub_cq_idx;
-
-	return 0;
-
-err_unmap_rq_buf:
-	if (munmap(qp->rq.buf, qp->rq.buf_size))
-		EFA_WARN(FI_LOG_EP_CTRL, "qp[%u]: rq buf unmap failed!\n", qp->qp_num);
-err_terminate_wq:
-	efa_ep_wq_terminate(&qp->rq.wq);
-	return -EINVAL;
-}
-
-static void efa_ep_lock_cqs(struct ibv_qp *ibqp)
-{
-	struct efa_cq *send_cq = to_efa_cq(ibqp->send_cq);
-	struct efa_cq *recv_cq = to_efa_cq(ibqp->recv_cq);
-
-	if (recv_cq == send_cq && recv_cq) {
-		fastlock_acquire(&recv_cq->inner_lock);
-	} else {
-		if (recv_cq)
-			fastlock_acquire(&recv_cq->inner_lock);
-		if (send_cq)
-			fastlock_acquire(&send_cq->inner_lock);
 	}
-}
 
-static void efa_ep_unlock_cqs(struct ibv_qp *ibqp)
-{
-	struct efa_cq *send_cq = to_efa_cq(ibqp->send_cq);
-	struct efa_cq *recv_cq = to_efa_cq(ibqp->recv_cq);
+	/* tv_usec is in range [0,1,000,000), shift it by 12 to [0,4,096,000,000 */
+	val = (tv.tv_usec << 12) + tv.tv_sec;
 
-	if (recv_cq == send_cq && recv_cq) {
-		fastlock_release(&recv_cq->inner_lock);
-	} else {
-		if (recv_cq)
-			fastlock_release(&recv_cq->inner_lock);
-		if (send_cq)
-			fastlock_release(&send_cq->inner_lock);
-	}
+	val = ofi_xorshift_random(val);
+
+	/* 0x80000000 and up is privileged Q Key range. */
+	val &= 0x7fffffff;
+
+	return val;
 }
 
 static int efa_ep_destroy_qp(struct efa_qp *qp)
 {
-	struct efa_context *ctx;
-	struct efa_cq *send_cq;
-	struct efa_cq *recv_cq;
-	struct ibv_qp *ibqp;
+	struct efa_domain *domain;
 	int err;
 
 	if (!qp)
 		return 0;
 
-	ibqp = &qp->ibv_qp;
-	ctx = to_efa_ctx(ibqp->context);
-
-	pthread_mutex_lock(&ctx->qp_table_mutex);
-	efa_ep_lock_cqs(ibqp);
-
-	if (ibqp->send_cq) {
-		send_cq = to_efa_cq(ibqp->send_cq);
-		efa_cq_dec_ref_cnt(send_cq, qp->sq.sub_cq_idx);
-	}
-	if (ibqp->recv_cq) {
-		recv_cq = to_efa_cq(ibqp->recv_cq);
-		efa_cq_dec_ref_cnt(recv_cq, qp->rq.sub_cq_idx);
-	}
-	ctx->qp_table[ibqp->qp_num] = NULL;
-
-	efa_ep_unlock_cqs(ibqp);
-	pthread_mutex_unlock(&ctx->qp_table_mutex);
-
-	err = efa_cmd_destroy_qp(qp);
+	domain = qp->ep->domain;
+	domain->qp_table[qp->qp_num & domain->qp_table_sz_m1] = NULL;
+	err = -ibv_destroy_qp(qp->ibv_qp);
 	if (err)
 		EFA_INFO(FI_LOG_CORE, "destroy qp[%u] failed!\n", qp->qp_num);
-	efa_ep_sq_terminate(qp);
-	efa_ep_rq_terminate(qp);
 
 	free(qp);
 	return err;
 }
 
-static int efa_ep_create_qp(struct efa_ep *ep,
-			    struct efa_pd *pd,
-			    struct ibv_qp_init_attr *init_attr)
+static int efa_ep_modify_qp_state(struct efa_qp *qp, enum ibv_qp_state qp_state,
+				  int attr_mask)
 {
-	struct ibv_pd *ibpd = &pd->ibv_pd;
-	struct efa_device *dev = to_efa_dev(ibpd->context->device);
-	struct efa_create_qp_resp resp;
-	struct efa_cq *send_cq;
-	struct efa_cq *recv_cq;
-	struct efa_qp *qp;
+	struct ibv_qp_attr attr = {};
+
+	attr.qp_state = qp_state;
+
+	if (attr_mask & IBV_QP_PORT)
+		attr.port_num = 1;
+
+	if (attr_mask & IBV_QP_QKEY)
+		attr.qkey = qp->qkey;
+
+	/*
+	 * You can set how many times the firmware retries here.
+	 * Valid values are from 0(included) to 7(included).
+	 * 0 stands for no firmware level retries.
+	 * 7 means firmware retries infinitely.
+	 */
+	if (attr_mask & IBV_QP_RNR_RETRY)
+		attr.rnr_retry = 7;
+
+	return -ibv_modify_qp(qp->ibv_qp, &attr, attr_mask);
+
+}
+
+static int efa_ep_modify_qp_rst2rts(struct efa_ep *ep, struct efa_qp *qp)
+{
 	int err;
 
+	err = efa_ep_modify_qp_state(qp, IBV_QPS_INIT,
+				     IBV_QP_STATE | IBV_QP_PKEY_INDEX |
+				     IBV_QP_PORT | IBV_QP_QKEY);
+	if (err)
+		return err;
+
+	err = efa_ep_modify_qp_state(qp, IBV_QPS_RTR, IBV_QP_STATE);
+	if (err)
+		return err;
+
+	if (ep->util_ep.type != FI_EP_DGRAM &&
+	    efa_ep_support_rnr_retry_modify(&ep->util_ep.ep_fid))
+		return efa_ep_modify_qp_state(qp, IBV_QPS_RTS,
+			IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_RNR_RETRY);
+
+	return efa_ep_modify_qp_state(qp, IBV_QPS_RTS,
+				      IBV_QP_STATE | IBV_QP_SQ_PSN);
+}
+
+static int efa_ep_create_qp_ex(struct efa_ep *ep,
+			       struct ibv_pd *ibv_pd,
+			       struct ibv_qp_init_attr_ex *init_attr_ex)
+{
+	struct efa_domain *domain;
+	struct efa_qp *qp;
+	struct efadv_qp_init_attr efa_attr = {};
+	int err;
+
+	domain = ep->domain;
 	qp = calloc(1, sizeof(*qp));
 	if (!qp)
 		return -FI_ENOMEM;
 
-	efa_ep_setup_qp(qp, &init_attr->cap, dev->page_size);
+	if (init_attr_ex->qp_type == IBV_QPT_UD) {
+		qp->ibv_qp = ibv_create_qp_ex(ibv_pd->context, init_attr_ex);
+	} else {
+		assert(init_attr_ex->qp_type == IBV_QPT_DRIVER);
+		efa_attr.driver_qp_type = EFADV_QP_DRIVER_TYPE_SRD;
+		qp->ibv_qp = efadv_create_qp_ex(ibv_pd->context, init_attr_ex, &efa_attr,
+						sizeof(struct efadv_qp_init_attr));
+	}
 
-	err = efa_cmd_create_qp(qp, pd, init_attr, ep->domain->rdm, &resp);
-	if (err) {
-		EFA_WARN(FI_LOG_EP_CTRL, "efa_cmd_create_qp failed [%u]!\n", err);
+	if (!qp->ibv_qp) {
+		EFA_WARN(FI_LOG_EP_CTRL, "ibv_create_qp failed\n");
+		err = -EINVAL;
 		goto err_free_qp;
 	}
 
-	qp->qp_num = qp->ibv_qp.qp_num;
-	err = efa_ep_rq_initialize(qp, &resp, ibpd->context->cmd_fd);
+	qp->ibv_qp_ex = ibv_qp_to_qp_ex(qp->ibv_qp);
+	qp->qkey = efa_generate_qkey();
+	err = efa_ep_modify_qp_rst2rts(ep, qp);
 	if (err)
 		goto err_destroy_qp;
 
-	err = efa_ep_sq_initialize(qp, &resp, ibpd->context->cmd_fd);
-	if (err)
-		goto err_terminate_rq;
-
-	pthread_mutex_lock(&pd->context->qp_table_mutex);
-	pd->context->qp_table[qp->qp_num] = qp;
-	pthread_mutex_unlock(&pd->context->qp_table_mutex);
-
-	if (init_attr->send_cq) {
-		send_cq = to_efa_cq(init_attr->send_cq);
-		fastlock_acquire(&send_cq->inner_lock);
-		efa_cq_inc_ref_cnt(send_cq, resp.efa_resp.send_sub_cq_idx);
-		fastlock_release(&send_cq->inner_lock);
-	}
-	if (init_attr->recv_cq) {
-		recv_cq = to_efa_cq(init_attr->recv_cq);
-		fastlock_acquire(&recv_cq->inner_lock);
-		efa_cq_inc_ref_cnt(recv_cq, resp.efa_resp.recv_sub_cq_idx);
-		fastlock_release(&recv_cq->inner_lock);
-	}
-
+	qp->qp_num = qp->ibv_qp->qp_num;
 	ep->qp = qp;
 	qp->ep = ep;
-	EFA_INFO(FI_LOG_EP_CTRL, "%s(): create QP %d\n", __func__, qp->qp_num);
+	domain->qp_table[ep->qp->qp_num & domain->qp_table_sz_m1] = ep->qp;
+	EFA_INFO(FI_LOG_EP_CTRL, "%s(): create QP %d qkey: %d\n", __func__, qp->qp_num, qp->qkey);
 
 	return 0;
 
-err_terminate_rq:
-	efa_ep_rq_terminate(qp);
 err_destroy_qp:
-	efa_cmd_destroy_qp(qp);
+	ibv_destroy_qp(qp->ibv_qp);
 err_free_qp:
 	free(qp);
 
@@ -400,9 +235,14 @@ err:
 
 static void efa_ep_destroy(struct efa_ep *ep)
 {
+	if (ep->self_ah)
+		ibv_destroy_ah(ep->self_ah);
+
 	efa_ep_destroy_qp(ep->qp);
 	fi_freeinfo(ep->info);
 	free(ep->src_addr);
+	if (ofi_endpoint_close(&ep->util_ep))
+		FI_WARN(&efa_prov, FI_LOG_EP_CTRL, "Unable to close util EP\n");
 	free(ep);
 }
 
@@ -410,7 +250,10 @@ static int efa_ep_close(fid_t fid)
 {
 	struct efa_ep *ep;
 
-	ep = container_of(fid, struct efa_ep, ep_fid.fid);
+	ep = container_of(fid, struct efa_ep, util_ep.ep_fid.fid);
+
+	ofi_bufpool_destroy(ep->recv_wr_pool);
+	ofi_bufpool_destroy(ep->send_wr_pool);
 	efa_ep_destroy(ep);
 
 	return 0;
@@ -421,9 +264,11 @@ static int efa_ep_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
 	struct efa_ep *ep;
 	struct efa_cq *cq;
 	struct efa_av *av;
+	struct util_eq *eq;
+	struct util_cntr *cntr;
 	int ret;
 
-	ep = container_of(fid, struct efa_ep, ep_fid.fid);
+	ep = container_of(fid, struct efa_ep, util_ep.ep_fid.fid);
 	ret = ofi_ep_bind_valid(&efa_prov, bfid, flags);
 	if (ret)
 		return ret;
@@ -440,9 +285,13 @@ static int efa_ep_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
 		if (!(flags & (FI_RECV | FI_TRANSMIT)))
 			return -FI_EBADFLAGS;
 
-		cq = container_of(bfid, struct efa_cq, cq_fid);
+		cq = container_of(bfid, struct efa_cq, util_cq.cq_fid);
 		if (ep->domain != cq->domain)
 			return -FI_EINVAL;
+
+		ret = ofi_ep_bind_cq(&ep->util_ep, &cq->util_cq, flags);
+		if (ret)
+			return ret;
 
 		if (flags & FI_RECV) {
 			if (ep->rcq)
@@ -456,7 +305,7 @@ static int efa_ep_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
 		}
 		break;
 	case FI_CLASS_AV:
-		av = container_of(bfid, struct efa_av, av_fid.fid);
+		av = container_of(bfid, struct efa_av, util_av.av_fid.fid);
 		if (ep->domain != av->domain) {
 			EFA_WARN(FI_LOG_EP_CTRL,
 				 "Address vector doesn't belong to same domain as EP.\n");
@@ -471,6 +320,20 @@ static int efa_ep_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
 
 		ep->av->ep = ep;
 		break;
+	case FI_CLASS_CNTR:
+		cntr = container_of(bfid, struct util_cntr, cntr_fid.fid);
+
+		ret = ofi_ep_bind_cntr(&ep->util_ep, cntr, flags);
+		if (ret)
+			return ret;
+		break;
+	case FI_CLASS_EQ:
+		eq = container_of(bfid, struct util_eq, eq_fid.fid);
+
+		ret = ofi_ep_bind_eq(&ep->util_ep, eq);
+		if (ret)
+			return ret;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -480,7 +343,7 @@ static int efa_ep_bind(struct fid *fid, struct fid *bfid, uint64_t flags)
 
 static int efa_ep_getflags(struct fid_ep *ep_fid, uint64_t *flags)
 {
-	struct efa_ep *ep = container_of(ep_fid, struct efa_ep, ep_fid);
+	struct efa_ep *ep = container_of(ep_fid, struct efa_ep, util_ep.ep_fid);
 	struct fi_tx_attr *tx_attr = ep->info->tx_attr;
 	struct fi_rx_attr *rx_attr = ep->info->rx_attr;
 
@@ -500,7 +363,7 @@ static int efa_ep_getflags(struct fid_ep *ep_fid, uint64_t *flags)
 
 static int efa_ep_setflags(struct fid_ep *ep_fid, uint64_t flags)
 {
-	struct efa_ep *ep = container_of(ep_fid, struct efa_ep, ep_fid);
+	struct efa_ep *ep = container_of(ep_fid, struct efa_ep, util_ep.ep_fid);
 	struct fi_tx_attr *tx_attr = ep->info->tx_attr;
 	struct fi_rx_attr *rx_attr = ep->info->rx_attr;
 
@@ -521,14 +384,35 @@ static int efa_ep_setflags(struct fid_ep *ep_fid, uint64_t flags)
 	return 0;
 }
 
+/* efa_ep_create_self_ah() create an address handler for
+ * an EP's own address. The address handler is used by
+ * an EP to read from itself. It is used to
+ * copy data from host memory to GPU memory.
+ */
+static inline
+int efa_ep_create_self_ah(struct efa_ep *ep, struct ibv_pd *ibv_pd)
+{
+	struct ibv_ah_attr ah_attr;
+	struct efa_ep_addr *self_addr;
+
+	self_addr = (struct efa_ep_addr *)ep->src_addr;
+
+	memset(&ah_attr, 0, sizeof(ah_attr));
+	ah_attr.port_num = 1;
+	ah_attr.is_global = 1;
+	memcpy(ah_attr.grh.dgid.raw, self_addr->raw, sizeof(self_addr->raw));
+	ep->self_ah = ibv_create_ah(ibv_pd, &ah_attr);
+	return ep->self_ah ? 0 : -FI_EINVAL;
+}
+
 static int efa_ep_enable(struct fid_ep *ep_fid)
 {
-	struct ibv_qp_init_attr attr = { 0 };
+	struct ibv_qp_init_attr_ex attr_ex = { 0 };
 	const struct fi_info *efa_info;
+	struct ibv_pd *ibv_pd;
 	struct efa_ep *ep;
-	struct efa_pd *pd;
-
-	ep = container_of(ep_fid, struct efa_ep, ep_fid);
+	int err;
+	ep = container_of(ep_fid, struct efa_ep, util_ep.ep_fid);
 
 	if (!ep->scq && !ep->rcq) {
 		EFA_WARN(FI_LOG_EP_CTRL,
@@ -555,29 +439,53 @@ static int efa_ep_enable(struct fid_ep *ep_fid)
 	}
 
 	if (ep->scq) {
-		attr.cap.max_send_wr = ep->info->tx_attr->size;
-		attr.cap.max_send_sge = ep->info->tx_attr->iov_limit;
-		attr.send_cq = &ep->scq->ibv_cq;
-		pd = ep->scq->domain->pd;
+		attr_ex.cap.max_send_wr = ep->info->tx_attr->size;
+		attr_ex.cap.max_send_sge = ep->info->tx_attr->iov_limit;
+		attr_ex.send_cq = ep->scq->ibv_cq;
+		ibv_pd = ep->scq->domain->ibv_pd;
 	} else {
-		attr.send_cq = &ep->rcq->ibv_cq;
-		pd = ep->rcq->domain->pd;
+		attr_ex.send_cq = ep->rcq->ibv_cq;
+		ibv_pd = ep->rcq->domain->ibv_pd;
 	}
 
 	if (ep->rcq) {
-		attr.cap.max_recv_wr = ep->info->rx_attr->size;
-		attr.cap.max_recv_sge = ep->info->rx_attr->iov_limit;
-		attr.recv_cq = &ep->rcq->ibv_cq;
+		attr_ex.cap.max_recv_wr = ep->info->rx_attr->size;
+		attr_ex.cap.max_recv_sge = ep->info->rx_attr->iov_limit;
+		attr_ex.recv_cq = ep->rcq->ibv_cq;
 	} else {
-		attr.recv_cq = &ep->scq->ibv_cq;
+		attr_ex.recv_cq = ep->scq->ibv_cq;
 	}
 
-	attr.cap.max_inline_data = pd->context->inject_size;
-	attr.qp_type = ep->domain->rdm ? IBV_QPT_DRIVER : IBV_QPT_UD;
-	attr.sq_sig_all = 0;
-	attr.qp_context = ep;
+	attr_ex.cap.max_inline_data = ep->domain->ctx->inline_buf_size;
 
-	return efa_ep_create_qp(ep, pd, &attr);
+	if (ep->domain->type == EFA_DOMAIN_RDM) {
+		attr_ex.qp_type = IBV_QPT_DRIVER;
+		attr_ex.comp_mask = IBV_QP_INIT_ATTR_PD | IBV_QP_INIT_ATTR_SEND_OPS_FLAGS;
+		attr_ex.send_ops_flags = IBV_QP_EX_WITH_SEND;
+		if (efa_ep_support_rdma_read(&ep->util_ep.ep_fid))
+			attr_ex.send_ops_flags |= IBV_QP_EX_WITH_RDMA_READ;
+		attr_ex.pd = ibv_pd;
+	} else {
+		attr_ex.qp_type = IBV_QPT_UD;
+		attr_ex.comp_mask = IBV_QP_INIT_ATTR_PD;
+		attr_ex.pd = ibv_pd;
+	}
+
+	attr_ex.qp_context = ep;
+	attr_ex.sq_sig_all = 1;
+
+	err = efa_ep_create_qp_ex(ep, ibv_pd, &attr_ex);
+	if (err)
+		return err;
+
+	err = efa_ep_create_self_ah(ep, ibv_pd);
+	if (err) {
+		EFA_WARN(FI_LOG_EP_CTRL,
+			 "Endpoint cannot create ah for its own address\n");
+		efa_ep_destroy_qp(ep->qp);
+	}
+
+	return err;
 }
 
 static int efa_ep_control(struct fid *fid, int command, void *arg)
@@ -611,6 +519,106 @@ static struct fi_ops efa_ep_ops = {
 	.ops_open = fi_no_ops_open,
 };
 
+static void efa_ep_progress_internal(struct efa_ep *ep, struct efa_cq *efa_cq)
+{
+	struct util_cq *cq;
+	struct fi_cq_tagged_entry cq_entry[EFA_CQ_PROGRESS_ENTRIES];
+	struct fi_cq_tagged_entry *temp_cq_entry;
+	struct fi_cq_err_entry cq_err_entry;
+	fi_addr_t src_addr[EFA_CQ_PROGRESS_ENTRIES];
+	uint64_t flags;
+	int i;
+	ssize_t ret, err;
+
+	cq = &efa_cq->util_cq;
+	flags = ep->util_ep.caps;
+
+	VALGRIND_MAKE_MEM_DEFINED(&cq_entry, sizeof(cq_entry));
+
+	ret = efa_cq_readfrom(&cq->cq_fid, cq_entry, EFA_CQ_PROGRESS_ENTRIES,
+			      (flags & FI_SOURCE) ? src_addr : NULL);
+	if (ret == -FI_EAGAIN)
+		return;
+
+	if (OFI_UNLIKELY(ret < 0)) {
+		if (OFI_UNLIKELY(ret != -FI_EAVAIL)) {
+			EFA_WARN(FI_LOG_CQ, "no error available errno: %ld\n", ret);
+			efa_eq_write_error(&ep->util_ep, FI_EOTHER, ret);
+			return;
+		}
+
+		err = efa_cq_readerr(&cq->cq_fid, &cq_err_entry, flags);
+		if (OFI_UNLIKELY(err < 0)) {
+			EFA_WARN(FI_LOG_CQ, "unable to read error entry errno: %ld\n", err);
+			efa_eq_write_error(&ep->util_ep, FI_EOTHER, err);
+			return;
+		}
+
+		ofi_cq_write_error(cq, &cq_err_entry);
+		return;
+	}
+
+	temp_cq_entry = (struct fi_cq_tagged_entry *)cq_entry;
+	for (i = 0; i < ret; i++) {
+		(flags & FI_SOURCE) ?
+			ofi_cq_write_src(cq, temp_cq_entry->op_context,
+					 temp_cq_entry->flags,
+					 temp_cq_entry->len,
+					 temp_cq_entry->buf,
+					 temp_cq_entry->data,
+					 temp_cq_entry->tag,
+					 src_addr[i]) :
+			ofi_cq_write(cq, temp_cq_entry->op_context,
+				     temp_cq_entry->flags,
+				     temp_cq_entry->len,
+				     temp_cq_entry->buf,
+				     temp_cq_entry->data,
+				     temp_cq_entry->tag);
+
+		temp_cq_entry = (struct fi_cq_tagged_entry *)
+				((uint8_t *)temp_cq_entry + efa_cq->entry_size);
+	}
+	return;
+}
+
+void efa_ep_progress(struct util_ep *ep)
+{
+	struct efa_ep *efa_ep;
+	struct efa_cq *rcq;
+	struct efa_cq *scq;
+
+	efa_ep = container_of(ep, struct efa_ep, util_ep);
+	rcq = efa_ep->rcq;
+	scq = efa_ep->scq;
+
+	fastlock_acquire(&ep->lock);
+
+	if (rcq)
+		efa_ep_progress_internal(efa_ep, rcq);
+
+	if (scq && scq != rcq)
+		efa_ep_progress_internal(efa_ep, scq);
+
+	fastlock_release(&ep->lock);
+}
+
+static struct fi_ops_atomic efa_ep_atomic_ops = {
+	.size = sizeof(struct fi_ops_atomic),
+	.write = fi_no_atomic_write,
+	.writev = fi_no_atomic_writev,
+	.writemsg = fi_no_atomic_writemsg,
+	.inject = fi_no_atomic_inject,
+	.readwrite = fi_no_atomic_readwrite,
+	.readwritev = fi_no_atomic_readwritev,
+	.readwritemsg = fi_no_atomic_readwritemsg,
+	.compwrite = fi_no_atomic_compwrite,
+	.compwritev = fi_no_atomic_compwritev,
+	.compwritemsg = fi_no_atomic_compwritemsg,
+	.writevalid = fi_no_atomic_writevalid,
+	.readwritevalid = fi_no_atomic_readwritevalid,
+	.compwritevalid = fi_no_atomic_compwritevalid,
+};
+
 int efa_ep_open(struct fid_domain *domain_fid, struct fi_info *info,
 		struct fid_ep **ep_fid, void *context)
 {
@@ -623,8 +631,8 @@ int efa_ep_open(struct fid_domain *domain_fid, struct fi_info *info,
 			      util_domain.domain_fid);
 
 	if (!info || !info->ep_attr || !info->domain_attr ||
-	    strncmp(domain->ctx->ibv_ctx.device->name, info->domain_attr->name,
-		    strlen(domain->ctx->ibv_ctx.device->name))) {
+	    strncmp(domain->ctx->ibv_ctx->device->name, info->domain_attr->name,
+		    strlen(domain->ctx->ibv_ctx->device->name))) {
 		EFA_INFO(FI_LOG_DOMAIN, "Invalid info->domain_attr->name\n");
 		return -FI_EINVAL;
 	}
@@ -658,30 +666,55 @@ int efa_ep_open(struct fid_domain *domain_fid, struct fi_info *info,
 	if (!ep)
 		return -FI_ENOMEM;
 
+	ret = ofi_endpoint_init(domain_fid, &efa_util_prov, info, &ep->util_ep,
+				context, efa_ep_progress);
+	if (ret)
+		goto err_ep_destroy;
+
+	ret = ofi_bufpool_create(&ep->send_wr_pool,
+		sizeof(struct efa_send_wr) +
+		info->tx_attr->iov_limit * sizeof(struct ibv_sge),
+		16, 0, 1024, 0);
+	if (ret)
+		goto err_ep_destroy;
+
+	ret = ofi_bufpool_create(&ep->recv_wr_pool,
+		sizeof(struct efa_recv_wr) +
+		info->rx_attr->iov_limit * sizeof(struct ibv_sge),
+		16, 0, 1024, 0);
+	if (ret)
+		goto err_send_wr_destroy;
+
 	ep->domain = domain;
-	ep->ep_fid.fid.fclass = FI_CLASS_EP;
-	ep->ep_fid.fid.context = context;
-	ep->ep_fid.fid.ops = &efa_ep_ops;
-	ep->ep_fid.ops = &efa_ep_base_ops;
-	ep->ep_fid.msg = &efa_ep_msg_ops;
-	ep->ep_fid.cm = &efa_ep_cm_ops;
-	ep->ep_fid.rma = NULL;
-	ep->ep_fid.atomic = NULL;
+	ep->xmit_more_wr_tail = &ep->xmit_more_wr_head;
+	ep->recv_more_wr_tail = &ep->recv_more_wr_head;
 
 	if (info->src_addr) {
 		ep->src_addr = (void *)calloc(1, EFA_EP_ADDR_LEN);
 		if (!ep->src_addr) {
 			ret = -FI_ENOMEM;
-			goto err;
+			goto err_recv_wr_destroy;
 		}
 		memcpy(ep->src_addr, info->src_addr, info->src_addrlen);
 	}
 
-	*ep_fid = &ep->ep_fid;
+	*ep_fid = &ep->util_ep.ep_fid;
+	(*ep_fid)->fid.fclass = FI_CLASS_EP;
+	(*ep_fid)->fid.context = context;
+	(*ep_fid)->fid.ops = &efa_ep_ops;
+	(*ep_fid)->ops = &efa_ep_base_ops;
+	(*ep_fid)->msg = &efa_ep_msg_ops;
+	(*ep_fid)->cm = &efa_ep_cm_ops;
+	(*ep_fid)->rma = &efa_ep_rma_ops;
+	(*ep_fid)->atomic = &efa_ep_atomic_ops;
 
 	return 0;
 
-err:
+err_recv_wr_destroy:
+	ofi_bufpool_destroy(ep->recv_wr_pool);
+err_send_wr_destroy:
+	ofi_bufpool_destroy(ep->send_wr_pool);
+err_ep_destroy:
 	efa_ep_destroy(ep);
 	return ret;
 }

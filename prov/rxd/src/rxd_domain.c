@@ -48,6 +48,7 @@ static struct fi_ops_domain rxd_domain_ops = {
 	.stx_ctx = fi_no_stx_context,
 	.srx_ctx = fi_no_srx_context,
 	.query_atomic = rxd_query_atomic,
+	.query_collective = fi_no_query_collective,
 };
 
 static int rxd_domain_close(fid_t fid)
@@ -113,7 +114,7 @@ int rxd_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 		return -FI_ENOMEM;
 
 	ret = ofi_get_core_info(fabric->api_version, NULL, NULL,
-				0, &rxd_util_prov, info,
+				0, &rxd_util_prov, info, NULL,
 				rxd_info_to_core, &dg_info);
 	if (ret)
 		goto err1;

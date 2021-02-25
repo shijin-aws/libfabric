@@ -59,11 +59,7 @@ static int run(void)
 		for (i = 0; i < TEST_CNT; i++) {
 			if (!ft_use_size(i, opts.sizes_enabled))
 				continue;
-
 			opts.transfer_size = test_size[i].size;
-			if (opts.transfer_size > fi->ep_attr->max_msg_size)
-				continue;
-
 			init_test(&opts, test_name, sizeof(test_name));
 			ret = pingpong();
 			if (ret)
@@ -122,6 +118,7 @@ int main(int argc, char **argv)
 	hints->mode |= FI_CONTEXT;
 	hints->domain_attr->mr_mode = opts.mr_mode;
 	hints->domain_attr->threading = FI_THREAD_DOMAIN;
+	hints->tx_attr->tclass = FI_TC_LOW_LATENCY;
 
 	ret = run();
 

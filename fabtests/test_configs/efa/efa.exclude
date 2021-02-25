@@ -57,10 +57,8 @@ inj_complete
 # Exclude trigger ops
 trigger
 
-# Exclude all atomic tests
-atomic
 
-rdm_cntr_pingpong
+#rdm_cntr_pingpong
 
 
 # This test requires ENA IPs for the OOB sync
@@ -95,3 +93,6 @@ rdm_tagged_peek
 
 # fail on timeout - cannot be supported
 dgram_bw
+
+# Multinode tests failing with an unsupported address format
+multinode

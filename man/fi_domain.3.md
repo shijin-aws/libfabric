@@ -26,6 +26,9 @@ int fi_domain_bind(struct fid_domain *domain, struct fid *eq,
 
 int fi_open_ops(struct fid *domain, const char *name, uint64_t flags,
     void **ops, void *context);
+
+int fi_set_ops(struct fid *domain, const char *name, uint64_t flags,
+    void *ops, void *context);
 ```
 
 # ARGUMENTS
@@ -73,6 +76,74 @@ fi_open_ops is used to open provider specific interfaces.  Provider
 interfaces may be used to access low-level resources and operations
 that are specific to the opened resource domain.  The details of
 domain interfaces are outside the scope of this documentation.
+
+## fi_set_ops
+
+fi_set_ops assigns callbacks that a provider should invoke in place
+of performing selected tasks. This allows users to modify or control
+a provider's default behavior. Conceptually, it allows the user to
+hook specific functions used by a provider and replace it with their
+own.
+
+The operations being modified are identified using a well-known
+character string, passed as the name parameter. The format of the
+ops parameter is dependent upon the name value. The ops parameter will
+reference a structure containing the callbacks and other fields needed
+by the provider to invoke the user's functions.
+
+If a provider accepts the override, it will return FI_SUCCESS. If the
+override is unknown or not supported, the provider will return
+-FI_ENOSYS. Overrides should be set prior to allocating resources on
+the domain.
+
+The following fi_set_ops operations and corresponding callback
+structures are defined.
+
+**FI_SET_OPS_HMEM_OVERRIDE -- Heterogeneous Memory Overrides**
+
+HMEM override allows users to override HMEM related operations a
+provider may perform. Currently, the scope of the HMEM override
+is to allow a user to define the memory movement functions a provider
+should use when accessing a user buffer. The user-defined memory
+movement functions need to account for all the different HMEM iface
+types a provider may encounter.
+
+All objects allocated against a domain will inherit this override.
+
+The following is the HMEM override operation name and structure.
+
+```c
+#define FI_SET_OPS_HMEM_OVERRIDE "hmem_override_ops"
+
+struct fi_hmem_override_ops {
+    size_t	size;
+
+    ssize_t (*copy_from_hmem_iov)(void *dest, size_t size,
+        enum fi_hmem_iface iface, uint64_t device, const struct iovec *hmem_iov,
+        size_t hmem_iov_count, uint64_t hmem_iov_offset);
+
+    ssize_t (*copy_to_hmem_iov)(enum fi_hmem_iface iface, uint64_t device,
+	const struct iovec *hmem_iov, size_t hmem_iov_count,
+        uint64_t hmem_iov_offset, const void *src, size_t size);
+};
+```
+
+All fields in struct fi_hmem_override_ops must be set (non-null) to a
+valid value.
+
+*size*
+: This should be set to the sizeof(struct fi_hmem_override_ops). The
+size field is used for forward and backward compatibility purposes.
+
+*copy_from_hmem_iov*
+: Copy data from the device/hmem to host memory. This function should
+return a negative fi_errno on error, or the number of bytes copied on
+success.
+
+*copy_to_hmem_iov*
+: Copy data from host memory to the device/hmem. This function should
+return a negative fi_errno on error, or the number of bytes copied on
+success.
 
 ## fi_domain_bind
 
@@ -134,6 +205,7 @@ struct fi_domain_attr {
 	size_t                auth_key_size;
 	size_t                max_err_data;
 	size_t                mr_cnt;
+	uint32_t              tclass;
 };
 ```
 
@@ -144,6 +216,10 @@ instance to restrict output to the given domain.  On output from
 fi_getinfo, if no domain was specified, but the user has an opened
 instance of the named domain, this will reference the first opened
 instance.  If no instance has been opened, this field will be NULL.
+
+The domain instance returned by fi_getinfo should only be considered
+valid if the application does not close any domain instances from
+another thread while fi_getinfo is being processed.
 
 ## Name
 
@@ -158,17 +234,31 @@ accessed by multiple threads.  Applications which can guarantee
 serialization in their access of provider allocated resources and
 interfaces enables a provider to eliminate lower-level locks.
 
-*FI_THREAD_UNSPEC*
-: This value indicates that no threading model has been defined.  It
-  may be used on input hints to the fi_getinfo call.  When specified,
-  providers will return a threading model that allows for the greatest
-  level of parallelism.
+*FI_THREAD_COMPLETION*
+: The completion threading model is intended for providers that make use
+  of manual progress.  Applications must serialize access to all objects
+  that are associated through the use of having a shared completion
+  structure.  This includes endpoint, transmit context, receive context,
+  completion queue, counter, wait set, and poll set objects.
 
-*FI_THREAD_SAFE*
-: A thread safe serialization model allows a multi-threaded
-  application to access any allocated resources through any interface
-  without restriction.  All providers are required to support
-  FI_THREAD_SAFE.
+  For example, threads must serialize access to an endpoint and its
+  bound completion queue(s) and/or counters.  Access to endpoints that
+  share the same completion queue must also be serialized.
+
+  The use of FI_THREAD_COMPLETION can increase parallelism over
+  FI_THREAD_SAFE, but requires the use of isolated resources.
+
+*FI_THREAD_DOMAIN*
+: A domain serialization model requires applications to serialize
+  access to all objects belonging to a domain.
+
+*FI_THREAD_ENDPOINT*
+: The endpoint threading model is similar to FI_THREAD_FID, but with
+  the added restriction that serialization is required when accessing
+  the same endpoint, even if multiple transmit and receive contexts are
+  used.  Conceptually, FI_THREAD_ENDPOINT maps well to providers that
+  implement fabric services in hardware but use a single command
+  queue to access different data flows.
 
 *FI_THREAD_FID*
 : A fabric descriptor (FID) serialization model requires applications
@@ -194,31 +284,17 @@ interfaces enables a provider to eliminate lower-level locks.
   fabric services in hardware and provide separate command queues to
   different data flows.
 
-*FI_THREAD_ENDPOINT*
-: The endpoint threading model is similar to FI_THREAD_FID, but with
-  the added restriction that serialization is required when accessing
-  the same endpoint, even if multiple transmit and receive contexts are
-  used.  Conceptually, FI_THREAD_ENDPOINT maps well to providers that
-  implement fabric services in hardware but use a single command
-  queue to access different data flows.
+*FI_THREAD_SAFE*
+: A thread safe serialization model allows a multi-threaded
+  application to access any allocated resources through any interface
+  without restriction.  All providers are required to support
+  FI_THREAD_SAFE.
 
-*FI_THREAD_COMPLETION*
-: The completion threading model is intended for providers that make use
-  of manual progress.  Applications must serialize access to all objects
-  that are associated through the use of having a shared completion
-  structure.  This includes endpoint, transmit context, receive context,
-  completion queue, counter, wait set, and poll set objects.
-
-  For example, threads must serialize access to an endpoint and its
-  bound completion queue(s) and/or counters.  Access to endpoints that
-  share the same completion queue must also be serialized.
-
-  The use of FI_THREAD_COMPLETION can increase parallelism over
-  FI_THREAD_SAFE, but requires the use of isolated resources.
-
-*FI_THREAD_DOMAIN*
-: A domain serialization model requires applications to serialize
-  access to all objects belonging to a domain.
+*FI_THREAD_UNSPEC*
+: This value indicates that no threading model has been defined.  It
+  may be used on input hints to the fi_getinfo call.  When specified,
+  providers will return a threading model that allows for the greatest
+  level of parallelism.
 
 ## Progress Models (control_progress / data_progress)
 
@@ -248,10 +324,6 @@ reliable transfers, as a result of retry and acknowledgement processing.
 
 To balance between performance and ease of use, two progress models
 are defined.
-
-*FI_PROGRESS_UNSPEC*
-: This value indicates that no progress model has been defined.  It
-  may be used on input hints to the fi_getinfo call.
 
 *FI_PROGRESS_AUTO*
 : This progress model indicates that the provider will make forward
@@ -288,6 +360,10 @@ are defined.
   manual progress may still need application assistance to process
   received operations.
 
+*FI_PROGRESS_UNSPEC*
+: This value indicates that no progress model has been defined.  It
+  may be used on input hints to the fi_getinfo call.
+
 ## Resource Management (resource_mgmt)
 
 Resource management (RM) is provider and protocol support to protect
@@ -309,10 +385,6 @@ provider implementation and protocol may still provide some level of
 protection against overruns.  However, such protection is not guaranteed.
 The following values for resource management are defined.
 
-*FI_RM_UNSPEC*
-: This value indicates that no resource management model has been defined.
-  It may be used on input hints to the fi_getinfo call.
-
 *FI_RM_DISABLED*
 : The provider is free to select an implementation and protocol that does
   not protect against resource overruns.  The application is responsible
@@ -320,6 +392,10 @@ The following values for resource management are defined.
 
 *FI_RM_ENABLED*
 : Resource management is enabled for this provider domain.
+
+*FI_RM_UNSPEC*
+: This value indicates that no resource management model has been defined.
+  It may be used on input hints to the fi_getinfo call.
 
 The behavior of the various resource management options depends on whether
 the endpoint is reliable or unreliable, as well as provider and protocol
@@ -395,7 +471,7 @@ transfer operation.
 
 When a resource management error occurs on an endpoint, the endpoint is
 transitioned into a disabled state.  Any operations which have not
-already completed will fail and be discarded.  For unconnected endpoints,
+already completed will fail and be discarded.  For connectionless endpoints,
 the endpoint must be re-enabled before it will accept new data transfer
 operations.  For connected endpoints, the connection is torn down and
 must be re-established.
@@ -422,14 +498,14 @@ Specifies the type of address vectors that are usable with this domain.
 For additional details on AV type, see [`fi_av`(3)](fi_av.3.html).
 The following values may be specified.
 
-*FI_AV_UNSPEC*
-: Any address vector format is requested and supported.
-
 *FI_AV_MAP*
 : Only address vectors of type AV map are requested or supported.
 
 *FI_AV_TABLE*
 : Only address vectors of type AV index are requested or supported.
+
+*FI_AV_UNSPEC*
+: Any address vector format is requested and supported.
 
 Address vectors are only used by connectionless endpoints.  Applications
 that require the use of a specific type of address vector should set the
@@ -445,6 +521,13 @@ Defines memory registration specific mode bits used with this domain.
 Full details on MR mode options are available in [`fi_mr`(3)](fi_mr.3.html).
 The following values may be specified.
 
+*FI_MR_ALLOCATED*
+: Indicates that memory registration occurs on allocated data buffers, and
+  physical pages must back all virtual addresses being registered.
+
+*FI_MR_ENDPOINT*
+: Memory registration occurs at the endpoint level, rather than domain.
+
 *FI_MR_LOCAL*
 : The provider is optimized around having applications register memory
   for locally accessed data buffers.  Data buffers used in send and
@@ -452,38 +535,31 @@ The following values may be specified.
   operations must be registered by the application for access domains
   opened with this capability.
 
-*FI_MR_RAW*
-: The provider requires additional setup as part of their memory registration
-  process.  This mode is required by providers that use a memory key
-  that is larger than 64-bits.
-
-*FI_MR_VIRT_ADDR*
-: Registered memory regions are referenced by peers using the virtual address
-  of the registered memory region, rather than a 0-based offset.
-
-*FI_MR_ALLOCATED*
-: Indicates that memory registration occurs on allocated data buffers, and
-  physical pages must back all virtual addresses being registered.
-
-*FI_MR_PROV_KEY*
-: Memory registration keys are selected and returned by the provider.
-
 *FI_MR_MMU_NOTIFY*
 : Indicates that the application is responsible for notifying the provider
   when the page tables referencing a registered memory region may have been
   updated.
 
+*FI_MR_PROV_KEY*
+: Memory registration keys are selected and returned by the provider.
+
+*FI_MR_RAW*
+: The provider requires additional setup as part of their memory registration
+  process.  This mode is required by providers that use a memory key
+  that is larger than 64-bits.
+
 *FI_MR_RMA_EVENT*
 : Indicates that the memory regions associated with completion counters
   must be explicitly enabled after being bound to any counter.
-
-*FI_MR_ENDPOINT*
-: Memory registration occurs at the endpoint level, rather than domain.
 
 *FI_MR_UNSPEC*
 : Defined for compatibility -- library versions 1.4 and earlier.  Setting
   mr_mode to 0 indicates that FI_MR_BASIC or FI_MR_SCALABLE are requested
   and supported.
+
+*FI_MR_VIRT_ADDR*
+: Registered memory regions are referenced by peers using the virtual address
+  of the registered memory region, rather than a 0-based offset.
 
 *FI_MR_BASIC*
 : Defined for compatibility -- library versions 1.4 and earlier.  Only
@@ -541,7 +617,11 @@ fixed value of the maximum number of endpoints supported by the
 underlying hardware, or may be a dynamic value, based on the default
 attributes of an allocated endpoint, such as the endpoint capabilities
 and size.  The endpoint count is the number of addressable endpoints
-supported by the provider.
+supported by the provider. Providers return capability limits based on
+configured hardware maximum capabilities. Providers cannot predict all
+possible system limitations without posteriori knowledge acquired during
+runtime that will further limit these hardware maximums (e.g. application
+memory consumption, FD usage, etc.).
 
 ## Transmit Context Count (tx_ctx_cnt)
 
@@ -665,6 +745,12 @@ attributes of the domain, such as the supported memory registration modes.
 Applications can set the mr_cnt on input to fi_getinfo, in order to
 indicate their memory registration requirements.  Doing so may allow the
 provider to optimize any memory registration cache or lookup tables.
+
+## Traffic Class (tclass)
+
+This specifies the default traffic class that will be associated any endpoints
+created within the domain.  See [`fi_endpoint`(3)](fi_endpoint.3.html
+for additional information.
 
 # RETURN VALUE
 

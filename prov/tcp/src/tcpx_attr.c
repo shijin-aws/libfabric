@@ -37,7 +37,7 @@
 #define TCPX_EP_CAPS	 (FI_MSG | FI_RMA | FI_RMA_PMEM)
 #define TCPX_TX_CAPS	 (FI_SEND | FI_WRITE | FI_READ)
 #define TCPX_RX_CAPS	 (FI_RECV | FI_REMOTE_READ | 			\
-			  FI_REMOTE_WRITE | FI_MULTI_RECV)
+			  FI_REMOTE_WRITE)
 
 
 #define TCPX_MSG_ORDER (OFI_ORDER_RAR_SET | OFI_ORDER_RAW_SET | FI_ORDER_RAS | \
@@ -48,7 +48,7 @@
 	(FI_INJECT | FI_INJECT_COMPLETE | FI_TRANSMIT_COMPLETE | \
 	 FI_DELIVERY_COMPLETE | FI_COMMIT_COMPLETE | FI_COMPLETION)
 
-#define TCPX_RX_OP_FLAGS (FI_MULTI_RECV | FI_COMPLETION)
+#define TCPX_RX_OP_FLAGS (FI_COMPLETION)
 
 static struct fi_tx_attr tcpx_tx_attr = {
 	.caps = TCPX_EP_CAPS | TCPX_TX_CAPS,
@@ -104,7 +104,7 @@ static struct fi_domain_attr tcpx_domain_attr = {
 
 static struct fi_fabric_attr tcpx_fabric_attr = {
 	.name = "TCP-IP",
-	.prov_version = FI_VERSION(TCPX_MAJOR_VERSION, TCPX_MINOR_VERSION),
+	.prov_version = OFI_VERSION_DEF_PROV,
 };
 
 struct fi_info tcpx_info = {

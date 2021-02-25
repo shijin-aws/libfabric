@@ -37,19 +37,28 @@
 const uint32_t rxr_poison_value = 0xdeadbeef;
 #endif
 
-#define RXR_EP_CAPS (FI_MSG | FI_TAGGED | FI_RECV | FI_SEND | FI_READ \
-		     | FI_WRITE | FI_REMOTE_READ | FI_REMOTE_WRITE \
-		     | FI_DIRECTED_RECV | FI_SOURCE | FI_MULTI_RECV \
-		     | FI_RMA)
+#if HAVE_LIBCUDA
+#define EFA_HMEM_CAP FI_HMEM
+#else
+#define EFA_HMEM_CAP 0
+#endif
+#define RXR_TX_CAPS (OFI_TX_MSG_CAPS | FI_TAGGED | OFI_TX_RMA_CAPS | \
+		     FI_ATOMIC | EFA_HMEM_CAP)
+#define RXR_RX_CAPS (OFI_RX_MSG_CAPS | FI_TAGGED | OFI_RX_RMA_CAPS | \
+		     FI_SOURCE | FI_MULTI_RECV | FI_DIRECTED_RECV | \
+		     FI_ATOMIC | EFA_HMEM_CAP)
+#define RXR_DOM_CAPS (FI_LOCAL_COMM | FI_REMOTE_COMM)
 
 /* TODO: Add support for true FI_DELIVERY_COMPLETE */
 #define RXR_TX_OP_FLAGS (FI_INJECT | FI_COMPLETION | FI_TRANSMIT_COMPLETE | \
 			 FI_DELIVERY_COMPLETE)
-#define RXR_RX_OP_FLAGS (FI_COMPLETION)
+#define RXR_RX_OP_FLAGS (FI_COMPLETION | FI_MULTI_RECV)
 
 struct fi_tx_attr rxr_tx_attr = {
-	.caps = RXR_EP_CAPS,
-	.msg_order = FI_ORDER_SAS,
+	.caps = RXR_TX_CAPS,
+	.msg_order = FI_ORDER_SAS |
+		     FI_ORDER_ATOMIC_RAR | FI_ORDER_ATOMIC_RAW |
+		     FI_ORDER_ATOMIC_WAR | FI_ORDER_ATOMIC_WAW,
 	.op_flags = RXR_TX_OP_FLAGS,
 	.comp_order = FI_ORDER_NONE,
 	.inject_size = 0,
@@ -58,8 +67,10 @@ struct fi_tx_attr rxr_tx_attr = {
 };
 
 struct fi_rx_attr rxr_rx_attr = {
-	.caps = RXR_EP_CAPS,
-	.msg_order = FI_ORDER_SAS,
+	.caps = RXR_RX_CAPS,
+	.msg_order = FI_ORDER_SAS |
+		     FI_ORDER_ATOMIC_RAR | FI_ORDER_ATOMIC_RAW |
+		     FI_ORDER_ATOMIC_WAR | FI_ORDER_ATOMIC_WAW,
 	.op_flags = RXR_RX_OP_FLAGS,
 	.comp_order = FI_ORDER_NONE,
 	.total_buffered_recv = 0,
@@ -71,8 +82,9 @@ struct fi_ep_attr rxr_ep_attr = {
 	.type = FI_EP_RDM,
 	.protocol = FI_PROTO_EFA,
 	.mem_tag_format = FI_TAG_GENERIC,
-	.protocol_version = RXR_PROTOCOL_VERSION,
+	.protocol_version = RXR_CUR_PROTOCOL_VERSION,
 	.max_msg_size = UINT64_MAX,
+	.msg_prefix_size = 0,
 	.tx_ctx_cnt = 1,
 	.rx_ctx_cnt = 1
 };
@@ -94,15 +106,16 @@ struct fi_domain_attr rxr_domain_attr = {
 	.rx_ctx_cnt = 1,
 	.max_ep_tx_ctx = 1,
 	.max_ep_rx_ctx = 1,
-	.cq_data_size = RXR_CQ_DATA_SIZE
+	.cq_data_size = RXR_CQ_DATA_SIZE,
+	.caps = RXR_DOM_CAPS
 };
 
 struct fi_fabric_attr rxr_fabric_attr = {
-	.prov_version = FI_VERSION(RXR_MAJOR_VERSION, RXR_MINOR_VERSION),
+	.prov_version = OFI_VERSION_DEF_PROV,
 };
 
 struct fi_info rxr_info = {
-	.caps = RXR_EP_CAPS,
+	.caps = RXR_TX_CAPS | RXR_RX_CAPS | RXR_DOM_CAPS,
 	.addr_format = FI_FORMAT_UNSPEC,
 	.tx_attr = &rxr_tx_attr,
 	.rx_attr = &rxr_rx_attr,

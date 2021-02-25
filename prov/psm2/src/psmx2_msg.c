@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2018 Intel Corporation. All rights reserved.
+ * Copyright (c) 2013-2019 Intel Corporation. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -211,7 +211,10 @@ ssize_t psmx2_send_generic(struct fid_ep *ep, const void *buf, size_t len,
 	assert(av);
 	psm2_epaddr = psmx2_av_translate_addr(av, ep_priv->tx, dest_addr, av->type);
 
-	PSMX2_SET_TAG(psm2_tag, 0, data, PSMX2_TYPE_MSG | PSMX2_IMM_BIT_SET(have_data));
+	if (have_data)
+		PSMX2_SET_TAG(psm2_tag, 0, data, PSMX2_TYPE_MSG | PSMX2_IMM_BIT);
+	else
+		PSMX2_SET_TAG(psm2_tag, 0, ep_priv->sep_id, PSMX2_TYPE_MSG);
 
 	if ((flags & PSMX2_NO_COMPLETION) ||
 	    (ep_priv->send_selective_completion && !(flags & FI_COMPLETION)))
@@ -353,10 +356,12 @@ ssize_t psmx2_sendv_generic(struct fid_ep *ep, const struct iovec *iov,
 	assert(av);
 	psm2_epaddr = psmx2_av_translate_addr(av, ep_priv->tx, dest_addr, av->type);
 
-	if (flags & FI_REMOTE_CQ_DATA)
+	if (flags & FI_REMOTE_CQ_DATA) {
 		msg_flags |= PSMX2_IMM_BIT;
-
-	PSMX2_SET_TAG(psm2_tag, 0ULL, data, msg_flags);
+		PSMX2_SET_TAG(psm2_tag, 0ULL, data, msg_flags);
+	} else {
+		PSMX2_SET_TAG(psm2_tag, 0ULL, ep_priv->sep_id, msg_flags);
+	}
 
 	if ((flags & PSMX2_NO_COMPLETION) ||
 	    (ep_priv->send_selective_completion && !(flags & FI_COMPLETION)))

@@ -42,13 +42,8 @@ static ssize_t tcpx_eq_read(struct fid_eq *eq_fid, uint32_t *event,
 
 	eq = container_of(eq_fid, struct util_eq, eq_fid);
 
-	fastlock_acquire(&eq->lock);
-	if (slist_empty(&eq->list)) {
-		fastlock_release(&eq->lock);
-		tcpx_conn_mgr_run(eq);
-	} else {
-		fastlock_release(&eq->lock);
-	}
+	tcpx_conn_mgr_run(eq);
+
 	return ofi_eq_read(eq_fid, event, buf, len, flags);
 }
 
@@ -61,8 +56,7 @@ static int tcpx_eq_close(struct fid *fid)
 	if (ret)
 		return ret;
 
-	eq = container_of(fid, struct tcpx_eq,
-			  util_eq.eq_fid.fid);
+	eq = container_of(fid, struct tcpx_eq, util_eq.eq_fid.fid);
 
 	fastlock_destroy(&eq->close_lock);
 	free(eq);
@@ -114,7 +108,7 @@ int tcpx_eq_create(struct fid_fabric *fabric_fid, struct fi_eq_attr *attr,
 
 	if (!eq->util_eq.wait) {
 		memset(&wait_attr, 0, sizeof wait_attr);
-		wait_attr.wait_obj = FI_WAIT_FD;
+		wait_attr.wait_obj = FI_WAIT_POLLFD;
 		ret = fi_wait_open(fabric_fid, &wait_attr, &wait);
 		if (ret) {
 			FI_WARN(&tcpx_prov, FI_LOG_EQ,

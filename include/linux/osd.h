@@ -41,6 +41,8 @@
 #include <sys/mman.h>
 #include <string.h>
 #include <assert.h>
+#include <unistd.h>
+#include <sys/syscall.h>
 
 #include <ifaddrs.h>
 #include "unix/osd.h"
@@ -94,5 +96,91 @@ static inline int ofi_hugepage_enabled(void)
 }
 
 size_t ofi_ifaddr_get_speed(struct ifaddrs *ifa);
+
+#ifndef __NR_process_vm_readv
+# define __NR_process_vm_readv 310
+#endif
+
+#ifndef __NR_process_vm_writev
+# define __NR_process_vm_writev 311
+#endif
+
+static inline ssize_t ofi_process_vm_readv(pid_t pid,
+			const struct iovec *local_iov,
+			unsigned long liovcnt,
+			const struct iovec *remote_iov,
+			unsigned long riovcnt,
+			unsigned long flags)
+{
+	return syscall(__NR_process_vm_readv, pid, local_iov, liovcnt,
+		       remote_iov, riovcnt, flags);
+}
+
+static inline size_t ofi_process_vm_writev(pid_t pid,
+			 const struct iovec *local_iov,
+			 unsigned long liovcnt,
+			 const struct iovec *remote_iov,
+			 unsigned long riovcnt,
+			 unsigned long flags)
+{
+	return syscall(__NR_process_vm_writev, pid, local_iov, liovcnt,
+		       remote_iov, riovcnt, flags);
+}
+
+static inline ssize_t ofi_read_socket(SOCKET fd, void *buf, size_t count)
+{
+	return read(fd, buf, count);
+}
+
+static inline ssize_t ofi_write_socket(SOCKET fd, const void *buf, size_t count)
+{
+	return write(fd, buf, count);
+}
+
+static inline ssize_t ofi_recv_socket(SOCKET fd, void *buf, size_t count,
+				      int flags)
+{
+	return recv(fd, buf, count, flags);
+}
+
+static inline ssize_t ofi_recvfrom_socket(SOCKET fd, void *buf, size_t count, int flags,
+					  struct sockaddr *from, socklen_t *fromlen)
+{
+	return recvfrom(fd, buf, count, flags, from, fromlen);
+}
+
+static inline ssize_t ofi_send_socket(SOCKET fd, const void *buf, size_t count,
+				      int flags)
+{
+	return send(fd, buf, count, flags);
+}
+
+static inline ssize_t ofi_sendto_socket(SOCKET fd, const void *buf, size_t count, int flags,
+					const struct sockaddr *to, socklen_t tolen)
+{
+	return sendto(fd, buf, count, flags, to, tolen);
+}
+
+static inline ssize_t ofi_writev_socket(SOCKET fd, struct iovec *iov, size_t iov_cnt)
+{
+	return writev(fd, iov, iov_cnt);
+}
+
+static inline ssize_t ofi_readv_socket(SOCKET fd, struct iovec *iov, int iov_cnt)
+{
+	return readv(fd, iov, iov_cnt);
+}
+
+static inline ssize_t
+ofi_sendmsg_tcp(SOCKET fd, const struct msghdr *msg, int flags)
+{
+	return sendmsg(fd, msg, flags);
+}
+
+static inline ssize_t
+ofi_recvmsg_tcp(SOCKET fd, struct msghdr *msg, int flags)
+{
+	return recvmsg(fd, msg, flags);
+}
 
 #endif /* _LINUX_OSD_H_ */

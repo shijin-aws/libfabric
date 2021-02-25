@@ -1,6 +1,6 @@
-#: "Latency and bandwidth tests for all providers"
+#: "Latency and bandwidth tests"
 {
-	prov_name: sockets,
+	prov_name: tcp,
 	test_type: [
 		FT_TEST_LATENCY,
 		FT_TEST_BANDWIDTH,
@@ -18,9 +18,6 @@
 	],
 	comp_type: [
 		FT_COMP_QUEUE,
-	],
-	mode: [
-		FT_MODE_ALL,
 	],
 	test_class: [
 		FT_CAP_MSG,
@@ -42,9 +39,6 @@
 	],
 	comp_type: [
 		FT_COMP_QUEUE,
-	],
-	mode: [
-		FT_MODE_ALL,
 	],
 	test_class: [
 		FT_CAP_MSG,
@@ -68,9 +62,6 @@
 	],
 	comp_type: [
 		FT_COMP_QUEUE,
-	],
-	mode: [
-		FT_MODE_ALL,
 	],
 	test_class: [
 		FT_CAP_MSG,

@@ -73,6 +73,10 @@
 	(((err) == EAGAIN)	||		\
 	 ((err) == EWOULDBLOCK))
 
+#define OFI_SOCK_TRY_ACCEPT_AGAIN(err)		\
+	(((err) == EAGAIN)	||		\
+	 ((err) == EWOULDBLOCK))
+
 #define OFI_SOCK_TRY_CONN_AGAIN(err)	\
 	((err) == EINPROGRESS)
 
@@ -119,66 +123,10 @@ static inline SOCKET ofi_socket(int domain, int type, int protocol)
 	return socket(domain, type, protocol);
 }
 
-static inline ssize_t ofi_read_socket(SOCKET fd, void *buf, size_t count)
-{
-	return read(fd, buf, count);
-}
-
-static inline ssize_t ofi_write_socket(SOCKET fd, const void *buf, size_t count)
-{
-	return write(fd, buf, count);
-}
-
-static inline ssize_t ofi_recv_socket(SOCKET fd, void *buf, size_t count,
-				      int flags)
-{
-	return recv(fd, buf, count, flags);
-}
-
-static inline ssize_t ofi_recvfrom_socket(SOCKET fd, void *buf, size_t count, int flags,
-					  struct sockaddr *from, socklen_t *fromlen)
-{
-	return recvfrom(fd, buf, count, flags, from, fromlen);
-}
-
-static inline ssize_t ofi_send_socket(SOCKET fd, const void *buf, size_t count,
-				      int flags)
-{
-	return send(fd, buf, count, flags);
-}
-
-static inline ssize_t ofi_sendto_socket(SOCKET fd, const void *buf, size_t count, int flags,
-					const struct sockaddr *to, socklen_t tolen)
-{
-	return sendto(fd, buf, count, flags, to, tolen);
-}
-
-static inline ssize_t ofi_writev_socket(SOCKET fd, struct iovec *iov, size_t iov_cnt)
-{
-	return writev(fd, iov, iov_cnt);
-}
-
-static inline ssize_t ofi_readv_socket(SOCKET fd, struct iovec *iov, int iov_cnt)
-{
-	return readv(fd, iov, iov_cnt);
-}
-
-static inline ssize_t
-ofi_sendmsg_tcp(SOCKET fd, const struct msghdr *msg, int flags)
-{
-	return sendmsg(fd, msg, flags);
-}
-
 static inline ssize_t
 ofi_sendmsg_udp(SOCKET fd, const struct msghdr *msg, int flags)
 {
 	return sendmsg(fd, msg, flags);
-}
-
-static inline ssize_t
-ofi_recvmsg_tcp(SOCKET fd, struct msghdr *msg, int flags)
-{
-	return recvmsg(fd, msg, flags);
 }
 
 static inline ssize_t
@@ -198,6 +146,8 @@ static inline int ofi_close_socket(SOCKET socket)
 }
 
 int fi_fd_nonblock(int fd);
+
+int fi_fd_block(int fd);
 
 static inline int ofi_sockerr(void)
 {
@@ -229,14 +179,25 @@ static inline long ofi_sysconf(int name)
 
 static inline int ofi_is_loopback_addr(struct sockaddr *addr) {
 	return (addr->sa_family == AF_INET &&
-		((struct sockaddr_in *)addr)->sin_addr.s_addr == ntohl(INADDR_LOOPBACK)) ||
+		((struct sockaddr_in *)addr)->sin_addr.s_addr == htonl(INADDR_LOOPBACK)) ||
 		(addr->sa_family == AF_INET6 &&
 		((struct sockaddr_in6 *)addr)->sin6_addr.s6_addr32[0] == 0 &&
 		((struct sockaddr_in6 *)addr)->sin6_addr.s6_addr32[1] == 0 &&
 		((struct sockaddr_in6 *)addr)->sin6_addr.s6_addr32[2] == 0 &&
-		((struct sockaddr_in6 *)addr)->sin6_addr.s6_addr32[3] == ntohl(1));
+		((struct sockaddr_in6 *)addr)->sin6_addr.s6_addr32[3] == htonl(1));
 }
 
+#if !HAVE_CLOCK_GETTIME
+
+#define CLOCK_REALTIME 0
+#define CLOCK_REALTIME_COARSE 0
+#define CLOCK_MONOTONIC 0
+
+typedef int clockid_t;
+
+int clock_gettime(clockid_t clk_id, struct timespec *tp);
+
+#endif /* !HAVE_CLOCK_GETTIME */
 
 /* complex operations implementation */
 
@@ -285,6 +246,8 @@ OFI_DEF_COMPLEX_OPS(long_double)
 #ifdef HAVE_BUILTIN_ATOMICS
 #define ofi_atomic_add_and_fetch(radix, ptr, val) __sync_add_and_fetch((ptr), (val))
 #define ofi_atomic_sub_and_fetch(radix, ptr, val) __sync_sub_and_fetch((ptr), (val))
+#define ofi_atomic_cas_bool(radix, ptr, expected, desired) 	\
+	__sync_bool_compare_and_swap((ptr), (expected), (desired))
 #endif /* HAVE_BUILTIN_ATOMICS */
 
 int ofi_set_thread_affinity(const char *s);

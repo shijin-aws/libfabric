@@ -34,15 +34,28 @@
 
 #include <shared.h>
 
+
 static int run(void)
 {
 	int ret;
+	int nconn = 1;
 
 	ret = ft_init_fabric();
 	if (ret)
 		return ret;
 
-	return ft_send_recv_greeting(ep);
+	if ((opts.options & FT_OPT_SERVER_PERSIST) && !opts.dst_addr)
+		nconn = opts.num_connections;
+
+	while (nconn && !ret) {
+		ret = ft_send_recv_greeting(ep);
+
+		if (--nconn && !ret) {
+			ret = ft_accept_next_client();
+		}
+	}
+
+	return ret;
 }
 
 int main(int argc, char **argv)
@@ -56,11 +69,14 @@ int main(int argc, char **argv)
 	if (!hints)
 		return EXIT_FAILURE;
 
-	while ((op = getopt(argc, argv, "h" ADDR_OPTS INFO_OPTS)) != -1) {
+	while ((op = getopt(argc, argv, "Uh" ADDR_OPTS INFO_OPTS)) != -1) {
 		switch (op) {
 		default:
 			ft_parse_addr_opts(op, optarg, &opts);
 			ft_parseinfo(op, optarg, hints, &opts);
+			break;
+		case 'U':
+			hints->tx_attr->op_flags |= FI_DELIVERY_COMPLETE;
 			break;
 		case '?':
 		case 'h':

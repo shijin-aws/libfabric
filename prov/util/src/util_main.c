@@ -57,17 +57,6 @@ static int util_match_fabric(struct dlist_entry *item, const void *arg)
 		!strcmp(fabric->name, fabric_info->name);
 }
 
-struct util_fabric *ofi_fabric_find(struct util_fabric_info *fabric_info)
-{
-	struct dlist_entry *item;
-
-	pthread_mutex_lock(&common_locks.util_fabric_lock);
-	item = dlist_find_first_match(&fabric_list, util_match_fabric, fabric_info);
-	pthread_mutex_unlock(&common_locks.util_fabric_lock);
-
-	return item ? container_of(item, struct util_fabric, list_entry) : NULL;
-}
-
 void ofi_fabric_remove(struct util_fabric *fabric)
 {
 	pthread_mutex_lock(&common_locks.util_fabric_lock);
@@ -138,6 +127,11 @@ static int util_find_domain(struct dlist_entry *item, const void *arg)
 		 ((info->domain_attr->mr_mode & domain->mr_mode) == domain->mr_mode);
 }
 
+/*
+ * Produces 1 fi_info output for each fi_info entry in the provider's base
+ * list (stored with util_prov), subject to the base fi_info meeting the
+ * user's hints.
+ */
 int util_getinfo(const struct util_prov *util_prov, uint32_t version,
 		 const char *node, const char *service, uint64_t flags,
 		 const struct fi_info *hints, struct fi_info **info)
@@ -171,8 +165,11 @@ int util_getinfo(const struct util_prov *util_prov, uint32_t version,
 		fabric_info.name = (*info)->fabric_attr->name;
 		fabric_info.prov = util_prov->prov;
 
-		fabric = ofi_fabric_find(&fabric_info);
-		if (fabric) {
+		pthread_mutex_lock(&common_locks.util_fabric_lock);
+		item = dlist_find_first_match(&fabric_list, util_match_fabric,
+					      &fabric_info);
+		if (item) {
+			fabric = container_of(item, struct util_fabric, list_entry);
 			FI_DBG(prov, FI_LOG_CORE, "Found opened fabric\n");
 			(*info)->fabric_attr->fabric = &fabric->fabric_fid;
 
@@ -190,6 +187,7 @@ int util_getinfo(const struct util_prov *util_prov, uint32_t version,
 			fastlock_release(&fabric->lock);
 
 		}
+		pthread_mutex_unlock(&common_locks.util_fabric_lock);
 
 		if (flags & FI_SOURCE) {
 			ret = ofi_get_addr(&(*info)->addr_format, flags,
@@ -260,4 +258,159 @@ int util_getinfo(const struct util_prov *util_prov, uint32_t version,
 err:
 	fi_freeinfo(*info);
 	return ret;
+}
+
+static void util_set_netif_names(struct fi_info *info,
+				 struct ofi_addr_list_entry *addr_entry)
+{
+	char *name;
+
+	name = strdup(addr_entry->net_name);
+	if (name) {
+		free(info->fabric_attr->name);
+		info->fabric_attr->name = name;
+	}
+
+	name = strdup(addr_entry->ifa_name);
+	if (name) {
+		free(info->domain_attr->name);
+		info->domain_attr->name = name;
+	}
+}
+
+/*
+ * Produces 1 fi_info output for each usable IP address in the system for the
+ * given fi_info input.
+ */
+#if HAVE_GETIFADDRS
+static void util_getinfo_ifs(const struct util_prov *prov,
+			     const struct fi_info *hints,
+			     struct fi_info *src_info,
+			     struct fi_info **head, struct fi_info **tail)
+{
+	struct fi_info *cur;
+	struct slist addr_list;
+	size_t addrlen;
+	uint32_t addr_format;
+	struct slist_entry *entry, *prev;
+	struct ofi_addr_list_entry *addr_entry;
+
+	*head = *tail = NULL;
+	slist_init(&addr_list);
+
+	ofi_get_list_of_addr(prov->prov, "iface", &addr_list);
+
+	(void) prev; /* Makes compiler happy */
+	slist_foreach(&addr_list, entry, prev) {
+		addr_entry = container_of(entry, struct ofi_addr_list_entry, entry);
+
+		if (hints && ((hints->caps & addr_entry->comm_caps) !=
+		    (hints->caps & (FI_LOCAL_COMM | FI_REMOTE_COMM))))
+			continue;
+
+		cur = fi_dupinfo(src_info);
+		if (!cur)
+			break;
+
+		if (!*head) {
+			*head = cur;
+			FI_INFO(prov->prov, FI_LOG_CORE, "Chosen addr for using: %s,"
+				" speed %zu\n", addr_entry->ipstr, addr_entry->speed);
+		} else {
+			(*tail)->next = cur;
+		}
+		*tail = cur;
+
+		switch (addr_entry->ipaddr.sin.sin_family) {
+		case AF_INET:
+			addrlen = sizeof(struct sockaddr_in);
+			addr_format = FI_SOCKADDR_IN;
+			break;
+		case AF_INET6:
+			addrlen = sizeof(struct sockaddr_in6);
+			addr_format = FI_SOCKADDR_IN6;
+			break;
+		default:
+			continue;
+		}
+
+		cur->caps = (cur->caps & ~(FI_LOCAL_COMM | FI_REMOTE_COMM)) |
+			    addr_entry->comm_caps;
+		cur->src_addr = mem_dup(&addr_entry->ipaddr, addrlen);
+		if (cur->src_addr) {
+			cur->src_addrlen = addrlen;
+			cur->addr_format = addr_format;
+		}
+		util_set_netif_names(cur, addr_entry);
+	}
+
+	ofi_free_list_of_addr(&addr_list);
+	if (!*head) {
+		*head = src_info;
+		*tail = src_info;
+	}
+}
+#else
+static void util_getinfo_ifs(const struct util_prov *prov,
+			     const struct fi_info *hints,
+			     struct fi_info *src_info,
+			     struct fi_info **head, struct fi_info **tail)
+{
+	*head = src_info;
+	*tail = src_info;
+}
+#endif
+
+static int util_match_addr(struct slist_entry *entry, const void *addr)
+{
+	struct ofi_addr_list_entry *addr_entry;
+
+	addr_entry = container_of(entry, struct ofi_addr_list_entry, entry);
+	return ofi_equals_ipaddr(&addr_entry->ipaddr.sa, addr);
+}
+
+int ofi_ip_getinfo(const struct util_prov *prov, uint32_t version,
+		   const char *node, const char *service, uint64_t flags,
+		   const struct fi_info *hints, struct fi_info **info)
+{
+	struct fi_info *head, *tail, *cur, **prev;
+	struct ofi_addr_list_entry *addr_entry;
+	struct slist addr_list;
+	struct slist_entry *entry;
+	int ret;
+
+	ret = util_getinfo(prov, version, node, service, flags,
+			   hints, info);
+	if (ret)
+		return ret;
+
+	prev = info;
+	for (cur = *info; cur; cur = cur->next) {
+		if (!cur->src_addr && !cur->dest_addr) {
+			util_getinfo_ifs(prov, hints, cur, &head, &tail);
+			if (head != cur) {
+				tail->next = (*prev)->next;
+				*prev = head;
+
+				cur->next = NULL;
+				fi_freeinfo(cur);
+				cur = tail;
+			}
+		} else if (cur->src_addr) {
+			slist_init(&addr_list);
+			ofi_get_list_of_addr(prov->prov, "iface", &addr_list);
+
+			entry = slist_find_first_match(&addr_list, util_match_addr,
+						(*info)->src_addr);
+			if (entry) {
+				addr_entry = container_of(entry,
+						struct ofi_addr_list_entry, entry);
+				util_set_netif_names(cur, addr_entry);
+			}
+			ofi_free_list_of_addr(&addr_list);
+		}
+		prev = &cur->next;
+	}
+
+	return 0;
 }

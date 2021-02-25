@@ -36,8 +36,9 @@
 #include <shared/ofi_str.h>
 #include <ofi_util.h>
 
-#define OFI_MSG_CAPS	(FI_SEND | FI_RECV)
-#define OFI_RMA_CAPS	(FI_READ | FI_WRITE | FI_REMOTE_READ | FI_REMOTE_WRITE)
+#define OFI_MSG_DIRECTION_CAPS	(FI_SEND | FI_RECV)
+#define OFI_RMA_DIRECTION_CAPS	(FI_READ | FI_WRITE | \
+				 FI_REMOTE_READ | FI_REMOTE_WRITE)
 
 static int fi_valid_addr_format(uint32_t prov_format, uint32_t user_format)
 {
@@ -93,13 +94,14 @@ char *ofi_strdup_append(const char *head, const char *tail)
 int ofi_exclude_prov_name(char **prov_name_list, const char *util_prov_name)
 {
 	char *exclude, *name, *temp;
+	int length;
 
-	exclude = malloc(strlen(util_prov_name) + 2);
+	length = strlen(util_prov_name) + 2;
+	exclude = malloc(length);
 	if (!exclude)
 		return -FI_ENOMEM;
 
-	exclude[0] = '^';
-	strcpy(&exclude[1], util_prov_name);
+	snprintf(exclude, length, "^%s", util_prov_name);
 
 	if (!*prov_name_list)
 		goto out;
@@ -150,8 +152,30 @@ static int ofi_dup_addr(const struct fi_info *info, struct fi_info *dup)
 	return 0;
 }
 
+static int ofi_set_prov_name(const struct fi_provider *prov,
+			     const struct fi_fabric_attr *util_hints,
+			     const struct fi_info *base_attr,
+			     struct fi_fabric_attr *core_hints)
+{
+	if (util_hints->prov_name) {
+		core_hints->prov_name = strdup(util_hints->prov_name);
+		if (!core_hints->prov_name)
+			return -FI_ENOMEM;
+	} else if (base_attr && base_attr->fabric_attr &&
+		   base_attr->fabric_attr->prov_name) {
+		core_hints->prov_name = strdup(base_attr->fabric_attr->
+					       prov_name);
+		if (!core_hints->prov_name)
+			return -FI_ENOMEM;
+	}
+
+	return core_hints->prov_name ?
+	       ofi_exclude_prov_name(&core_hints->prov_name, prov->name) : 0;
+}
+
 static int ofi_info_to_core(uint32_t version, const struct fi_provider *prov,
-			    const struct fi_info *util_info,
+			    const struct fi_info *util_hints,
+			    const struct fi_info *base_attr,
 			    ofi_alter_info_t info_to_core,
 			    struct fi_info **core_hints)
 {
@@ -160,19 +184,19 @@ static int ofi_info_to_core(uint32_t version, const struct fi_provider *prov,
 	if (!(*core_hints = fi_allocinfo()))
 		return -FI_ENOMEM;
 
-	if (info_to_core(version, util_info, *core_hints))
+	if (info_to_core(version, util_hints, base_attr, *core_hints))
 		goto err;
 
-	if (!util_info)
+	if (!util_hints)
 		return 0;
 
-	if (ofi_dup_addr(util_info, *core_hints))
+	if (ofi_dup_addr(util_hints, *core_hints))
 		goto err;
 
-	if (util_info->fabric_attr) {
-		if (util_info->fabric_attr->name) {
+	if (util_hints->fabric_attr) {
+		if (util_hints->fabric_attr->name) {
 			(*core_hints)->fabric_attr->name =
-				strdup(util_info->fabric_attr->name);
+				strdup(util_hints->fabric_attr->name);
 			if (!(*core_hints)->fabric_attr->name) {
 				FI_WARN(prov, FI_LOG_FABRIC,
 					"Unable to allocate fabric name\n");
@@ -180,25 +204,15 @@ static int ofi_info_to_core(uint32_t version, const struct fi_provider *prov,
 			}
 		}
 
-		if (util_info->fabric_attr->prov_name) {
-			(*core_hints)->fabric_attr->prov_name =
-				strdup(util_info->fabric_attr->prov_name);
-			if (!(*core_hints)->fabric_attr->prov_name) {
-				FI_WARN(prov, FI_LOG_FABRIC,
-					"Unable to alloc prov name\n");
-				goto err;
-			}
-			ret = ofi_exclude_prov_name(
-					&(*core_hints)->fabric_attr->prov_name,
-					prov->name);
-			if (ret)
-				goto err;
-		}
+		ret = ofi_set_prov_name(prov, util_hints->fabric_attr,
+					base_attr, (*core_hints)->fabric_attr);
+		if (ret)
+			goto err;
 	}
 
-	if (util_info->domain_attr && util_info->domain_attr->name) {
+	if (util_hints->domain_attr && util_hints->domain_attr->name) {
 		(*core_hints)->domain_attr->name =
-			strdup(util_info->domain_attr->name);
+			strdup(util_hints->domain_attr->name);
 		if (!(*core_hints)->domain_attr->name) {
 			FI_WARN(prov, FI_LOG_FABRIC,
 				"Unable to allocate domain name\n");
@@ -213,14 +227,14 @@ err:
 }
 
 static int ofi_info_to_util(uint32_t version, const struct fi_provider *prov,
-			    struct fi_info *core_info,
+			    struct fi_info *core_info, const struct fi_info *base_info,
 			    ofi_alter_info_t info_to_util,
 			    struct fi_info **util_info)
 {
 	if (!(*util_info = fi_allocinfo()))
 		return -FI_ENOMEM;
 
-	if (info_to_util(version, core_info, *util_info))
+	if (info_to_util(version, core_info, base_info, *util_info))
 		goto err;
 
 	if (ofi_dup_addr(core_info, *util_info))
@@ -267,18 +281,15 @@ err:
 
 int ofi_get_core_info(uint32_t version, const char *node, const char *service,
 		      uint64_t flags, const struct util_prov *util_prov,
-		      const struct fi_info *util_hints, ofi_alter_info_t info_to_core,
-		      struct fi_info **core_info)
+		      const struct fi_info *util_hints,
+		      const struct fi_info *base_attr,
+		      ofi_alter_info_t info_to_core, struct fi_info **core_info)
 {
 	struct fi_info *core_hints = NULL;
 	int ret;
 
-	ret = ofi_prov_check_info(util_prov, version, util_hints);
-	if (ret)
-		return ret;
-
-	ret = ofi_info_to_core(version, util_prov->prov, util_hints, info_to_core,
-			       &core_hints);
+	ret = ofi_info_to_core(version, util_prov->prov, util_hints, base_attr,
+			       info_to_core, &core_hints);
 	if (ret)
 		return ret;
 
@@ -298,31 +309,42 @@ int ofix_getinfo(uint32_t version, const char *node, const char *service,
 		 const struct fi_info *hints, ofi_alter_info_t info_to_core,
 		 ofi_alter_info_t info_to_util, struct fi_info **info)
 {
-	struct fi_info *core_info, *util_info, *cur, *tail;
-	int ret;
-
-	ret = ofi_get_core_info(version, node, service, flags, util_prov,
-				hints, info_to_core, &core_info);
-	if (ret)
-		return ret;
+	struct fi_info *core_info, *base_info, *util_info, *cur, *tail;
+	int ret = -FI_ENODATA;
 
 	*info = tail = NULL;
-	for (cur = core_info; cur; cur = cur->next) {
-		ret = ofi_info_to_util(version, util_prov->prov, cur,
-				       info_to_util, &util_info);
+	for (base_info = (struct fi_info *) util_prov->info; base_info;
+	     base_info = base_info->next) {
+		if (ofi_check_info(util_prov, base_info, version, hints))
+			continue;
+
+		ret = ofi_get_core_info(version, node, service, flags,
+					util_prov, hints, base_info,
+					info_to_core, &core_info);
 		if (ret) {
-			fi_freeinfo(*info);
+			if (ret == -FI_ENODATA)
+				continue;
 			break;
 		}
 
-		ofi_alter_info(util_info, hints, version);
-		if (!*info)
-			*info = util_info;
-		else
-			tail->next = util_info;
-		tail = util_info;
+		for (cur = core_info; cur; cur = cur->next) {
+			ret = ofi_info_to_util(version, util_prov->prov, cur,
+					       base_info, info_to_util,
+					       &util_info);
+			if (ret) {
+				fi_freeinfo(*info);
+				break;
+			}
+
+			ofi_alter_info(util_info, hints, version);
+			if (!*info)
+				*info = util_info;
+			else
+				tail->next = util_info;
+			tail = util_info;
+		}
+		fi_freeinfo(core_info);
 	}
-	fi_freeinfo(core_info);
 	return ret;
 }
 
@@ -370,7 +392,18 @@ int ofi_check_fabric_attr(const struct fi_provider *prov,
 			  const struct fi_fabric_attr *prov_attr,
 			  const struct fi_fabric_attr *user_attr)
 {
-	/* Provider names are checked by the framework */
+	/* Provider names are properly checked by the framework.
+	 * Here we only apply a simple filter.  If the util provider has
+	 * supplied a core provider name, verify that it is also in the
+	 * user's hints, if one is specified.
+	 */
+	if (prov_attr->prov_name && user_attr->prov_name &&
+	    !strcasestr(user_attr->prov_name, prov_attr->prov_name)) {
+		FI_INFO(prov, FI_LOG_CORE,
+			"Requesting provider %s, skipping %s\n",
+			prov_attr->prov_name, user_attr->prov_name);
+		return -FI_ENODATA;
+	}
 
 	if (user_attr->prov_version > prov_attr->prov_version) {
 		FI_INFO(prov, FI_LOG_CORE, "Unsupported provider version\n");
@@ -447,8 +480,11 @@ static int fi_resource_mgmt_level(enum fi_resource_mgmt rm_model)
  */
 static int ofi_cap_mr_mode(uint64_t info_caps, int mr_mode)
 {
+	if (!(info_caps & FI_HMEM))
+		mr_mode &= ~FI_MR_HMEM;
+
 	if (!ofi_rma_target_allowed(info_caps)) {
-		if (!(mr_mode & FI_MR_LOCAL))
+		if (!(mr_mode & (FI_MR_LOCAL | FI_MR_HMEM)))
 			return 0;
 
 		mr_mode &= ~OFI_MR_MODE_RMA_TARGET;
@@ -519,13 +555,6 @@ int ofi_check_domain_attr(const struct fi_provider *prov, uint32_t api_version,
 			  const struct fi_info *user_info)
 {
 	const struct fi_domain_attr *user_attr = user_info->domain_attr;
-
-	if (prov_attr->name && user_attr->name &&
-	    strcasecmp(user_attr->name, prov_attr->name)) {
-		FI_INFO(prov, FI_LOG_CORE, "Unknown domain name\n");
-		FI_INFO_NAME(prov, prov_attr, user_attr);
-		return -FI_ENODATA;
-	}
 
 	if (fi_thread_level(user_attr->threading) <
 	    fi_thread_level(prov_attr->threading)) {
@@ -619,14 +648,14 @@ int ofi_check_domain_attr(const struct fi_provider *prov, uint32_t api_version,
 	return 0;
 }
 
-static int ofi_check_ep_type(const struct fi_provider *prov,
-			     const struct fi_ep_attr *prov_attr,
-			     const struct fi_ep_attr *user_attr)
+int ofi_check_ep_type(const struct fi_provider *prov,
+		      const struct fi_ep_attr *prov_attr,
+		      const struct fi_ep_attr *user_attr)
 {
 	if ((user_attr->type != FI_EP_UNSPEC) &&
 	    (prov_attr->type != FI_EP_UNSPEC) &&
 	    (user_attr->type != prov_attr->type)) {
-		FI_INFO(prov, FI_LOG_CORE, "Unsupported endpoint type\n");
+		FI_INFO(prov, FI_LOG_CORE, "unsupported endpoint type\n");
 		FI_INFO_CHECK(prov, prov_attr, user_attr, type, FI_TYPE_EP_TYPE);
 		return -FI_ENODATA;
 	}
@@ -735,6 +764,14 @@ int ofi_check_ep_attr(const struct util_prov *util_prov, uint32_t api_version,
 		return -FI_ENODATA;
 	}
 
+	if ((user_info->caps & FI_TAGGED) && user_attr->mem_tag_format &&
+	    ofi_max_tag(user_attr->mem_tag_format) >
+		    ofi_max_tag(prov_attr->mem_tag_format)) {
+		FI_INFO(prov, FI_LOG_CORE, "Tag size exceeds supported size\n");
+		FI_INFO_CHECK_VAL(prov, prov_attr, user_attr, mem_tag_format);
+		return -FI_ENODATA;
+	}
+
 	return 0;
 }
 
@@ -745,7 +782,10 @@ int ofi_check_rx_attr(const struct fi_provider *prov,
 	const struct fi_rx_attr *prov_attr = prov_info->rx_attr;
 	int rm_enabled = (prov_info->domain_attr->resource_mgmt == FI_RM_ENABLED);
 
-	if (user_attr->caps & ~(prov_attr->caps)) {
+	if (user_attr->caps & ~OFI_IGNORED_RX_CAPS)
+		FI_INFO(prov, FI_LOG_CORE, "Tx only caps ignored in Rx caps\n");
+
+	if ((user_attr->caps & ~OFI_IGNORED_RX_CAPS) & ~(prov_attr->caps)) {
 		FI_INFO(prov, FI_LOG_CORE, "caps not supported\n");
 		FI_INFO_CHECK(prov, prov_attr, user_attr, caps, FI_TYPE_CAPS);
 		return -FI_ENODATA;
@@ -810,34 +850,26 @@ int ofi_check_rx_attr(const struct fi_provider *prov,
 	return 0;
 }
 
-static uint64_t ofi_expand_caps(uint64_t base_caps)
-{
-	uint64_t expanded_caps = base_caps;
-	uint64_t msg_caps = FI_SEND | FI_RECV;
-	uint64_t rma_caps = FI_WRITE | FI_READ | FI_REMOTE_WRITE | FI_REMOTE_READ;
-
-	if (base_caps & (FI_MSG | FI_TAGGED))
-		if (!(base_caps & msg_caps))
-			expanded_caps |= msg_caps;
-
-	if (base_caps & (FI_RMA | FI_ATOMIC))
-		if (!(base_caps & rma_caps))
-			expanded_caps |= rma_caps;
-
-	return expanded_caps;
-}
-
 int ofi_check_attr_subset(const struct fi_provider *prov,
 		uint64_t base_caps, uint64_t requested_caps)
 {
-	uint64_t expanded_base_caps;
+	uint64_t expanded_caps;
 
-	expanded_base_caps = ofi_expand_caps(base_caps);
+	expanded_caps = base_caps;
+	if (base_caps & (FI_MSG | FI_TAGGED)) {
+		if (!(base_caps & OFI_MSG_DIRECTION_CAPS))
+			expanded_caps |= OFI_MSG_DIRECTION_CAPS;
+	}
+	if (base_caps & (FI_RMA | FI_ATOMIC)) {
+		if (!(base_caps & OFI_RMA_DIRECTION_CAPS))
+			expanded_caps |= OFI_RMA_DIRECTION_CAPS;
+	}
 
-	if (~expanded_base_caps & requested_caps) {
-		FI_INFO(prov, FI_LOG_CORE, "requested caps not subset of base endpoint caps\n");
-		FI_INFO_FIELD(prov, expanded_base_caps, requested_caps, "Supported",
-				"Requested", FI_TYPE_CAPS);
+	if (~expanded_caps & requested_caps) {
+		FI_INFO(prov, FI_LOG_CORE,
+			"requested caps not subset of base endpoint caps\n");
+		FI_INFO_FIELD(prov, expanded_caps, requested_caps,
+			"Supported", "Requested", FI_TYPE_CAPS);
 		return -FI_ENODATA;
 	}
 
@@ -848,7 +880,10 @@ int ofi_check_tx_attr(const struct fi_provider *prov,
 		      const struct fi_tx_attr *prov_attr,
 		      const struct fi_tx_attr *user_attr, uint64_t info_mode)
 {
-	if (user_attr->caps & ~(prov_attr->caps)) {
+	if (user_attr->caps & ~OFI_IGNORED_TX_CAPS)
+		FI_INFO(prov, FI_LOG_CORE, "Rx only caps ignored in Tx caps\n");
+
+	if ((user_attr->caps & ~OFI_IGNORED_TX_CAPS) & ~(prov_attr->caps)) {
 		FI_INFO(prov, FI_LOG_CORE, "caps not supported\n");
 		FI_INFO_CHECK(prov, prov_attr, user_attr, caps, FI_TYPE_CAPS);
 		return -FI_ENODATA;
@@ -909,7 +944,7 @@ int ofi_check_tx_attr(const struct fi_provider *prov,
 	return 0;
 }
 
-/* if there are multiple fi_info in the provider:
+/* Use if there are multiple fi_info in the provider:
  * check provider's info */
 int ofi_prov_check_info(const struct util_prov *util_prov,
 			uint32_t api_version,
@@ -932,7 +967,7 @@ int ofi_prov_check_info(const struct util_prov *util_prov,
 	return (!success_info ? -FI_ENODATA : FI_SUCCESS);
 }
 
-/* if there are multiple fi_info in the provider:
+/* Use if there are multiple fi_info in the provider:
  * check and duplicate provider's info */
 int ofi_prov_check_dup_info(const struct util_prov *util_prov,
 			    uint32_t api_version,
@@ -965,7 +1000,7 @@ int ofi_prov_check_dup_info(const struct util_prov *util_prov,
 		tail = fi;
 	}
 
-	return (!*info ? -FI_ENODATA : FI_SUCCESS);
+	return !*info ? -FI_ENODATA : FI_SUCCESS;
 err:
 	fi_freeinfo(*info);
 	FI_INFO(prov, FI_LOG_CORE,
@@ -973,7 +1008,7 @@ err:
 	return ret;
 }
 
-/* if there is only single fi_info in the provider */
+/* Use if there is only single fi_info in the provider */
 int ofi_check_info(const struct util_prov *util_prov,
 		   const struct fi_info *prov_info, uint32_t api_version,
 		   const struct fi_info *user_info)
@@ -1067,10 +1102,10 @@ static uint64_t ofi_get_caps(uint64_t info_caps, uint64_t hint_caps,
 		       (attr_caps & FI_SECONDARY_CAPS);
 	}
 
-	if (caps & (FI_MSG | FI_TAGGED) && !(caps & OFI_MSG_CAPS))
-		caps |= OFI_MSG_CAPS;
-	if (caps & (FI_RMA | FI_ATOMICS) && !(caps & OFI_RMA_CAPS))
-		caps |= OFI_RMA_CAPS;
+	if (caps & (FI_MSG | FI_TAGGED) && !(caps & OFI_MSG_DIRECTION_CAPS))
+		caps |= (attr_caps & OFI_MSG_DIRECTION_CAPS);
+	if (caps & (FI_RMA | FI_ATOMICS) && !(caps & OFI_RMA_DIRECTION_CAPS))
+		caps |= (attr_caps & OFI_RMA_DIRECTION_CAPS);
 
 	return caps;
 }
@@ -1088,7 +1123,10 @@ static void fi_alter_domain_attr(struct fi_domain_attr *attr,
 		attr->mr_mode = (attr->mr_mode && attr->mr_mode != FI_MR_SCALABLE) ?
 				FI_MR_BASIC : FI_MR_SCALABLE;
 	} else {
-		if ((hints_mr_mode & attr->mr_mode) != attr->mr_mode) {
+		attr->mr_mode &= ~(FI_MR_BASIC | FI_MR_SCALABLE);
+
+		if (hints &&
+		    ((hints_mr_mode & attr->mr_mode) != attr->mr_mode)) {
 			attr->mr_mode = ofi_cap_mr_mode(info_caps,
 						attr->mr_mode & hints_mr_mode);
 		}
@@ -1171,7 +1209,8 @@ static uint64_t ofi_get_info_caps(const struct fi_info *prov_info,
 	int prov_mode, user_mode;
 	uint64_t caps;
 
-	assert(user_info);
+	if (!user_info)
+		return prov_info->caps;
 
 	caps = ofi_get_caps(prov_info->caps, user_info->caps, prov_info->caps);
 
@@ -1189,7 +1228,7 @@ static uint64_t ofi_get_info_caps(const struct fi_info *prov_info,
 	if ((FI_VERSION_LT(api_version, FI_VERSION(1,5)) &&
 	    (user_mode == FI_MR_UNSPEC)) ||
 	    (user_mode == FI_MR_BASIC) ||
-	    ((user_mode & prov_mode & OFI_MR_MODE_RMA_TARGET) == 
+	    ((user_mode & prov_mode & OFI_MR_MODE_RMA_TARGET) ==
 	     (prov_mode & OFI_MR_MODE_RMA_TARGET)))
 		return caps;
 
@@ -1205,9 +1244,6 @@ trim_caps:
 void ofi_alter_info(struct fi_info *info, const struct fi_info *hints,
 		    uint32_t api_version)
 {
-	if (!hints)
-		return;
-
 	for (; info; info = info->next) {
 		/* This should stay before call to fi_alter_domain_attr as
 		 * the checks depend on unmodified provider mr_mode attr */
@@ -1219,12 +1255,17 @@ void ofi_alter_info(struct fi_info *info, const struct fi_info *hints,
 		      (hints->domain_attr->mr_mode & (FI_MR_BASIC | FI_MR_SCALABLE)))))
 			info->mode |= FI_LOCAL_MR;
 
-		info->handle = hints->handle;
+		if (hints)
+			info->handle = hints->handle;
 
-		fi_alter_domain_attr(info->domain_attr, hints->domain_attr,
+		fi_alter_domain_attr(info->domain_attr,
+				     hints ? hints->domain_attr : NULL,
 				     info->caps, api_version);
-		fi_alter_ep_attr(info->ep_attr, hints->ep_attr, info->caps);
-		fi_alter_rx_attr(info->rx_attr, hints->rx_attr, info->caps);
-		fi_alter_tx_attr(info->tx_attr, hints->tx_attr, info->caps);
+		fi_alter_ep_attr(info->ep_attr, hints ? hints->ep_attr : NULL,
+				 info->caps);
+		fi_alter_rx_attr(info->rx_attr, hints ? hints->rx_attr : NULL,
+				 info->caps);
+		fi_alter_tx_attr(info->tx_attr, hints ? hints->tx_attr : NULL,
+				 info->caps);
 	}
 }

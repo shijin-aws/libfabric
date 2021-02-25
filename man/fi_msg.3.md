@@ -12,7 +12,7 @@ fi_msg - Message data transfer operations
 fi_recv / fi_recvv / fi_recvmsg
 :   Post a buffer to receive an incoming message
 
-fi_send / fi_sendv / fi_sendmsg  
+fi_send / fi_sendv / fi_sendmsg
 fi_inject / fi_senddata
 :   Initiate an operation to send a message
 
@@ -68,7 +68,7 @@ ssize_t fi_injectdata(struct fid_ep *ep, const void *buf, size_t len,
 : Count of vectored data entries.
 
 *desc*
-: Descriptor associated with the data buffer
+: Descriptor associated with the data buffer.  See [`fi_mr`(3)](fi_mr.3.html).
 
 *data*
 : Remote CQ data to transfer with the sent message.
@@ -127,11 +127,7 @@ event details.
 
 The call fi_send transfers the data contained in the user-specified
 data buffer to a remote endpoint, with message boundaries being
-maintained.  For connection based endpoints (FI_EP_MSG) the local
-endpoint must be connected to a remote endpoint or destination before
-fi_send is called.  Unless the endpoint has been configured
-differently, the data buffer passed into fi_send must not be touched
-by the application until the fi_send call completes asynchronously.
+maintained.
 
 ## fi_sendv
 
@@ -143,7 +139,7 @@ message.
 ## fi_sendmsg
 
 The fi_sendmsg call supports data transfers over both connected and
-unconnected endpoints, with the ability to control the send operation
+connectionless endpoints, with the ability to control the send operation
 per call through the use of flags.  The fi_sendmsg function takes a
 `struct fi_msg` as input.
 
@@ -192,7 +188,7 @@ corresponding endpoint.  Posted receives are searched in the order in
 which they were posted in order to match sends.
 Message boundaries are maintained.  The order in which
 the receives complete is dependent on
-the endpoint type and protocol.  For unconnected endpoints, the
+the endpoint type and protocol.  For connectionless endpoints, the
 src_addr parameter can be used to indicate that a buffer should be
 posted to receive incoming data from a specific remote endpoint.
 
@@ -205,7 +201,7 @@ parameter to a receive incoming data.
 ## fi_recvmsg
 
 The fi_recvmsg call supports posting buffers over both connected and
-unconnected endpoints, with the ability to control the receive
+connectionless endpoints, with the ability to control the receive
 operation per call through the use of flags.  The fi_recvmsg function
 takes a struct fi_msg as input.
 
@@ -276,7 +272,7 @@ fi_sendmsg.
 *FI_INJECT_COMPLETE*
 : Applies to fi_sendmsg.  Indicates that a completion should be
   generated when the source buffer(s) may be reused.
-  
+
 *FI_TRANSMIT_COMPLETE*
 : Applies to fi_sendmsg.  Indicates that a completion should not be
   generated until the operation has been successfully transmitted and
@@ -293,7 +289,7 @@ fi_sendmsg.
   targeting the same peer endpoint have completed.  Operations posted
   after the fencing will see and/or replace the results of any
   operations initiated prior to the fenced operation.
-  
+
   The ordering of operations starting at the posting of the fenced
   operation (inclusive) to the posting of a subsequent fenced operation
   (exclusive) is controlled by the endpoint's ordering semantics.

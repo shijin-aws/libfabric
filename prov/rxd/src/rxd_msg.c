@@ -77,7 +77,7 @@ static void rxd_progress_unexp_msg(struct rxd_ep *ep, struct rxd_x_entry *rx_ent
 {
 	struct rxd_pkt_entry *pkt_entry;
 	uint64_t num_segs = 0;
-	uint16_t curr_id = ep->peers[unexp_msg->base_hdr->peer].curr_rx_id;
+	uint16_t curr_id = rxd_peer(ep, unexp_msg->base_hdr->peer)->curr_rx_id;
 
 	rxd_progress_op(ep, rx_entry, unexp_msg->pkt_entry, unexp_msg->base_hdr,
 			unexp_msg->sar_hdr, unexp_msg->tag_hdr,
@@ -93,16 +93,14 @@ static void rxd_progress_unexp_msg(struct rxd_ep *ep, struct rxd_x_entry *rx_ent
 		num_segs++;
 	}
 
-	if (ep->peers[unexp_msg->base_hdr->peer].curr_unexp) {
+	if (rxd_peer(ep, unexp_msg->base_hdr->peer)->curr_unexp) {
 		if (!unexp_msg->sar_hdr || num_segs == unexp_msg->sar_hdr->num_segs - 1)
-			ep->peers[unexp_msg->base_hdr->peer].curr_rx_id = curr_id;
+			rxd_peer(ep, unexp_msg->base_hdr->peer)->curr_rx_id = curr_id;
 		else
-			ep->peers[unexp_msg->base_hdr->peer].curr_unexp = NULL;
+			rxd_peer(ep, unexp_msg->base_hdr->peer)->curr_unexp = NULL;
 	}
 
-	ofi_buf_free(unexp_msg->pkt_entry);
-	dlist_remove(&unexp_msg->entry);
-	free(unexp_msg);
+	rxd_free_unexp_msg(unexp_msg);
 }
 
 static int rxd_progress_unexp_list(struct rxd_ep *ep,
@@ -139,15 +137,15 @@ static int rxd_progress_unexp_list(struct rxd_ep *ep,
 static int rxd_ep_discard_recv(struct rxd_ep *rxd_ep, void *context,
 			       struct rxd_unexp_msg *unexp_msg)
 {
-	struct rxd_pkt_entry *pkt_entry;
 	uint64_t seq = unexp_msg->base_hdr->seq_no;
 	int ret;
 
 	assert(unexp_msg->tag_hdr);
 	seq += unexp_msg->sar_hdr ? unexp_msg->sar_hdr->num_segs : 1;
 
-	rxd_ep->peers[unexp_msg->base_hdr->peer].rx_seq_no =
-			MAX(seq, rxd_ep->peers[unexp_msg->base_hdr->peer].rx_seq_no);
+	rxd_peer(rxd_ep, unexp_msg->base_hdr->peer)->rx_seq_no =
+			MAX(seq, rxd_peer(rxd_ep, 
+				 unexp_msg->base_hdr->peer)->rx_seq_no);
 	rxd_ep_send_ack(rxd_ep, unexp_msg->base_hdr->peer);
 
 	ret = ofi_cq_write(rxd_ep->util_ep.rx_cq, context, FI_TAGGED | FI_RECV,
@@ -155,15 +153,7 @@ static int rxd_ep_discard_recv(struct rxd_ep *rxd_ep, void *context,
 			   unexp_msg->data_hdr->cq_data : 0,
 			   unexp_msg->tag_hdr->tag);
 
-	while (!dlist_empty(&unexp_msg->pkt_list)) {
-		dlist_pop_front(&unexp_msg->pkt_list, struct rxd_pkt_entry,
-				pkt_entry, d_entry);
-		ofi_buf_free(pkt_entry);
-	}
-
-	ofi_buf_free(unexp_msg->pkt_entry);
-	dlist_remove(&unexp_msg->entry);
-	free(unexp_msg);
+	rxd_cleanup_unexp_msg(unexp_msg);
 
 	return ret;
 }
@@ -212,10 +202,13 @@ ssize_t rxd_ep_generic_recvmsg(struct rxd_ep *rxd_ep, const struct iovec *iov,
 	struct rxd_x_entry *rx_entry;
 	struct dlist_entry *unexp_list, *rx_list;
 	struct rxd_unexp_msg *unexp_msg;
+	fi_addr_t rxd_addr = RXD_ADDR_INVALID;
 
+	
 	assert(iov_count <= RXD_IOV_LIMIT);
 	assert(!(rxd_flags & RXD_MULTI_RECV) || iov_count == 1);
 	assert(!(flags & FI_PEEK) || op == RXD_TAGGED);
+
 
 	fastlock_acquire(&rxd_ep->util_ep.lock);
 
@@ -231,19 +224,22 @@ ssize_t rxd_ep_generic_recvmsg(struct rxd_ep *rxd_ep, const struct iovec *iov,
 		unexp_list = &rxd_ep->unexp_list;
 		rx_list = &rxd_ep->rx_list;
 	}
+	
+	if (rxd_ep->util_ep.caps & FI_DIRECTED_RECV &&
+	    addr != FI_ADDR_UNSPEC) {
+		rxd_addr = (intptr_t) ofi_idx_lookup(&(rxd_ep_av(rxd_ep)->fi_addr_idx), 
+						     RXD_IDX_OFFSET(addr));
+	}
 
 	if (flags & FI_PEEK) {
-		ret = rxd_peek_recv(rxd_ep, addr, tag, ignore, context, flags,
+		ret = rxd_peek_recv(rxd_ep, rxd_addr, tag, ignore, context, flags,
 				    unexp_list);
 		goto out;
 	}
-
 	if (!(flags & FI_DISCARD)) {
-		rx_entry = rxd_rx_entry_init(rxd_ep, iov, iov_count, tag, ignore, context,
-					(rxd_ep->util_ep.caps & FI_DIRECTED_RECV &&
-					addr != FI_ADDR_UNSPEC) ?
-					rxd_ep_av(rxd_ep)->fi_addr_table[addr] :
-					FI_ADDR_UNSPEC, op, rxd_flags);
+		
+		rx_entry = rxd_rx_entry_init(rxd_ep, iov, iov_count, tag, ignore,
+					     context, rxd_addr, op, rxd_flags);
 		if (!rx_entry) {
 			ret = -FI_EAGAIN;
 		} else if (flags & FI_CLAIM) {
@@ -320,13 +316,9 @@ static struct rxd_x_entry *rxd_tx_entry_init_msg(struct rxd_ep *ep, fi_addr_t ad
 	void *ptr;
 
 	tx_entry = rxd_tx_entry_init_common(ep, addr, op, iov, iov_count,
-					    tag, data, flags, context);
+					    tag, data, flags, context, &base_hdr, &ptr);
 	if (!tx_entry)
 		return NULL;
-
-	base_hdr = rxd_get_base_hdr(tx_entry->pkt);
-	ptr = (void *) base_hdr;
-	rxd_init_base_hdr(ep, &ptr, tx_entry);
 
 	max_inline = rxd_domain->max_inline_msg;
 
@@ -352,8 +344,7 @@ static struct rxd_x_entry *rxd_tx_entry_init_msg(struct rxd_ep *ep, fi_addr_t ad
 					    tx_entry->cq_entry.len,
 					    max_inline);
 
-	tx_entry->pkt->pkt_size = ((char *) ptr - (char *) base_hdr) +
-				ep->tx_prefix_size;
+	tx_entry->pkt->pkt_size = rxd_pkt_size(ep, base_hdr, ptr);
 
 	return tx_entry;
 }
@@ -374,8 +365,12 @@ ssize_t rxd_ep_generic_inject(struct rxd_ep *rxd_ep, const struct iovec *iov,
 
 	if (ofi_cirque_isfull(rxd_ep->util_ep.tx_cq->cirq))
 		goto out;
+	
+	rxd_addr = (intptr_t) ofi_idx_lookup(&(rxd_ep_av(rxd_ep)->fi_addr_idx), 
+					     RXD_IDX_OFFSET(addr));
+	if (!rxd_addr)
+		goto out;
 
-	rxd_addr = rxd_ep_av(rxd_ep)->fi_addr_table[addr];
 	ret = rxd_send_rts_if_needed(rxd_ep, rxd_addr);
 	if (ret)
 		goto out;
@@ -387,7 +382,7 @@ ssize_t rxd_ep_generic_inject(struct rxd_ep *rxd_ep, const struct iovec *iov,
 		goto out;
 	}
 
-	if (rxd_ep->peers[rxd_addr].peer_addr != FI_ADDR_UNSPEC)
+	if (rxd_peer(rxd_ep, rxd_addr)->peer_addr != RXD_ADDR_INVALID)
 		(void) rxd_start_xfer(rxd_ep, tx_entry);
 
 out:
@@ -414,8 +409,12 @@ ssize_t rxd_ep_generic_sendmsg(struct rxd_ep *rxd_ep, const struct iovec *iov,
 
 	if (ofi_cirque_isfull(rxd_ep->util_ep.tx_cq->cirq))
 		goto out;
-
-	rxd_addr = rxd_ep_av(rxd_ep)->fi_addr_table[addr];
+	
+	rxd_addr = (intptr_t) ofi_idx_lookup(&(rxd_ep_av(rxd_ep)->fi_addr_idx), 
+					     RXD_IDX_OFFSET(addr));
+	if (!rxd_addr)
+		goto out;
+	
 	ret = rxd_send_rts_if_needed(rxd_ep, rxd_addr);
 	if (ret)
 		goto out;
@@ -425,7 +424,7 @@ ssize_t rxd_ep_generic_sendmsg(struct rxd_ep *rxd_ep, const struct iovec *iov,
 	if (!tx_entry)
 		goto out;
 
-	if (rxd_ep->peers[rxd_addr].peer_addr == FI_ADDR_UNSPEC)
+	if (rxd_peer(rxd_ep, rxd_addr)->peer_addr == RXD_ADDR_INVALID)
 		goto out;
 
 	ret = rxd_start_xfer(rxd_ep, tx_entry);

@@ -48,8 +48,6 @@
 extern "C" {
 #endif /* __cplusplus */
 
-#define OFI_ND_MAJOR_VERSION 1
-#define OFI_ND_MINOR_VERSION 0
 
 #define ND_MSG_IOV_LIMIT		(256)
 #define ND_MSG_INTERNAL_IOV_LIMIT	(512)
@@ -181,9 +179,9 @@ static inline int ofi_nd_hresult_2_fierror(HRESULT hr)
 
 #define OFI_ND_TIMEOUT_INIT(timeout)				\
 	uint64_t sfinish = ((timeout) >= 0) ?			\
-		(fi_gettime_ms() + (timeout) * 10000) : -1;
+		(ofi_gettime_ms() + (timeout) * 10000) : -1;
 
-#define OFI_ND_TIMEDOUT() ((sfinish > 0) ? fi_gettime_ms() >= sfinish : 0)
+#define OFI_ND_TIMEDOUT() ((sfinish > 0) ? ofi_gettime_ms() >= sfinish : 0)
 
 #ifdef ENABLE_DEBUG  
 # define NODEFAULT	assert(0)  

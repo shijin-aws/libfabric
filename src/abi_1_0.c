@@ -88,6 +88,21 @@ struct fi_ep_attr_1_0 {
 	size_t			rx_ctx_cnt;
 };
 
+struct fi_tx_attr_1_0 {
+        uint64_t                caps;
+        uint64_t                mode;
+        uint64_t                op_flags;
+        uint64_t                msg_order;
+        uint64_t                comp_order;
+        size_t                  inject_size;
+        size_t                  size;
+        size_t                  iov_limit;
+        size_t                  rma_iov_limit;
+};
+
+/* External structure is still ABI 1.0 compliant */
+#define fi_rx_attr_1_0 fi_rx_attr
+
 struct fi_info_1_0 {
 	struct fi_info			*next;
 	uint64_t			caps;
@@ -98,12 +113,46 @@ struct fi_info_1_0 {
 	void				*src_addr;
 	void				*dest_addr;
 	fid_t				handle;
-	struct fi_tx_attr		*tx_attr;
-	struct fi_rx_attr		*rx_attr;
+	struct fi_tx_attr_1_0		*tx_attr;
+	struct fi_rx_attr_1_0		*rx_attr;
 	struct fi_ep_attr_1_0		*ep_attr;
 	struct fi_domain_attr_1_0	*domain_attr;
 	struct fi_fabric_attr_1_0	*fabric_attr;
 };
+
+struct fi_domain_attr_1_1 {
+        struct fid_domain       *domain;
+        char                    *name;
+        enum fi_threading       threading;
+        enum fi_progress        control_progress;
+        enum fi_progress        data_progress;
+        enum fi_resource_mgmt   resource_mgmt;
+        enum fi_av_type         av_type;
+        int                     mr_mode;
+        size_t                  mr_key_size;
+        size_t                  cq_data_size;
+        size_t                  cq_cnt;
+        size_t                  ep_cnt;
+        size_t                  tx_ctx_cnt;
+        size_t                  rx_ctx_cnt;
+        size_t                  max_ep_tx_ctx;
+        size_t                  max_ep_rx_ctx;
+        size_t                  max_ep_stx_ctx;
+        size_t                  max_ep_srx_ctx;
+        size_t                  cntr_cnt;
+        size_t                  mr_iov_limit;
+        uint64_t                caps;
+        uint64_t                mode;
+        uint8_t                 *auth_key;
+        size_t                  auth_key_size;
+        size_t                  max_err_data;
+        size_t                  mr_cnt;
+};
+
+#define fi_tx_attr_1_1 fi_tx_attr_1_0
+#define fi_rx_attr_1_1 fi_rx_attr_1_0
+#define fi_ep_attr_1_1 fi_ep_attr
+#define fi_fabric_attr_1_1 fi_fabric_attr
 
 struct fi_info_1_1 {
 	struct fi_info			*next;
@@ -115,12 +164,46 @@ struct fi_info_1_1 {
 	void				*src_addr;
 	void				*dest_addr;
 	fid_t				handle;
-	struct fi_tx_attr		*tx_attr;
-	struct fi_rx_attr		*rx_attr;
-	struct fi_ep_attr_1_0		*ep_attr;
-	struct fi_domain_attr_1_0	*domain_attr;
-	struct fi_fabric_attr_1_0	*fabric_attr;
+	struct fi_tx_attr_1_1		*tx_attr;
+	struct fi_rx_attr_1_1		*rx_attr;
+	struct fi_ep_attr_1_1		*ep_attr;
+	struct fi_domain_attr_1_1	*domain_attr;
+	struct fi_fabric_attr_1_1	*fabric_attr;
 };
+
+#define fi_tx_attr_1_2 fi_tx_attr_1_1
+#define fi_rx_attr_1_2 fi_rx_attr_1_1
+#define fi_ep_attr_1_2 fi_ep_attr_1_1
+#define fi_domain_attr_1_2 fi_domain_attr_1_1
+#define fi_fabric_attr_1_2 fi_fabric_attr_1_1
+#define fid_nic_1_2 fid_nic
+
+struct fi_info_1_2 {
+        struct fi_info            *next;
+        uint64_t                  caps;
+        uint64_t                  mode;
+        uint32_t                  addr_format;
+        size_t                    src_addrlen;
+        size_t                    dest_addrlen;
+        void                      *src_addr;
+        void                      *dest_addr;
+        fid_t                     handle;
+        struct fi_tx_attr_1_2     *tx_attr;
+        struct fi_rx_attr_1_2      *rx_attr;
+        struct fi_ep_attr_1_2     *ep_attr;
+        struct fi_domain_attr_1_2 *domain_attr;
+        struct fi_fabric_attr_1_2 *fabric_attr;
+        struct fid_nic_1_2        *nic;
+};
+
+/*
+#define fi_tx_attr_1_3 fi_tx_attr
+#define fi_rx_attr_1_3 fi_rx_attr_1_2
+#define fi_ep_attr_1_3 fi_ep_attr_1_2
+#define fi_domain_attr_1_3 fi_domain_attr
+#define fi_fabric_attr_1_3 fi_fabric_attr_1_2
+fi_info_1_3 -> fi_info
+*/
 
 #define ofi_dup_attr(dst, src)				\
 	do {						\
@@ -316,3 +399,55 @@ int fi_getinfo_1_1(uint32_t version, const char *node, const char *service,
 	return ret;
 }
 COMPAT_SYMVER(fi_getinfo_1_1, fi_getinfo, FABRIC_1.1);
+
+/*
+ * ABI 1.2
+ */
+__attribute__((visibility ("default"),EXTERNALLY_VISIBLE))
+void fi_freeinfo_1_2(struct fi_info_1_2 *info)
+{
+	fi_freeinfo((struct fi_info *) info);
+}
+COMPAT_SYMVER(fi_freeinfo_1_2, fi_freeinfo, FABRIC_1.2);
+
+__attribute__((visibility ("default"),EXTERNALLY_VISIBLE))
+struct fi_info_1_2 *fi_dupinfo_1_2(const struct fi_info_1_2 *info)
+{
+	struct fi_info *dup, *base;
+
+	if (!info)
+		return (struct fi_info_1_2 *) ofi_allocinfo_internal();
+
+	ofi_dup_attr(base, info);
+	if (base == NULL)
+		return NULL;
+
+	dup = fi_dupinfo(base);
+
+	free(base);
+	return (struct fi_info_1_2 *) dup;
+}
+COMPAT_SYMVER(fi_dupinfo_1_2, fi_dupinfo, FABRIC_1.2);
+
+__attribute__((visibility ("default"),EXTERNALLY_VISIBLE))
+int fi_getinfo_1_2(uint32_t version, const char *node, const char *service,
+		   uint64_t flags, const struct fi_info_1_2 *hints_1_2,
+		   struct fi_info_1_2 **info)
+{
+	struct fi_info *hints;
+	int ret;
+
+	if (hints_1_2) {
+		hints = (struct fi_info *) fi_dupinfo_1_2(hints_1_2);
+		if (!hints)
+			return -FI_ENOMEM;
+	} else {
+		hints = NULL;
+	}
+	ret = fi_getinfo(version, node, service, flags, hints,
+			 (struct fi_info **) info);
+	fi_freeinfo(hints);
+
+	return ret;
+}
+COMPAT_SYMVER(fi_getinfo_1_2, fi_getinfo, FABRIC_1.2);

@@ -105,7 +105,7 @@ int sock_conn_map_init(struct sock_ep *ep, int init_size)
 	if (!map->epoll_ctxs)
 		goto err1;
 
-	ret = fi_epoll_create(&map->epoll_set);
+	ret = ofi_epoll_create(&map->epoll_set);
 	if (ret < 0) {
 		SOCK_LOG_ERROR("failed to create epoll set, "
 			       "error - %d (%s)\n", ret,
@@ -157,18 +157,19 @@ void sock_conn_map_destroy(struct sock_ep_attr *ep_attr)
 	cmap->epoll_ctxs = NULL;
 	cmap->epoll_ctxs_sz = 0;
 	cmap->used = cmap->size = 0;
-	fi_epoll_close(cmap->epoll_set);
+	ofi_epoll_close(cmap->epoll_set);
 	fastlock_destroy(&cmap->lock);
 }
 
 void sock_conn_release_entry(struct sock_conn_map *map, struct sock_conn *conn)
 {
-	fi_epoll_del(map->epoll_set, conn->sock_fd);
+	ofi_epoll_del(map->epoll_set, conn->sock_fd);
 	ofi_close_socket(conn->sock_fd);
 
 	conn->address_published = 0;
-        conn->connected = 0;
-        conn->sock_fd = -1;
+	conn->av_index = FI_ADDR_NOTAVAIL;
+	conn->connected = 0;
+	conn->sock_fd = -1;
 }
 
 static int sock_conn_get_next_index(struct sock_conn_map *map)
@@ -210,7 +211,7 @@ static struct sock_conn *sock_conn_map_insert(struct sock_ep_attr *ep_attr,
 	                  (ep_attr->ep_type == FI_EP_MSG ?
 	                   SOCK_OPTS_KEEPALIVE : 0));
 
-	if (fi_epoll_add(map->epoll_set, conn_fd, FI_EPOLL_IN, &map->table[index]))
+	if (ofi_epoll_add(map->epoll_set, conn_fd, OFI_EPOLL_IN, &map->table[index]))
 		SOCK_LOG_ERROR("failed to add to epoll set: %d\n", conn_fd);
 
 	map->table[index].address_published = addr_published;
@@ -306,7 +307,7 @@ int sock_conn_stop_listener_thread(struct sock_conn_listener *conn_listener)
 	}
 
 	fd_signal_free(&conn_listener->signal);
-	fi_epoll_close(conn_listener->emap);
+	ofi_epoll_close(conn_listener->epollfd);
 	fastlock_destroy(&conn_listener->signal_lock);
 
 	return 0;
@@ -323,7 +324,7 @@ static void *sock_conn_listener_thread(void *arg)
 	socklen_t addr_size;
 
 	while (conn_listener->do_listen) {
-		num_fds = fi_epoll_wait(conn_listener->emap, ep_contexts,
+		num_fds = ofi_epoll_wait(conn_listener->epollfd, ep_contexts,
 		                        SOCK_EPOLL_WAIT_EVENTS, -1);
 		if (num_fds < 0) {
 			SOCK_LOG_ERROR("poll failed : %s\n", strerror(errno));
@@ -331,6 +332,15 @@ static void *sock_conn_listener_thread(void *arg)
 		}
 
 		fastlock_acquire(&conn_listener->signal_lock);
+		if (conn_listener->removed_from_epollfd) {
+			/* The epoll set changed between calling wait and wait
+			 * returning.  Get an updated set of events to avoid
+			 * possible use after free error.
+			 */
+			conn_listener->removed_from_epollfd = false;
+			goto skip;
+		}
+
 		for (i = 0; i < num_fds; i++) {
 			conn_handle = ep_contexts[i];
 
@@ -359,6 +369,7 @@ static void *sock_conn_listener_thread(void *arg)
 			fastlock_release(&ep_attr->cmap.lock);
 			sock_pe_signal(ep_attr->domain->pe);
 		}
+skip:
 		fastlock_release(&conn_listener->signal_lock);
 	}
 
@@ -371,7 +382,7 @@ int sock_conn_start_listener_thread(struct sock_conn_listener *conn_listener)
 
 	fastlock_init(&conn_listener->signal_lock);
 
-	ret = fi_epoll_create(&conn_listener->emap);
+	ret = ofi_epoll_create(&conn_listener->epollfd);
 	if (ret < 0) {
 		SOCK_LOG_ERROR("failed to create epoll set\n");
 		goto err1;
@@ -383,15 +394,16 @@ int sock_conn_start_listener_thread(struct sock_conn_listener *conn_listener)
 		goto err2;
 	}
 
-	ret = fi_epoll_add(conn_listener->emap,
+	ret = ofi_epoll_add(conn_listener->epollfd,
 	                   conn_listener->signal.fd[FI_READ_FD],
-	                   FI_EPOLL_IN, NULL);
+	                   OFI_EPOLL_IN, NULL);
 	if (ret != 0){
 		SOCK_LOG_ERROR("failed to add signal fd to epoll\n");
 		goto err3;
 	}
 
 	conn_listener->do_listen = 1;
+	conn_listener->removed_from_epollfd = false;
 	ret = pthread_create(&conn_listener->listener_thread, NULL,
 	                     sock_conn_listener_thread, conn_listener);
 	if (ret < 0) {
@@ -404,7 +416,7 @@ err3:
 	conn_listener->do_listen = 0;
 	fd_signal_free(&conn_listener->signal);
 err2:
-	fi_epoll_close(conn_listener->emap);
+	ofi_epoll_close(conn_listener->epollfd);
 err1:
 	fastlock_destroy(&conn_listener->signal_lock);
 	return ret;
@@ -463,8 +475,8 @@ int sock_conn_listen(struct sock_ep_attr *ep_attr)
 	conn_handle->do_listen = 1;
 
 	fastlock_acquire(&ep_attr->domain->conn_listener.signal_lock);
-	ret = fi_epoll_add(ep_attr->domain->conn_listener.emap,
-	                   conn_handle->sock, FI_EPOLL_IN, conn_handle);
+	ret = ofi_epoll_add(ep_attr->domain->conn_listener.epollfd,
+	                   conn_handle->sock, OFI_EPOLL_IN, conn_handle);
 	fd_signal_set(&ep_attr->domain->conn_listener.signal);
 	fastlock_release(&ep_attr->domain->conn_listener.signal_lock);
 	if (ret) {
@@ -501,7 +513,9 @@ int sock_ep_connect(struct sock_ep_attr *ep_attr, fi_addr_t index,
 		addr = *ep_attr->dest_addr;
 		ofi_addr_set_port(&addr.sa, ep_attr->msg_dest_port);
 	} else {
+		fastlock_acquire(&ep_attr->av->table_lock);
 		addr = ep_attr->av->table[index].addr;
+		fastlock_release(&ep_attr->av->table_lock);
 	}
 
 do_connect:
@@ -579,6 +593,8 @@ retry:
 
 	SOCK_LOG_ERROR("Connect error, retrying - %s - %d\n",
 		       strerror(ofi_sockerr()), conn_fd);
+	ofi_straddr_log(&sock_prov, FI_LOG_WARN, FI_LOG_EP_CTRL,
+			"Retry connect to peer ", &addr.sa);
         goto do_connect;
 
 out:

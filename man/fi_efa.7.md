@@ -53,8 +53,10 @@ The following features are supported:
   registrations on the DGRAM endpoint.
 
 *Memory registration modes*
-: The RDM endpoint does not require memory registration and the
-  *FI_EP_DGRAM* endpoint only supports *FI_MR_LOCAL*.
+: The RDM endpoint does not require memory registration for send and receive
+  operations, i.e. it does not require *FI_MR_LOCAL*. Applications may specify
+  *FI_MR_LOCAL* in the MR mode flags in order to use descriptors provided by the
+  application. The *FI_EP_DGRAM* endpoint only supports *FI_MR_LOCAL*.
 
 *Progress*
 : The RDM endpoint supports both *FI_PROGRESS_AUTO* and *FI_PROGRESS_MANUAL*,
@@ -69,14 +71,14 @@ The following features are supported:
 
 # LIMITATIONS
 
-The provider does not support *FI_ATOMIC* interfaces. For RMA operations,
+The DGRAM endpoint does not support *FI_ATOMIC* interfaces. For RMA operations,
 completion events for RMA targets (*FI_RMA_EVENT*) is not supported. The DGRAM
 endpoint does not fully protect against resource overruns, so resource
 management is disabled for this endpoint (*FI_RM_DISABLED*).
 
 No support for selective completions.
 
-No support for counters.
+No support for counters for the DGRAM endpoint.
 
 No support for inject.
 
@@ -121,10 +123,6 @@ These OFI runtime parameters apply only to the RDM endpoint.
   buffer for iov's larger than max_memcpy_size. Defaults to true. When
   disabled, only uses a bounce buffer
 
-*FI_EFA_MR_CACHE_MERGE_REGIONS*
-: Enables merging overlapping and adjacent memory registration regions.
-  Defaults to true.
-
 *FI_EFA_MR_MAX_CACHED_COUNT*
 : Sets the maximum number of memory registrations that can be cached at
   any time.
@@ -154,6 +152,22 @@ These OFI runtime parameters apply only to the RDM endpoint.
 *FI_EFA_TIMEOUT_INTERVAL*
 : Time interval (us) for the base timeout to use for exponential backoff
   to a peer after a receiver not ready error.
+
+*FI_EFA_ENABLE_SHM_TRANSFER*
+: Enable SHM provider to provide the communication across all intra-node processes.
+  SHM transfer will be disabled in the case where
+  [`ptrace protection`](https://wiki.ubuntu.com/SecurityTeam/Roadmap/KernelHardening#ptrace_Protection)
+  is turned on. You can turn it off to enable shm transfer.
+
+*FI_EFA_SHM_AV_SIZE*
+: Defines the maximum number of entries in SHM provider's address vector.
+
+*FI_EFA_SHM_MAX_MEDIUM_SIZE*
+: Defines the switch point between small/medium message and large message. The message
+  larger than this switch point will be transferred with large message protocol.
+
+*FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE*
+: The maximum size for inter EFA messages to be sent by using medium message protocol. Messages which can fit in one packet will be sent as eager message. Messages whose sizes are smaller than this value will be sent using medium message protocol. Other messages will be sent using CTS based long message protocol.
 
 # SEE ALSO
 

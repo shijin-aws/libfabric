@@ -101,17 +101,26 @@ static int mrail_parse_env_vars(void)
 		mrail_num_config = i;
 	}
 
-	fi_param_define(&mrail_prov, "addr_strc", FI_PARAM_STRING, "List of rail"
-			" addresses of format FI_ADDR_STR delimited by comma");
-	ret = fi_param_get_str(&mrail_prov, "addr_strc", &addr_strc);
+	fi_param_define(&mrail_prov, "addr_strc", FI_PARAM_STRING, "Deprecated. "
+			"Replaced by FI_OFI_MRAIL_ADDR.");
+
+	fi_param_define(&mrail_prov, "addr", FI_PARAM_STRING, "Comma separated list "
+			"of rail addresses (FI_ADDR_STR, host name, IP address, or "
+			"netdev interface name)");
+
+	ret = fi_param_get_str(&mrail_prov, "addr", &addr_strc);
+	if (ret)
+		ret = fi_param_get_str(&mrail_prov, "addr_strc", &addr_strc);
 	if (ret) {
-		FI_WARN(&mrail_prov, FI_LOG_CORE, "Unable to read "
-			"OFI_MRAIL_ADDR_STRC env variable\n");
+		FI_INFO(&mrail_prov, FI_LOG_CORE, "unable to read "
+			"FI_OFI_MRAIL_ADDR env variable\n");
 		return ret;
 	}
 	mrail_addr_strv = mrail_split_addr_strc(addr_strc);
-	if (!mrail_addr_strv)
+	if (!mrail_addr_strv) {
+		FI_WARN(&mrail_prov, FI_LOG_CORE, "unable to alloc memory\n");
 		return -FI_ENOMEM;
+	}
 
 	/*
 	 * Local rank is used to set the default tx rail when fixed mapping
@@ -271,10 +280,13 @@ static int mrail_get_core_info(uint32_t version, const char *node, const char *s
 	size_t i;
 	int ret = 0;
 	int num_rails;
+	enum fi_log_level level = ((hints && hints->fabric_attr &&
+				    hints->fabric_attr->prov_name) ?
+				   FI_LOG_WARN : FI_LOG_INFO);
 
 	if (!mrail_addr_strv) {
-		FI_WARN(&mrail_prov, FI_LOG_FABRIC,
-			"OFI_MRAIL_ADDR_STRC env variable not set!\n");
+		FI_LOG(&mrail_prov, level, FI_LOG_FABRIC,
+		       "OFI_MRAIL_ADDR_STRC env variable not set!\n");
 		return -FI_ENODATA;
 	}
 
@@ -318,7 +330,36 @@ static int mrail_get_core_info(uint32_t version, const char *node, const char *s
 		FI_DBG(&mrail_prov, FI_LOG_CORE,
 		       "--- Begin fi_getinfo for rail: %zd ---\n", i);
 
-		ret = fi_getinfo(version, NULL, NULL, OFI_GETINFO_INTERNAL, core_hints, &rail_info[i]);
+		if (!hints || !hints->caps) {
+			struct fi_info *tmp_info = NULL;
+			uint64_t saved_core_hints_caps = core_hints->caps;
+			/*
+			 * Get the default caps that would be returned for empty
+			 * hints, otherwise the returned caps would only contain
+			 * those specifed in the hints (FI_SOURCE) and secondary
+			 * capabilities.
+			 */
+			core_hints->caps = 0;
+			ret = fi_getinfo(version, NULL, NULL,
+					 OFI_GETINFO_INTERNAL, core_hints,
+					 &tmp_info);
+			if (tmp_info) {
+				core_hints->caps = tmp_info->caps |
+						   saved_core_hints_caps;
+				fi_freeinfo(tmp_info);
+			} else {
+				core_hints->caps = saved_core_hints_caps;
+			}
+
+			ret = fi_getinfo(version, NULL, NULL,
+					 OFI_GETINFO_INTERNAL, core_hints,
+					 &rail_info[i]);
+			core_hints->caps = saved_core_hints_caps;
+		} else {
+			ret = fi_getinfo(version, NULL, NULL,
+					 OFI_GETINFO_INTERNAL, core_hints,
+					 &rail_info[i]);
+		}
 
 		FI_DBG(&mrail_prov, FI_LOG_CORE,
 		       "--- End fi_getinfo for rail: %zd ---\n", i);
@@ -385,8 +426,7 @@ static struct fi_info *mrail_get_prefix_info(struct fi_info *core_info, int id)
 
 	fi->ep_attr->protocol		= mrail_info.ep_attr->protocol;
 	fi->ep_attr->protocol_version	= mrail_info.ep_attr->protocol_version;
-	fi->fabric_attr->prov_version	= FI_VERSION(MRAIL_MAJOR_VERSION,
-						     MRAIL_MINOR_VERSION);
+	fi->fabric_attr->prov_version	= OFI_VERSION_DEF_PROV;
 	fi->domain_attr->mr_key_size	= (num_rails *
 					   sizeof(struct mrail_addr_key));
 	fi->domain_attr->mr_mode	|= FI_MR_RAW;
@@ -484,8 +524,8 @@ static void mrail_fini(void)
 
 struct fi_provider mrail_prov = {
 	.name = OFI_UTIL_PREFIX "mrail",
-	.version = FI_VERSION(MRAIL_MAJOR_VERSION, MRAIL_MINOR_VERSION),
-	.fi_version = FI_VERSION(1, 8),
+	.version = OFI_VERSION_DEF_PROV,
+	.fi_version = OFI_VERSION_LATEST,
 	.getinfo = mrail_getinfo,
 	.fabric = mrail_fabric_open,
 	.cleanup = mrail_fini

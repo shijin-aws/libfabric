@@ -49,12 +49,16 @@ extern "C" {
 #endif
 
 #ifndef FT_FIVERSION
-#define FT_FIVERSION FI_VERSION(1,5)
+#define FT_FIVERSION FI_VERSION(1,9)
 #endif
 
 #include "ft_osd.h"
 #define OFI_UTIL_PREFIX "ofi_"
 #define OFI_NAME_DELIM ';'
+
+#define ALIGN_MASK(x, mask) (((x) + (mask)) & ~(mask))
+#define ALIGN(x, a) ALIGN_MASK(x, (typeof(x))(a) - 1)
+#define ALIGN_DOWN(x, a) ALIGN((x) - ((a) - 1), (a))
 
 #define OFI_MR_BASIC_MAP (FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_VIRT_ADDR)
 
@@ -64,9 +68,6 @@ static inline int ft_exit_code(int ret)
 	int absret = ret < 0 ? -ret : ret;
 	return absret > 255 ? EXIT_FAILURE : absret;
 }
-
-#define ft_foreach_info(fi, info) \
-	for (fi = info; fi; fi = fi->next)
 
 #define ft_sa_family(addr) (((struct sockaddr *)(addr))->sa_family)
 
@@ -82,13 +83,6 @@ extern const unsigned int test_cnt;
 #define FT_ENABLE_ALL		(~0)
 #define FT_DEFAULT_SIZE		(1 << 0)
 
-static inline int ft_use_size(int index, int enable_flags)
-{
-	return (enable_flags == FT_ENABLE_ALL) ||
-		(enable_flags & test_size[index].enable_flags);
-}
-
-
 enum precision {
 	NANO = 1,
 	MICRO = 1000,
@@ -99,7 +93,8 @@ enum ft_comp_method {
 	FT_COMP_SPIN = 0,
 	FT_COMP_SREAD,
 	FT_COMP_WAITSET,
-	FT_COMP_WAIT_FD
+	FT_COMP_WAIT_FD,
+	FT_COMP_YIELD,
 };
 
 enum {
@@ -119,6 +114,10 @@ enum {
 	FT_OPT_SKIP_REG_MR	= 1 << 13,
 	FT_OPT_OOB_ADDR_EXCH	= 1 << 14,
 	FT_OPT_ALLOC_MULT_MR	= 1 << 15,
+	FT_OPT_SERVER_PERSIST	= 1 << 16,
+	FT_OPT_ENABLE_HMEM	= 1 << 17,
+	FT_OPT_USE_DEVICE	= 1 << 18,
+	FT_OPT_DOMAIN_EQ	= 1 << 19,
 	FT_OPT_OOB_CTRL		= FT_OPT_OOB_SYNC | FT_OPT_OOB_ADDR_EXCH,
 };
 
@@ -136,9 +135,15 @@ enum ft_atomic_opcodes {
 	FT_ATOMIC_COMPARE,
 };
 
+enum op_state {
+	OP_DONE = 0,
+	OP_PENDING
+};
+
 struct ft_context {
 	char *buf;
 	void *desc;
+	enum op_state state;
 	struct fid_mr *mr;
 	struct fi_context2 context;
 };
@@ -164,10 +169,15 @@ struct ft_opts {
 	enum ft_rma_opcodes rma_op;
 	char *oob_port;
 	int argc;
+	int num_connections;
+	int address_format;
 
 	uint64_t mr_mode;
 	/* Fail if the selected provider does not support FI_MSG_PREFIX.  */
 	int force_prefix;
+	enum fi_hmem_iface iface;
+	uint64_t device;
+
 	char **argv;
 };
 
@@ -220,8 +230,8 @@ void ft_usage(char *name, char *desc);
 void ft_mcusage(char *name, char *desc);
 void ft_csusage(char *name, char *desc);
 
-void ft_fill_buf(void *buf, int size);
-int ft_check_buf(void *buf, int size);
+void ft_fill_buf(void *buf, size_t size);
+int ft_check_buf(void *buf, size_t size);
 int ft_check_opts(uint64_t flags);
 uint64_t ft_init_cq_data(struct fi_info *info);
 int ft_sock_listen(char *node, char *service);
@@ -237,10 +247,10 @@ extern int ft_parent_proc;
 extern int ft_socket_pair[2];
 extern int sock;
 extern int listen_sock;
-#define ADDR_OPTS "B:P:s:a:b::E::"
-#define FAB_OPTS "f:d:p:"
+#define ADDR_OPTS "B:P:s:a:b::E::C:F:"
+#define FAB_OPTS "f:d:p:D:i:H"
 #define INFO_OPTS FAB_OPTS "e:M:"
-#define CS_OPTS ADDR_OPTS "I:S:mc:t:w:l"
+#define CS_OPTS ADDR_OPTS "I:QS:mc:t:w:l"
 #define NO_CQ_DATA 0
 
 extern char default_port[8];
@@ -259,14 +269,17 @@ extern char default_port[8];
 		.rma_op = FT_RMA_WRITE, \
 		.oob_port = NULL, \
 		.mr_mode = FI_MR_LOCAL | OFI_MR_BASIC_MAP, \
-		.argc = argc, .argv = argv \
+		.iface = FI_HMEM_SYSTEM, \
+		.device = 0, \
+		.argc = argc, .argv = argv, \
+		.address_format = FI_FORMAT_UNSPEC \
 	}
 
 #define FT_STR_LEN 32
-#define FT_MAX_CTRL_MSG 64
+#define FT_MAX_CTRL_MSG 256
 #define FT_MR_KEY 0xC0DE
 #define FT_TX_MR_KEY (FT_MR_KEY + 1)
-#define FT_RX_MR_KEY 0xFFFF 
+#define FT_RX_MR_KEY 0xFFFF
 #define FT_MSG_MR_ACCESS (FI_SEND | FI_RECV)
 #define FT_RMA_MR_ACCESS (FI_READ | FI_WRITE | FI_REMOTE_READ | FI_REMOTE_WRITE)
 
@@ -277,6 +290,13 @@ char *size_str(char str[FT_STR_LEN], long long size);
 char *cnt_str(char str[FT_STR_LEN], long long cnt);
 int size_to_count(int size);
 size_t datatype_to_size(enum fi_datatype datatype);
+
+static inline int ft_use_size(int index, int enable_flags)
+{
+	return test_size[index].size <= fi->ep_attr->max_msg_size &&
+		((enable_flags == FT_ENABLE_ALL) ||
+		(enable_flags & test_size[index].enable_flags));
+}
 
 #define FT_PRINTERR(call, retv) \
 	do { fprintf(stderr, call "(): %s:%d, ret=%d (%s)\n", __FILE__, __LINE__, \
@@ -295,17 +315,17 @@ size_t datatype_to_size(enum fi_datatype datatype);
 #define FT_DEBUG(fmt, ...)
 #endif
 
-#define FT_EQ_ERR(eq, entry, buf, len) \
-	FT_ERR("eq_readerr (Provider errno: %d) : %s",		 \
-		entry.prov_errno, fi_eq_strerror(eq, entry.err,	 \
-						 entry.err_data, \
-						 buf, len))	 \
+#define FT_EQ_ERR(eq, entry, buf, len)				\
+	FT_ERR("eq_readerr (Provider errno: %d) : %s",			\
+		entry.prov_errno, fi_eq_strerror(eq, entry.prov_errno,	\
+						 entry.err_data,	\
+						 buf, len))		\
 
-#define FT_CQ_ERR(cq, entry, buf, len) \
-	FT_ERR("cq_readerr (Provider errno: %d) : %s",		 \
-		entry.prov_errno, fi_cq_strerror(cq, entry.err,	 \
-						 entry.err_data, \
-						 buf, len))	 \
+#define FT_CQ_ERR(cq, entry, buf, len)				\
+	FT_ERR("cq_readerr (Provider errno: %d) : %s",			\
+		entry.prov_errno, fi_cq_strerror(cq, entry.prov_errno,	\
+						 entry.err_data,	\
+						 buf, len))		\
 
 #define FT_CLOSE_FID(fd)						\
 	do {								\
@@ -347,6 +367,7 @@ int ft_alloc_bufs();
 int ft_open_fabric_res();
 int ft_getinfo(struct fi_info *hints, struct fi_info **info);
 int ft_init_fabric();
+int ft_init_oob();
 int ft_start_server();
 int ft_server_connect();
 int ft_client_connect();
@@ -472,6 +493,8 @@ void show_perf_mr(size_t tsize, int iters, struct timespec *start,
 int ft_send_recv_greeting(struct fid_ep *ep);
 int ft_send_greeting(struct fid_ep *ep);
 int ft_recv_greeting(struct fid_ep *ep);
+
+int ft_accept_next_client();
 
 int check_recv_msg(const char *message);
 uint64_t ft_info_to_mr_access(struct fi_info *info);

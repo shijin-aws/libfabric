@@ -2,7 +2,8 @@
  * Copyright (c) 2015-2019 Cray Inc. All rights reserved.
  * Copyright (c) 2015-2018 Los Alamos National Security, LLC.
  *                         All rights reserved.
- * Copyright (c) 2019 Triad National Security, LLC. All rights reserved.
+ * Copyright (c) 2019-2020 Triad National Security, LLC.
+ *                         All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -407,11 +408,11 @@ static int __recv_completion_src(
 	char *buffer;
 	size_t buf_len;
 
-	GNIX_DBG_TRACE(FI_LOG_TRACE, "\n");
+	GNIX_DBG_TRACE(FI_LOG_EP_DATA, "\n");
 
 	if ((req->msg.recv_flags & FI_COMPLETION) && ep->recv_cq) {
 		if ((src_addr == FI_ADDR_NOTAVAIL) &&
-                    (req->msg.recv_flags & FI_SOURCE_ERR) != 0) {
+                    (ep->caps & FI_SOURCE_ERR) != 0) {
 			if (ep->domain->addr_format == FI_ADDR_STR) {
 				buffer = malloc(GNIX_FI_ADDR_STR_LEN);
 				rc = _gnix_ep_name_to_str(req->vc->gnix_ep_name, (char **)&buffer);
@@ -2012,7 +2013,6 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 	struct gnix_tag_storage *unexp_queue;
 	struct gnix_tag_storage *posted_queue;
 	int tagged;
-	bool multi_recv = false;
 
 	GNIX_DBG_TRACE(FI_LOG_EP_DATA, "\n");
 
@@ -2033,7 +2033,6 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 			if (req == NULL) {
 				return -FI_ENOMEM;
 			}
-			multi_recv = true;
 		}
 
 		req->addr = vc->peer_addr;
@@ -2057,14 +2056,10 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 		GNIX_DEBUG(FI_LOG_EP_DATA, "Freeing req: %p\n", req);
 
 		/*
-		 * Dequeue and free the request if not
-		 * matching a FI_MULTI_RECV buffer.
+		 * Dequeue and free the request.
 		 */
-		if (multi_recv == false) {
-			_gnix_remove_tag(posted_queue, req);
-			_gnix_fr_free(ep, req);
-		}
-
+		_gnix_remove_tag(posted_queue, req);
+		_gnix_fr_free(ep, req);
 	} else {
 		/* Add new unexpected receive request. */
 		req = _gnix_fr_alloc(ep);
@@ -2178,7 +2173,6 @@ static int __smsg_rndzv_start(void *data, void *msg)
 	struct gnix_tag_storage *unexp_queue;
 	struct gnix_tag_storage *posted_queue;
 	int tagged;
-	bool multi_recv = false;
 
 	GNIX_DBG_TRACE(FI_LOG_EP_DATA, "\n");
 
@@ -2198,7 +2192,6 @@ static int __smsg_rndzv_start(void *data, void *msg)
 			if (req == NULL) {
 				return -FI_ENOMEM;
 			}
-			multi_recv = true;
 		}
 
 		req->addr = vc->peer_addr;
@@ -2246,8 +2239,7 @@ static int __smsg_rndzv_start(void *data, void *msg)
 			  req, req->msg.recv_info[0].recv_addr,
 			  req->msg.send_info[0].send_len);
 
-		if (multi_recv == false)
-			_gnix_remove_tag(posted_queue, req);
+		_gnix_remove_tag(posted_queue, req);
 
 		/* Queue request to initiate pull of source data. */
 		ret = _gnix_vc_queue_work_req(req);

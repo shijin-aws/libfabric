@@ -169,12 +169,14 @@ static void psmx2_set_epaddr_context(struct psmx2_trx_ctxt *trx_ctxt,
 				     psm2_epid_t epid, psm2_epaddr_t epaddr)
 {
 	struct psmx2_epaddr_context *context;
+	struct psmx2_epaddr_context *old_context = NULL;
 
 	context = (void *)psm2_epaddr_getctxt(epaddr);
 	if (context) {
 		if (context->trx_ctxt != trx_ctxt || context->epid != epid) {
 			FI_WARN(&psmx2_prov, FI_LOG_AV,
 				"trx_ctxt or epid doesn't match\n");
+			old_context = context;
 			context = NULL;
 		}
 	}
@@ -193,14 +195,15 @@ static void psmx2_set_epaddr_context(struct psmx2_trx_ctxt *trx_ctxt,
 	context->epid = epid;
 	context->epaddr = epaddr;
 	psm2_epaddr_setctxt(epaddr, context);
+	free(old_context);
 
 	trx_ctxt->domain->peer_lock_fn(&trx_ctxt->peer_lock, 2);
 	dlist_insert_before(&context->entry, &trx_ctxt->peer_list);
 	trx_ctxt->domain->peer_unlock_fn(&trx_ctxt->peer_lock, 2);
 }
 
-int psmx2_epid_to_epaddr(struct psmx2_trx_ctxt *trx_ctxt,
-			 psm2_epid_t epid, psm2_epaddr_t *epaddr)
+void psmx2_epid_to_epaddr(struct psmx2_trx_ctxt *trx_ctxt,
+			  psm2_epid_t epid, psm2_epaddr_t *epaddr)
 {
 	int err;
 	psm2_error_t errors;
@@ -212,7 +215,7 @@ int psmx2_epid_to_epaddr(struct psmx2_trx_ctxt *trx_ctxt,
 		context = psm2_epaddr_getctxt(epconn.addr);
 		if (context && context->epid  == epid) {
 			*epaddr = epconn.addr;
-			return 0;
+			return;
 		}
 	}
 
@@ -220,13 +223,17 @@ int psmx2_epid_to_epaddr(struct psmx2_trx_ctxt *trx_ctxt,
 			      (int64_t) psmx2_env.conn_timeout * 1000000000LL);
 	if (err == PSM2_OK || err == PSM2_EPID_ALREADY_CONNECTED) {
 		psmx2_set_epaddr_context(trx_ctxt, epid, *epaddr);
-		return 0;
+		return;
 	}
 
-	FI_WARN(&psmx2_prov, FI_LOG_AV,
-		"psm2_ep_connect retured error %s, remote epid=%lx.\n",
-		psm2_error_get_string(err), epid);
-	return psmx2_errno(err);
+	/* call fi_log() directly to always generate the output */
+	fi_log(&psmx2_prov, FI_LOG_WARN, FI_LOG_AV, __func__, __LINE__,
+		"psm2_ep_connect retured error %s, remote epid=%lx."
+		"If it is a timeout error, try setting FI_PSM2_CONN_TIMEOUT "
+		"to a larger value (current: %d seconds).\n",
+		psm2_error_get_string(err), epid, psmx2_env.conn_timeout);
+
+	abort();
 }
 
 /*
@@ -332,11 +339,9 @@ int psmx2_av_query_sep(struct psmx2_fid_av *av,
 	psm2_amarg_t args[3];
 	int error;
 
-	if (!av->conn_info[trx_ctxt->id].epaddrs[idx]) {
+	if (!av->conn_info[trx_ctxt->id].epaddrs[idx])
 		psmx2_epid_to_epaddr(trx_ctxt, av->table[idx].epid,
 				     &av->conn_info[trx_ctxt->id].epaddrs[idx]);
-		assert(av->conn_info[trx_ctxt->id].epaddrs[idx]);
-	}
 
 	psmx2_am_init(trx_ctxt); /* check AM handler installation */
 
@@ -347,9 +352,12 @@ int psmx2_av_query_sep(struct psmx2_fid_av *av,
 	args[0].u32w1 = av->table[idx].sep_id;
 	args[1].u64 = (uint64_t)(uintptr_t)&av->sep_info[idx];
 	args[2].u64 = (uint64_t)(uintptr_t)&status;
-	psm2_am_request_short(av->conn_info[trx_ctxt->id].epaddrs[idx],
-			      PSMX2_AM_SEP_HANDLER, args, 3, NULL,
-			      0, 0, NULL, NULL);
+	error = psm2_am_request_short(av->conn_info[trx_ctxt->id].epaddrs[idx],
+				      PSMX2_AM_SEP_HANDLER, args, 3, NULL,
+				      0, 0, NULL, NULL);
+
+	if (error)
+		return error;
 
 	/*
 	 * make sure AM is progressed promptly. don't call
@@ -474,11 +482,13 @@ STATIC int psmx2_av_insert(struct fid_av *av, const void *addr,
 			av_priv->table[idx].type = ep_name->type;
 			av_priv->table[idx].epid = ep_name->epid;
 			av_priv->table[idx].sep_id = ep_name->sep_id;
+			av_priv->table[idx].valid = 1;
 			free(ep_name);
 		} else {
 			av_priv->table[idx].type = names[i].type;
 			av_priv->table[idx].epid = names[i].epid;
 			av_priv->table[idx].sep_id = names[i].sep_id;
+			av_priv->table[idx].valid = 1;
 		}
 		av_priv->sep_info[idx].ctxt_cnt = 1;
 		av_priv->sep_info[idx].epids = NULL;
@@ -620,6 +630,7 @@ static int psmx2_av_disconnect_addr(int trx_ctxt_id, psm2_epid_t epid,
 				    psm2_epaddr_t epaddr)
 {
 	struct psmx2_epaddr_context *epaddr_context;
+	struct psmx2_trx_ctxt *trx_ctxt;
 	psm2_error_t errors;
 	int err;
 
@@ -633,15 +644,24 @@ static int psmx2_av_disconnect_addr(int trx_ctxt_id, psm2_epid_t epid,
 	if (!epaddr_context)
 		return -FI_EINVAL;
 
-	if (trx_ctxt_id != epaddr_context->trx_ctxt->id)
+	trx_ctxt = epaddr_context->trx_ctxt;
+	if (trx_ctxt_id != trx_ctxt->id)
 		return -FI_EINVAL;
 
 	if (epid != epaddr_context->epid)
 		return -FI_EINVAL;
 
-	err = psm2_ep_disconnect2(epaddr_context->trx_ctxt->psm2_ep, 1, &epaddr,
+	trx_ctxt->domain->peer_lock_fn(&trx_ctxt->peer_lock, 2);
+	dlist_remove_first_match(&trx_ctxt->peer_list,
+				 psmx2_peer_match, epaddr);
+	trx_ctxt->domain->peer_unlock_fn(&trx_ctxt->peer_lock, 2);
+
+	psm2_epaddr_setctxt(epaddr, NULL);
+
+	err = psm2_ep_disconnect2(trx_ctxt->psm2_ep, 1, &epaddr,
 				  NULL, &errors, PSM2_EP_DISCONNECT_FORCE, 0);
 
+	free(epaddr_context);
 	return psmx2_errno(err);
 }
 
@@ -677,6 +697,7 @@ STATIC int psmx2_av_remove(struct fid_av *av, fi_addr_t *fi_addr, size_t count,
 				if (!err)
 					av_priv->conn_info[j].epaddrs[idx] = NULL;
 			}
+			av_priv->table[idx].epid = 0;
 		} else {
 			if (!av_priv->sep_info[idx].epids)
 				continue;
@@ -696,7 +717,10 @@ STATIC int psmx2_av_remove(struct fid_av *av, fi_addr_t *fi_addr, size_t count,
 						av_priv->conn_info[j].sepaddrs[idx][k] = NULL;
 				}
 			}
+			free(av_priv->sep_info[idx].epids);
+			av_priv->sep_info[idx].epids = NULL;
 		}
+		av_priv->table[idx].valid = 0;
 	}
 
 	av_priv->domain->av_unlock_fn(&av_priv->lock, 1);
@@ -711,6 +735,7 @@ STATIC int psmx2_av_map_remove(struct fid_av *av, fi_addr_t *fi_addr, size_t cou
 	struct psmx2_fid_av *av_priv;
 	struct psmx2_trx_ctxt *trx_ctxt;
 	psm2_error_t *errors;
+	int i;
 
 	av_priv = container_of(av, struct psmx2_fid_av, av);
 
@@ -724,6 +749,17 @@ STATIC int psmx2_av_map_remove(struct fid_av *av, fi_addr_t *fi_addr, size_t cou
 	errors = calloc(count, sizeof(*errors));
 	if (!errors)
 		return -FI_ENOMEM;
+
+	trx_ctxt->domain->peer_lock_fn(&trx_ctxt->peer_lock, 2);
+	for (i = 0; i < count; i++) {
+		dlist_remove_first_match(&trx_ctxt->peer_list,
+					 psmx2_peer_match,
+					 (psm2_epaddr_t)(fi_addr[i]));
+	}
+	trx_ctxt->domain->peer_unlock_fn(&trx_ctxt->peer_lock, 2);
+
+	for (i = 0; i < count; i++)
+		psm2_epaddr_setctxt((psm2_epaddr_t)(fi_addr[i]), NULL);
 
 	psm2_ep_disconnect2(trx_ctxt->psm2_ep, count, (psm2_epaddr_t *)fi_addr,
 			    NULL, errors, PSM2_EP_DISCONNECT_FORCE, 0);
@@ -751,6 +787,11 @@ STATIC int psmx2_av_lookup(struct fid_av *av, fi_addr_t fi_addr, void *addr,
 	av_priv->domain->av_lock_fn(&av_priv->lock, 1);
 
 	if (idx >= av_priv->hdr->last) {
+		err = -FI_EINVAL;
+		goto out;
+	}
+
+	if (!av_priv->table[idx].valid) {
 		err = -FI_EINVAL;
 		goto out;
 	}
@@ -797,11 +838,13 @@ STATIC int psmx2_av_map_lookup(struct fid_av *av, fi_addr_t fi_addr, void *addr,
 	return 0;
 }
 
-fi_addr_t psmx2_av_translate_source(struct psmx2_fid_av *av, psm2_epaddr_t source)
+fi_addr_t psmx2_av_translate_source(struct psmx2_fid_av *av,
+				    psm2_epaddr_t source, int source_sep_id)
 {
 	psm2_epid_t epid;
 	fi_addr_t ret;
 	int i, j, found;
+	int ep_type = source_sep_id ? PSMX2_EP_SCALABLE : PSMX2_EP_REGULAR;
 
 	if (av->type == FI_AV_MAP)
 		return (fi_addr_t) source;
@@ -813,12 +856,26 @@ fi_addr_t psmx2_av_translate_source(struct psmx2_fid_av *av, psm2_epaddr_t sourc
 	ret = FI_ADDR_NOTAVAIL;
 	found = 0;
 	for (i = av->hdr->last - 1; i >= 0 && !found; i--) {
+		if (!av->table[i].valid)
+			continue;
+
 		if (av->table[i].type == PSMX2_EP_REGULAR) {
+			if (ep_type == PSMX2_EP_SCALABLE)
+				continue;
 			if (av->table[i].epid == epid) {
 				ret = (fi_addr_t)i;
 				found = 1;
 			}
 		} else {
+			/*
+			 * scalable endpoint must match sep_id exactly.
+			 * regular endpoint can match a context of any
+			 * scalable endpoint.
+			 */
+			if (ep_type == PSMX2_EP_SCALABLE &&
+			    av->table[i].sep_id != source_sep_id)
+				continue;
+
 			if (!av->sep_info[i].epids) {
 				for (j = 0; j < av->max_trx_ctxt; j++) {
 					if (av->conn_info[j].trx_ctxt)
@@ -830,6 +887,7 @@ fi_addr_t psmx2_av_translate_source(struct psmx2_fid_av *av, psm2_epaddr_t sourc
 				if (!av->sep_info[i].epids)
 					continue;
 			}
+
 			for (j=0; j<av->sep_info[i].ctxt_cnt; j++) {
 				if (av->sep_info[i].epids[j] == epid) {
 					ret = fi_rx_addr((fi_addr_t)i, j,
@@ -860,6 +918,8 @@ void psmx2_av_remove_conn(struct psmx2_fid_av *av,
 	av->domain->av_lock_fn(&av->lock, 1);
 
 	for (i = 0; i < av->hdr->last; i++) {
+		if (!av->table[i].valid)
+			continue;
 		if (av->table[i].type == PSMX2_EP_REGULAR) {
 			if (av->table[i].epid == epid &&
 			    av->conn_info[trx_ctxt->id].epaddrs[i] == epaddr)
@@ -919,6 +979,7 @@ static int psmx2_av_close(fid_t fid)
 		free(av->hdr);
 	}
 
+	free(av->sep_info);
 out:
 	free(av);
 	return 0;
@@ -1036,7 +1097,7 @@ int psmx2_av_open(struct fid_domain *domain, struct fi_av_attr *attr,
 	if (av_type == FI_AV_MAP)
 		conn_size = 0;
 	else
-		conn_size = psmx2_env.max_trx_ctxt * sizeof(struct psmx2_av_conn);
+		conn_size = psmx2_hfi_info.max_trx_ctxt * sizeof(struct psmx2_av_conn);
 
 	av_priv = (struct psmx2_fid_av *) calloc(1, sizeof(*av_priv) + conn_size);
 	if (!av_priv)
@@ -1099,7 +1160,7 @@ init_lock:
 	av_priv->count = count;
 	av_priv->flags = flags;
 	av_priv->rx_ctx_bits = rx_ctx_bits;
-	av_priv->max_trx_ctxt = psmx2_env.max_trx_ctxt;
+	av_priv->max_trx_ctxt = psmx2_hfi_info.max_trx_ctxt;
 	av_priv->addr_format = domain_priv->addr_format;
 	av_priv->type = av_type;
 

@@ -13,7 +13,7 @@ fi_mrail \- The Multi-Rail Utility Provider
 
 The mrail provider (ofi_mrail) is an utility provider that layers over an underlying
 provider to enable the use of multiple network ports (rails). This increases
-the total available bandwidth of an underlying proivder. The current status of
+the total available bandwidth of an underlying provider. The current status of
 mrail provider is experimental - not all libfabric features are supported and
 performance is not guaranteed.
 
@@ -34,7 +34,7 @@ capabilities / modes:
 
 Applications need to:
   * Support FI_MR_RAW MR mode bit to make use of FI_RMA capability.
-  * Set FI_OFI_MRAIL_ADDR_STRC env variable (see RUNTIME PARAMETERS section below).
+  * Set FI_OFI_MRAIL_ADDR env variable (see RUNTIME PARAMETERS section below).
 
 # SUPPORTED FEATURES
 
@@ -69,16 +69,31 @@ feature not listed in "Supported features" can be assumed as unsupported.
 
 # FUNCTIONALITY OVERVIEW
 
-For messages (FI_MSG, FI_TAGGED), the provider sends one message per rail in a
-round-robin manner. Ordering is guaranteed through the use of sequence numbers.
+For messages (FI_MSG, FI_TAGGED), the provider uses different policies to send messages
+over one or more rails based on message size (See *FI_OFI_MRIAL_CONFIG* in the RUNTIME
+PARAMETERS section). Ordering is guaranteed through the use of sequence numbers.
+
 For RMA, the data is striped equally across all rails.
 
 # RUNTIME PARAMETERS
 
 The ofi_mrail provider checks for the following environment variables.
 
+*FI_OFI_MRAIL_ADDR*
+: Comma delimited list of individual rail addresses. Each address can be an address in
+  FI_ADDR_STR format, a host name, an IP address, or a netdev interface name.
+
 *FI_OFI_MRAIL_ADDR_STRC*
-: Comma delimited list of individual rail addresses in FI_ADDR_STR format.
+: Deprecated. Replaced by *FI_OFI_MRAIL_ADDR*.
+
+*FI_OFI_MRAIL_CONFIG*
+: Comma separated list of `<max_size>:<policy>` pairs, sorted in ascending order of
+ `<max_size>`. Each pair indicated the rail sharing policy to be used for messages
+  up to the size `<max_size>` and not covered by all previous pairs. The value of
+  `<policy>` can be *fixed* (a fixed rail is used), *round-robin* (one rail per
+  message, selected in round-robin fashion), or *striping* (striping across all the
+  rails). The default configuration is `16384:fixed,ULONG_MAX:striping`. The value
+  ULONG_MAX can be input as -1.
 
 # SEE ALSO
 

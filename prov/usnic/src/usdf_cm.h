@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2017, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2014-2019, Cisco Systems, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -51,7 +51,7 @@ struct usdf_connreq_msg {
 	uint32_t creq_result;
 	uint32_t creq_reason;
 	uint32_t creq_datalen;
-	uint8_t creq_data[0];
+	uint8_t creq_data[];
 } __attribute__((packed));
 
 struct usdf_connreq {
@@ -67,16 +67,13 @@ struct usdf_connreq {
 	size_t cr_resid;
 
 	size_t cr_datalen;
-	uint8_t cr_data[0];
+	uint8_t cr_data[];
 };
 
 void usdf_cm_report_failure(struct usdf_connreq *crp, int error,
 		bool skip_data);
-void usdf_cm_msg_connreq_cleanup(struct usdf_connreq *crp);
 
-int usdf_cm_rdm_getname(fid_t fid, void *addr, size_t *addrlen);
 int usdf_cm_dgram_getname(fid_t fid, void *addr, size_t *addrlen);
-int usdf_cm_msg_getname(fid_t fid, void *addr, size_t *addrlen);
 
 bool usdf_cm_addr_is_valid_sin(void *addr, size_t addrlen,
 			       uint32_t addr_format);
