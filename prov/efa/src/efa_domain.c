@@ -290,6 +290,7 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	 * Check whether fork support is enabled when app does not request
 	 * FI_MR_LOCAL even if the cache is disabled.
 	 */
+	/*
 	if (!app_mr_local && efa_check_fork_enabled(*domain_fid)) {
 		fprintf(stderr,
 		         "\nlibibverbs fork support is not supported by the EFA Libfabric\n"
@@ -301,6 +302,7 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 			 "for more information. Your job will now abort.\n");
 		abort();
 	}
+	*/
 
 	/*
 	 * If FI_MR_LOCAL is set, we do not want to use the MR cache.

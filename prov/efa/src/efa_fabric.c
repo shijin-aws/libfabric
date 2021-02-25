@@ -999,6 +999,7 @@ int efa_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric_fid,
 	struct efa_fabric *fab;
 	int ret = 0;
 
+	/*
 	ret = pthread_atfork(efa_atfork_callback, NULL, NULL);
 	if (ret) {
 		EFA_WARN(FI_LOG_FABRIC,
@@ -1006,6 +1007,7 @@ int efa_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric_fid,
 			 strerror(-ret));
 		return -ret;
 	}
+	*/
 
 	fab = calloc(1, sizeof(*fab));
 	if (!fab)
