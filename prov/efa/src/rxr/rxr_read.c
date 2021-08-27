@@ -524,7 +524,7 @@ int rxr_read_post(struct rxr_ep *ep, struct rxr_read_entry *read_entry)
 	assert(max_read_size > 0);
 
 	ret = rxr_locate_iov_pos(read_entry->iov, read_entry->iov_count,
-				 read_entry->bytes_submitted,
+				 read_entry->bytes_submitted + ep->msg_prefix_size,
 				 &iov_idx, &iov_offset);
 	assert(ret == 0);
 	if (ret) {
