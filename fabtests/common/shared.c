@@ -388,6 +388,9 @@ int ft_reg_mr(struct fi_info *fi, void *buf, size_t size, uint64_t access,
 	attr.iface = opts.iface;
 
 	switch (opts.iface) {
+	case FI_HMEM_NEURON:
+		attr.device.neuron = opts.device;
+		break;
 	case FI_HMEM_ZE:
 		attr.device.ze = opts.device;
 		break;
@@ -2926,6 +2929,7 @@ void ft_csusage(char *name, char *desc)
 	FT_PRINT_OPTS_USAGE("-m", "machine readable output");
 	FT_PRINT_OPTS_USAGE("-D <device_iface>", "Specify device interface: eg cuda, ze, neuron (default: None). "
 			     "Automatically enables FI_HMEM (-H)");
+	FT_PRINT_OPTS_USAGE("-i <device_index>", "Index of the device to use");
 	FT_PRINT_OPTS_USAGE("-t <type>", "completion type [queue, counter]");
 	FT_PRINT_OPTS_USAGE("-c <method>", "completion method [spin, sread, fd, yield]");
 	FT_PRINT_OPTS_USAGE("-h", "display this help output");
