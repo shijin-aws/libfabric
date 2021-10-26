@@ -237,6 +237,7 @@ ssize_t rxr_msg_post_rtm(struct rxr_ep *rxr_ep, struct rxr_tx_entry *tx_entry)
 	    efa_both_support_rdma_read(rxr_ep, peer) &&
 	    (tx_entry->desc[0] || efa_is_cache_available(efa_domain))) {
 		/* Read message support FI_DELIVERY_COMPLETE implicitly. */
+	  printf("rxr_msg_post_rtm: RXR_LONGREAD_MSGRTM_PKT is posted. \n");
 		err = rxr_pkt_post_ctrl(rxr_ep, RXR_TX_ENTRY, tx_entry,
 					RXR_LONGREAD_MSGRTM_PKT + tagged, 0, 0);
 

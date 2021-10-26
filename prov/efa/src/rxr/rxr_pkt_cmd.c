@@ -602,6 +602,8 @@ void rxr_pkt_handle_send_error(struct rxr_ep *ep, struct rxr_pkt_entry *pkt_entr
 	struct rxr_tx_entry *tx_entry;
 	struct rxr_rx_entry *rx_entry;
 
+	if (prov_errno == IBV_WC_RNR_RETRY_EXC_ERR)
+	       printf("rxr_pkt_handle_send_error: IBV_WC_RNR_RETRY_EXC_ERR is hit. \n");
 	assert(pkt_entry->alloc_type == RXR_PKT_FROM_EFA_TX_POOL ||
 	       pkt_entry->alloc_type == RXR_PKT_FROM_SHM_TX_POOL);
 

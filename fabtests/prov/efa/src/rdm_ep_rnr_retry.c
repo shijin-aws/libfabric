@@ -58,7 +58,7 @@ static int poll_rnr_cq_error(void)
 
 	for (i = 0; i < total_send; i++) {
 		do {
-			ret = fi_send(ep, tx_buf, 32, mr_desc, remote_fi_addr, &tx_ctx);
+			ret = fi_send(ep, tx_buf, opts.transfer_size, mr_desc, remote_fi_addr, &tx_ctx);
 			if (ret < 0 && ret != -FI_EAGAIN) {
 				FT_PRINTERR("fi_send", -ret);
 				return ret;
@@ -139,7 +139,7 @@ static int run(size_t rnr_retry)
 	}
 	fprintf(stdout, "RNR retry count has been set to %zu.\n", rnr_retry);
 
-	ret = ft_enable_ep(ep, eq, av, txcq, rxcq, txcntr, rxcntr);
+	ret = ft_enable_ep_recv();
 	if (ret) {
 		FT_PRINTERR("ft_enable_ep_recv", -ret);
 		return ret;
@@ -151,6 +151,11 @@ static int run(size_t rnr_retry)
 		return ret;
 	}
 	/* client does fi_send and then poll CQ to get error (FI_ENORX) CQ entry */
+	ret = ft_sync();
+	if (ret) {
+		FT_PRINTERR("ft_sync()", -ret);
+		return ret;
+	}
 	if (opts.dst_addr) {
 		ret = poll_rnr_cq_error();
 		if (ret) {
@@ -240,7 +245,7 @@ int main(int argc, char **argv)
 	 * to be written to applications. Otherwise, the packet (failed with RNR error)
 	 * will be queued and resent.
 	 */
-	hints->domain_attr->resource_mgmt = FI_RM_DISABLED;
+	// hints->domain_attr->resource_mgmt = FI_RM_DISABLED;
 
 	ret = run(rnr_retry);
 	if (ret)

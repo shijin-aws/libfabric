@@ -1775,6 +1775,7 @@ static inline void rdm_ep_poll_ibv_cq(struct rxr_ep *ep,
 #if ENABLE_DEBUG
 				ep->failed_send_comps++;
 #endif
+				printf("rdm_ep_poll_ibv_cq: ep->failed_send_comps = %lu\n", ep->failed_send_comps);
 				rxr_pkt_handle_send_error(ep, pkt_entry, err, prov_errno);
 			} else {
 				assert(ibv_wc.opcode == IBV_WC_RECV);
