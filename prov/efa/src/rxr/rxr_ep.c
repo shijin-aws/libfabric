@@ -1116,6 +1116,10 @@ static int rxr_ep_getopt(fid_t fid, int level, int optname, void *optval,
 		*(size_t *)optval = efa_ep->rnr_retry;
 		*optlen = sizeof(size_t);
 		break;
+	case FI_OPT_FI_HMEM_P2P:
+		*(int *)optval = efa_ep->hmem_p2p_opt;
+		*optlen = sizeof(int);
+		break;
 	default:
 		FI_WARN(&rxr_prov, FI_LOG_EP_CTRL,
 			"Unknown endpoint option %s\n", __func__);
@@ -1130,6 +1134,7 @@ static int rxr_ep_setopt(fid_t fid, int level, int optname,
 {
 	struct rxr_ep *rxr_ep;
 	struct efa_ep *efa_ep;
+	int intval;
 
 	rxr_ep = container_of(fid, struct rxr_ep, util_ep.ep_fid.fid);
 	efa_ep = container_of(rxr_ep->rdm_ep, struct efa_ep, util_ep.ep_fid);
@@ -1170,6 +1175,34 @@ static int rxr_ep_setopt(fid_t fid, int level, int optname,
 			return -FI_ENOSYS;
 		}
 		efa_ep->rnr_retry = *(size_t *)optval;
+		break;
+	case FI_OPT_FI_HMEM_P2P:
+		if (optlen != sizeof(int))
+			return -FI_EINVAL;
+
+		intval = *(int *)optval;
+		switch (intval) {
+		/*
+		 * TODO: support the other options. We can only support ENABLED
+		 * and PREFERRED when p2p is available. DISABLED is not
+		 * supported yet.
+		 */
+		case FI_HMEM_P2P_REQUIRED:
+		case FI_HMEM_P2P_ENABLED:
+		case FI_HMEM_P2P_PREFERRED:
+			if (!efa_ep->domain->hmem_info[FI_HMEM_CUDA].initialized ||
+			    !efa_ep->domain->hmem_info[FI_HMEM_CUDA].p2p_supported)
+				return -FI_EOPNOTSUPP;
+
+			efa_ep->hmem_p2p_opt = intval;
+
+			break;
+		case FI_HMEM_P2P_DISABLED:
+			return -FI_EOPNOTSUPP;
+			break;
+		default:
+			return -FI_EINVAL;
+		}
 		break;
 	default:
 		FI_WARN(&rxr_prov, FI_LOG_EP_CTRL,

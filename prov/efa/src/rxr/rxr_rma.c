@@ -341,6 +341,11 @@ ssize_t rxr_rma_readmsg(struct fid_ep *ep, const struct fi_msg_rma *msg, uint64_
 		use_lower_ep_read = true;
 	}
 
+	/*
+	 * Not going to check efa_ep->hmem_p2p_opt here, if the remote side
+	 * gave us a valid MR we should just honor the request even if p2p is
+	 * disabled.
+	 */
 	if (use_lower_ep_read) {
 		err = rxr_read_post_remote_read_or_queue(rxr_ep, RXR_TX_ENTRY, tx_entry);
 		if (OFI_UNLIKELY(err == -FI_ENOBUFS)) {
@@ -405,6 +410,7 @@ ssize_t rxr_rma_post_write(struct rxr_ep *ep, struct rxr_tx_entry *tx_entry)
 	ssize_t err;
 	struct rdm_peer *peer;
 	struct efa_domain *efa_domain;
+	struct efa_ep *efa_ep;
 	bool delivery_complete_requested;
 	int ctrl_type;
 	size_t max_eager_rtw_data_size;
@@ -412,6 +418,8 @@ ssize_t rxr_rma_post_write(struct rxr_ep *ep, struct rxr_tx_entry *tx_entry)
 
 	efa_domain = container_of(rxr_domain->rdm_domain, struct efa_domain,
 				  util_domain.domain_fid);
+
+	efa_ep = container_of(ep->rdm_ep, struct efa_ep, util_ep.ep_fid);
 
 	peer = rxr_ep_get_peer(ep, tx_entry->addr);
 	assert(peer);
@@ -458,6 +466,10 @@ ssize_t rxr_rma_post_write(struct rxr_ep *ep, struct rxr_tx_entry *tx_entry)
 								    tx_entry->fi_flags,
 								    tx_entry->rma_iov_count);
 	}
+
+	err = efa_ep_use_p2p(efa_ep, tx_entry->desc[0]);
+	if (err < 0)
+		return err;
 
 	/* Inter instance */
 	if (tx_entry->total_len <= max_eager_rtw_data_size) {
