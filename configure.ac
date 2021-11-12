@@ -609,6 +609,41 @@ AS_IF([test "$have_ze" = "1" && test x"$with_ze" != x"yes"],
       [CPPFLAGS="$CPPFLAGS $ze_CPPFLAGS"
        LDFLAGS="$LDFLAGS $ze_LDFLAGS"])
 
+dnl Check for AWS Neuron runtime library for Neuron device support
+AC_ARG_WITH([neuron],
+	    [AC_HELP_STRING([--with-neuron=DIR],
+			    [Provide path for AWS Neuron runtime library.])],
+	    [], [])
+
+have_libnrt=0
+AS_IF([test x"$with_neuron" != x"no"],
+      [FI_CHECK_PACKAGE([neuron], [nrt/nrt.h], [nrt], [nrt_tensor_allocate], [-lnrt],
+			[$with_neuron], [], [have_libnrt=1], [], [])],
+      [])
+
+AS_IF([test x"$with_neuron" != x"no" && test -n "$with_neuron" && test "$have_libnrt" = "0" ],
+      [AC_MSG_ERROR([AWS Neuron support requested but the runtime is not available.])],
+      [])
+
+AC_DEFINE_UNQUOTED([HAVE_NEURON], [$have_libnrt], [AWS Neuron runtime support])
+
+AC_ARG_ENABLE([neuron-dlopen],
+    [AS_HELP_STRING([--enable-neuron-dlopen],
+        [Enable dlopen of AWS Neuron runtime @<:@default=no@:>@])
+    ],
+    [
+        AS_IF([test "$freebsd" = "0"], [
+            AC_CHECK_LIB(dl, dlopen, [],
+                [AC_MSG_ERROR([dlopen not found.  libfabric requires libdl.])])
+        ])
+        AC_DEFINE([ENABLE_NEURON_DLOPEN], [1], [dlopen AWS Neuron runtime])
+    ],
+    [enable_neuron_dlopen=no])
+
+CPPFLAGS="$CPPFLAGS $neuron_CPPFLAGS"
+LDFLAGS="$LDFLAGS $neuron_LDFLAGS"
+AS_IF([test x"$enable_neuron_dlopen" != x"yes"], [LIBS="$LIBS $neuron_LIBS"])
+
 enable_memhooks=1
 AC_ARG_ENABLE([memhooks-monitor],
               [AS_HELP_STRING([--disable-memhooks-monitor],
