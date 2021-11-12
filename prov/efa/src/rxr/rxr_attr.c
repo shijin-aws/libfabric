@@ -37,7 +37,7 @@
 const uint32_t rxr_poison_value = 0xdeadbeef;
 #endif
 
-#if HAVE_LIBCUDA
+#if defined(HAVE_LIBCUDA) || defined(HAVE_NEURON)
 #define EFA_HMEM_CAP FI_HMEM
 #else
 #define EFA_HMEM_CAP 0
