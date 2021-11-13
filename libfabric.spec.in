@@ -10,7 +10,7 @@
 # Path to install modulefiles in
 %{!?modulefile_path: %define modulefile_path /usr/share/Modules/modulefiles}
 
-Name: libfabric
+Name: libfabric-aws
 Version: @VERSION@
 Release: 1%{?dist}
 Summary: User-space RDMA Fabric Interfaces
@@ -18,8 +18,8 @@ Summary: User-space RDMA Fabric Interfaces
 Group: System Environment/Libraries
 License: GPLv2 or BSD
 Url: http://www.github.com/ofiwg/libfabric
-Source: http://www.github.org/ofiwg/%{name}/releases/download/v{%version}/%{name}-%{version}.tar.bz2
-BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
+Source: http://www.github.org/ofiwg/%{name}/releases/download/v{%version}/libfabric-%{version}.tar.bz2
+BuildRoot: %{_tmppath}/libfabric-%{version}-%{release}-root-%(%{__id_u} -n)
 %if 0%{?suse_version} >= 1
 Provides: libfabric1 = %{version}-%{release}
 %endif
@@ -31,13 +31,13 @@ services, such as RDMA.
 %package devel
 Summary: Development files for the libfabric library
 Group: System Environment/Libraries
-Requires: libfabric = %{version}
+Requires: libfabric-aws = %{version}
 
 %description devel
 Development files for the libfabric library.
 
 %prep
-%setup -q -n %{name}-%{version}
+%setup -q -n libfabric-%{version}
 
 %build
 %configure %{configopts}
