@@ -618,7 +618,7 @@ AC_ARG_WITH([neuron],
 have_libnrt=0
 AS_IF([test x"$with_neuron" != x"no"],
       [FI_CHECK_PACKAGE([neuron], [nrt/nrt.h], [nrt], [nrt_tensor_allocate], [-lnrt],
-			[$with_neuron], [], [have_libnrt=1], [], [])],
+			[$with_neuron], [$with_neuron/lib/nrt], [have_libnrt=1], [], [])],
       [])
 
 AS_IF([test x"$with_neuron" != x"no" && test -n "$with_neuron" && test "$have_libnrt" = "0" ],
