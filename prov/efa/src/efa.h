@@ -647,6 +647,11 @@ static inline bool efa_ep_is_cuda_mr(struct efa_mr *efa_mr)
 	return efa_mr ? (efa_mr->peer.iface == FI_HMEM_CUDA) : false;
 }
 
+static inline bool efa_ep_is_neuron_mr(struct efa_mr *efa_mr)
+{
+	return efa_mr ? (efa_mr->peer.iface == FI_HMEM_NEURON) : false;
+}
+
 /*
  * @brief: check whether we should use p2p for this transaction
  *
