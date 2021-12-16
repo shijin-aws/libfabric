@@ -340,8 +340,24 @@ ssize_t rxr_rma_readmsg(struct fid_ep *ep, const struct fi_msg_rma *msg, uint64_
 		 */
 		use_lower_ep_read = true;
 	} else if (efa_ep_is_neuron_mr(tx_entry->desc[0])) {
-		err = -FI_EOPNOTSUPP;
-		goto out;
+		if (!peer->is_local) {
+			err = rxr_pkt_trigger_handshake(rxr_ep, tx_entry->addr,
+							peer);
+			if (OFI_UNLIKELY(err))
+				goto out;
+
+			if (!(peer->flags & RXR_PEER_HANDSHAKE_RECEIVED)) {
+				err = -FI_EAGAIN;
+				goto out;
+			}
+		}
+
+		if (!efa_both_support_rdma_read(rxr_ep, peer)) {
+			err = -FI_EOPNOTSUPP;
+			goto out;
+		}
+
+		use_lower_ep_read = true;
 	}
 
 	/*
