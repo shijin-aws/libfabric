@@ -583,10 +583,8 @@ bool efa_both_support_rdma_read(struct rxr_ep *ep, struct rdm_peer *peer)
 static inline
 bool rxr_peer_need_raw_addr_hdr(struct rdm_peer *peer)
 {
-	if (OFI_UNLIKELY(!(peer->flags & RXR_PEER_HANDSHAKE_RECEIVED)))
-		return true;
-
-	return peer->extra_info[0] & RXR_EXTRA_REQUEST_CONSTANT_HEADER_LENGTH;
+	/* Temporarily make this routine return true for all cases to mitigate an issue */
+	return true;
 }
 
 
