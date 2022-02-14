@@ -243,10 +243,26 @@ fi_addr_t efa_av_reverse_lookup_rdm(struct efa_av *av, uint16_t ahn, uint16_t qp
 	cur_key.qpn = qpn;
 	HASH_FIND(hh, av->cur_reverse_av, &cur_key, sizeof(cur_key), cur_entry);
 
-	if (OFI_UNLIKELY(!cur_entry))
-		return FI_ADDR_NOTAVAIL;
-
 	connid = rxr_pkt_connid_ptr(pkt_entry);
+	if (OFI_UNLIKELY(!cur_entry)) {
+		FI_WARN(&rxr_prov, FI_LOG_EP_CTRL, "peer with ahn: %" PRIu16 ", qpn: %" PRIu16  " with connid: %" PRIu32 " is not found in the reverse av table. \n", ahn, qpn, *connid);
+		FI_WARN(&rxr_prov, FI_LOG_EP_CTRL, "reverse av table: \n");
+		struct efa_cur_reverse_av *reverse_av_entry, *tmp;
+		int i = 0;
+		HASH_ITER(hh, av->cur_reverse_av, reverse_av_entry, tmp) {
+			char gid_str[INET6_ADDRSTRLEN];
+			struct efa_ep_addr *addr = reverse_av_entry->conn->ep_addr;
+			inet_ntop(AF_INET6, addr->raw, gid_str, INET6_ADDRSTRLEN);
+			FI_WARN(&rxr_prov, FI_LOG_EP_CTRL, "reverse av entry: %d, ahn: %" PRIu16
+				", qpn: %" PRIu16
+				", raw address: GID[%s] QP[%" PRIu16
+				"] QKEY[%" PRIu32
+				"]\n", i, reverse_av_entry->key.ahn, reverse_av_entry->key.qpn, gid_str, addr->qpn, addr->qkey);
+			i++;
+		}
+		return FI_ADDR_NOTAVAIL;
+	}
+
 	if (!connid) {
 		FI_WARN_ONCE(&rxr_prov, FI_LOG_EP_CTRL,
 			     "An incoming packet does NOT have connection ID in its header.\n"
@@ -292,6 +308,7 @@ struct efa_ah *efa_ah_alloc(struct efa_av *av, const uint8_t *gid)
 	struct ibv_ah_attr ibv_ah_attr = { 0 };
 	struct efadv_ah_attr efa_ah_attr = { 0 };
 	int err;
+	char straddr[INET6_ADDRSTRLEN] = {};
 
 	efa_ah = NULL;
 	HASH_FIND(hh, av->ah_map, gid, EFA_GID_LEN, efa_ah);
@@ -309,6 +326,7 @@ struct efa_ah *efa_ah_alloc(struct efa_av *av, const uint8_t *gid)
 
 	ibv_ah_attr.port_num = 1;
 	ibv_ah_attr.is_global = 1;
+
 	memcpy(ibv_ah_attr.grh.dgid.raw, gid, EFA_GID_LEN);
 	efa_ah->ibv_ah = ibv_create_ah(ibv_pd, &ibv_ah_attr);
 	if (!efa_ah->ibv_ah) {
@@ -325,11 +343,15 @@ struct efa_ah *efa_ah_alloc(struct efa_av *av, const uint8_t *gid)
 
 	efa_ah->refcnt = 1;
 	efa_ah->ahn = efa_ah_attr.ahn;
+	inet_ntop(AF_INET6, ibv_ah_attr.grh.dgid.raw, straddr, INET6_ADDRSTRLEN);
+	EFA_WARN(FI_LOG_EP_CTRL, "Creating AH. Gid: %s, ahn %" PRIu16 "\n", straddr, efa_ah->ahn);
 	memcpy(efa_ah->gid, gid, EFA_GID_LEN);
 	HASH_ADD(hh, av->ah_map, gid, EFA_GID_LEN, efa_ah);
 	return efa_ah;
 
 err_destroy_ibv_ah:
+	inet_ntop(AF_INET6, efa_ah->gid, straddr, INET6_ADDRSTRLEN);
+	EFA_WARN(FI_LOG_EP_CTRL, "Error path: Destroying AH. Gid: %s, ahn %" PRIu16 "\n", straddr, efa_ah->ahn);
 	ibv_destroy_ah(efa_ah->ibv_ah);
 err_free_efa_ah:
 	free(efa_ah);
@@ -356,6 +378,10 @@ void efa_ah_release(struct efa_av *av, struct efa_ah *ah)
 	ah->refcnt -= 1;
 	if (ah->refcnt == 0) {
 		HASH_DEL(av->ah_map, ah);
+		char straddr[INET6_ADDRSTRLEN] = {};
+
+		inet_ntop(AF_INET6, ah->gid, straddr, INET6_ADDRSTRLEN);
+		EFA_WARN(FI_LOG_EP_CTRL, "Destroying AH. Gid: %s, ahn %" PRIu16 "\n", straddr, ah->ahn);
 		err = ibv_destroy_ah(ah->ibv_ah);
 		if (err)
 			EFA_WARN(FI_LOG_AV, "ibv_destroy_ah failed! err=%d\n", err);

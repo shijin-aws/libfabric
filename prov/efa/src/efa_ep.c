@@ -229,8 +229,10 @@ err:
 
 static void efa_ep_destroy(struct efa_ep *ep)
 {
-	if (ep->self_ah)
+	if (ep->self_ah) {
+                EFA_WARN(FI_LOG_EP_CTRL, "Destroying self AH\n");
 		ibv_destroy_ah(ep->self_ah);
+	}
 
 	efa_ep_destroy_qp(ep->qp);
 	fi_freeinfo(ep->info);
@@ -397,14 +399,17 @@ int efa_ep_create_self_ah(struct efa_ep *ep, struct ibv_pd *ibv_pd)
 {
 	struct ibv_ah_attr ah_attr;
 	struct efa_ep_addr *self_addr;
+	char straddr[INET6_ADDRSTRLEN] = {};
 
-	self_addr = (struct efa_ep_addr *)ep->src_addr;
+        self_addr = (struct efa_ep_addr *)ep->src_addr;
 
 	memset(&ah_attr, 0, sizeof(ah_attr));
 	ah_attr.port_num = 1;
 	ah_attr.is_global = 1;
 	memcpy(ah_attr.grh.dgid.raw, self_addr->raw, sizeof(self_addr->raw));
 	ep->self_ah = ibv_create_ah(ibv_pd, &ah_attr);
+	inet_ntop(AF_INET6, ah_attr.grh.dgid.raw, straddr, INET6_ADDRSTRLEN);
+	EFA_WARN(FI_LOG_EP_CTRL, "Creating self AH. Gid: %s \n", straddr);
 	return ep->self_ah ? 0 : -FI_EINVAL;
 }
 
