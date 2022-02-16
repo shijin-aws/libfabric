@@ -123,6 +123,7 @@ enum {
 	FT_OPT_FORK_CHILD	= 1 << 20,
 	FT_OPT_SRX		= 1 << 21,
 	FT_OPT_STX		= 1 << 22,
+	FT_OPT_USE_NEXT_DEV	= 1 << 23,
 	FT_OPT_OOB_CTRL		= FT_OPT_OOB_SYNC | FT_OPT_OOB_ADDR_EXCH,
 };
 
@@ -182,6 +183,7 @@ struct ft_opts {
 	int force_prefix;
 	enum fi_hmem_iface iface;
 	uint64_t device;
+	int info_index;
 
 	char **argv;
 };
@@ -259,7 +261,7 @@ extern int listen_sock;
 #define FAB_OPTS "f:d:p:K"
 #define HMEM_OPTS "D:i:H"
 #define INFO_OPTS FAB_OPTS HMEM_OPTS "e:M:"
-#define CS_OPTS ADDR_OPTS "I:QS:mc:t:w:l"
+#define CS_OPTS ADDR_OPTS "X:I:QS:mc:t:w:l"
 #define API_OPTS "o:"
 #define NO_CQ_DATA 0
 
