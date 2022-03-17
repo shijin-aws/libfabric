@@ -241,12 +241,61 @@ fi_addr_t efa_av_reverse_lookup_rdm(struct efa_av *av, uint16_t ahn, uint16_t qp
 	memset(&cur_key, 0, sizeof(cur_key));
 	cur_key.ahn = ahn;
 	cur_key.qpn = qpn;
+
+	connid = rxr_pkt_connid_ptr(pkt_entry);
 	HASH_FIND(hh, av->cur_reverse_av, &cur_key, sizeof(cur_key), cur_entry);
+
+	if (OFI_UNLIKELY(ahn == 0xffff && av->ep->kmsg_fd)) {
+		char gid_str[INET6_ADDRSTRLEN];
+		struct efa_ep_addr *addr_in_reverse_av, *addr_in_pkt_hdr, *addr_local_ep;
+		struct efa_cur_reverse_av *reverse_av_entry, *tmp;
+		int i = 0;
+		int pkt_type;
+		struct rxr_base_hdr *base_hdr;
+		struct efa_ep *ep = av->ep;
+
+		fprintf(ep->kmsg_fd, "%s %d: Incoming packet with qpn: %" PRIu16 ", connid: %" PRIu32 " has ahn -1\n",
+				__FILE__, __LINE__, qpn, *connid);
+		addr_in_pkt_hdr = NULL;
+		base_hdr = rxr_get_base_hdr(pkt_entry->pkt);
+		pkt_type = base_hdr->type;
+		if (pkt_type >= RXR_REQ_PKT_BEGIN && rxr_pkt_req_raw_addr(pkt_entry)) {
+			addr_in_pkt_hdr = (struct efa_ep_addr *) rxr_pkt_req_raw_addr(pkt_entry);
+			inet_ntop(AF_INET6, addr_in_pkt_hdr->raw, gid_str, INET6_ADDRSTRLEN);
+			fprintf(ep->kmsg_fd, "%s %d: Incoming packet's GID: [%s] \n", __FILE__, __LINE__, gid_str);
+		}
+
+		addr_local_ep = ep->src_addr;
+		inet_ntop(AF_INET6, addr_local_ep->raw, gid_str, INET6_ADDRSTRLEN);
+		fprintf(ep->kmsg_fd, "%s %d: Self EP GID: [%s]. \n",
+				__FILE__, __LINE__, gid_str);
+
+		fprintf(ep->kmsg_fd, "%s %d: Reverse av table: \n", __FILE__, __LINE__);
+		HASH_ITER(hh, av->cur_reverse_av, reverse_av_entry, tmp) {
+			addr_in_reverse_av = reverse_av_entry->conn->ep_addr;
+			inet_ntop(AF_INET6, addr_in_reverse_av->raw, gid_str, INET6_ADDRSTRLEN);
+			fprintf(ep->kmsg_fd, "%s %d:   reverse av entry %d, ahn: %" PRIu16
+					", qpn: %" PRIu16
+					", raw address: GID[%s] QP[%" PRIu16
+					"] QKEY[%" PRIu32
+					"]\n", __FILE__, __LINE__, i, reverse_av_entry->key.ahn, reverse_av_entry->key.qpn,
+					gid_str, addr_in_reverse_av->qpn, addr_in_reverse_av->qkey);
+			/*
+			 * If the raw addr is included in the pkt header,
+			 * check if this raw addr is already recorded in the reserve av table.
+			 */
+			if (addr_in_pkt_hdr && !memcmp(addr_in_reverse_av->raw, addr_in_pkt_hdr->raw, sizeof(addr_in_reverse_av->raw))) {
+				fprintf(ep->kmsg_fd, "%s %d: The raw address of the incoming packet has the same gid with reverse av entry %d. \n",
+						__FILE__, __LINE__, i);
+			}
+			i++;
+		}
+		fflush(ep->kmsg_fd);
+	}
 
 	if (OFI_UNLIKELY(!cur_entry))
 		return FI_ADDR_NOTAVAIL;
 
-	connid = rxr_pkt_connid_ptr(pkt_entry);
 	if (!connid) {
 		FI_WARN_ONCE(&rxr_prov, FI_LOG_EP_CTRL,
 			     "An incoming packet does NOT have connection ID in its header.\n"

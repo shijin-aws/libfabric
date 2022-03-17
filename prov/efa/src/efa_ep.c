@@ -249,6 +249,9 @@ static int efa_ep_close(fid_t fid)
 	ofi_bufpool_destroy(ep->recv_wr_pool);
 	ofi_bufpool_destroy(ep->send_wr_pool);
 	efa_ep_destroy(ep);
+	if (ep->kmsg_fd) {
+		fclose(ep->kmsg_fd);
+	}
 
 	return 0;
 }
@@ -668,6 +671,15 @@ int efa_ep_open(struct fid_domain *domain_fid, struct fi_info *info,
 	ep = efa_ep_alloc(info);
 	if (!ep)
 		return -FI_ENOMEM;
+	/* Append message to the /dev/kmsg file */
+	errno = 0;
+	ep->kmsg_fd = fopen("/dev/kmsg", "a");
+	if (ep->kmsg_fd) {
+		fprintf(ep->kmsg_fd, "%s %d: Opened /dev/kmsg to append libfabric logs. \n", __FILE__, __LINE__);
+		fflush(ep->kmsg_fd);
+	}
+	else
+		EFA_WARN(FI_LOG_EP_CTRL, "cannot open file /dev/kmsg, errno: %d\n", errno);
 
 	ret = ofi_endpoint_init(domain_fid, &efa_util_prov, info, &ep->util_ep,
 				context, efa_ep_progress);

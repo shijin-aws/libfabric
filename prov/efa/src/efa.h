@@ -321,6 +321,8 @@ struct efa_ep {
 	struct ofi_bufpool	*send_wr_pool;
 	struct ofi_bufpool	*recv_wr_pool;
 	struct ibv_ah		*self_ah;
+	/* file descriptor to the /dev/kmsg file */
+	FILE *kmsg_fd;
 };
 
 struct efa_send_wr {
