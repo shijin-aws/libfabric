@@ -899,8 +899,8 @@ void rxr_ep_set_extra_info(struct rxr_ep *ep)
 }
 
 /*
- * Set the efa_domain hmem_support_status state based on what CUDA/Neuron capabilities
- * are available. Return whether hmem is supported or not.
+ * Set the efa_domain hmem_support_status state based on what device
+ * capabilities are available. Return whether hmem is supported or not.
  *
  * @param[in]	efa_domain efa domain
  * @return 	1 if we have any devices that support hmem, 0 if not, negative
@@ -930,6 +930,13 @@ static int efa_ep_hmem_check(struct efa_domain *efa_domain)
 	else
 		FI_INFO(&rxr_prov, FI_LOG_EP_CTRL,
 			"AWS Neuron peer to peer support is not available.\n");
+
+	if (efa_domain->hmem_support_status[FI_HMEM_SYNAPSEAI].initialized &&
+	    efa_domain->hmem_support_status[FI_HMEM_SYNAPSEAI].p2p_supported)
+		have_hmem = 1;
+	else
+		FI_INFO(&rxr_prov, FI_LOG_EP_CTRL,
+			"AWS SynapseAI peer to peer support is not available, but FI_HMEM was requested.\n");
 
 	if (!have_hmem) {
 		FI_WARN(&rxr_prov, FI_LOG_EP_CTRL,
@@ -2422,8 +2429,8 @@ bool rxr_ep_use_shm_for_tx(struct fi_info *info)
 	 * buffers through cuda IPC. Once that is implemented, the
 	 * following two lines need to be removed.
 	 *
-	 * In addition, AWS Neuron is currently not supported by the SHM
-	 * provider.
+	 * In addition, AWS Neuron and SynapseAI is currently not
+	 * supported by the SHM provider.
 	 */
 	if (info && (info->caps & FI_HMEM))
 		return 0;

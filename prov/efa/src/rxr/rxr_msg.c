@@ -157,7 +157,7 @@ int rxr_msg_select_rtm(struct rxr_ep *rxr_ep, struct rxr_tx_entry *tx_entry, int
 	if (use_p2p && efa_mr_is_cuda(tx_entry->desc[0]))
 		return rxr_msg_select_rtm_for_cuda(rxr_ep, tx_entry);
 
-	/* inter instance message using host/neuron memory */
+	/* inter instance message using host or non-cuda device memory */
 	if (tx_entry->fi_flags & FI_INJECT)
 		delivery_complete_requested = false;
 	else
@@ -175,6 +175,13 @@ int rxr_msg_select_rtm(struct rxr_ep *rxr_ep, struct rxr_tx_entry *tx_entry, int
 	readbase_rtm = RXR_LONGREAD_MSGRTM_PKT + tagged;
 
 	eager_rtm_max_data_size = rxr_tx_entry_max_req_data_capacity(rxr_ep, tx_entry, eager_rtm);
+
+	/*
+	 * Force the LONGREAD protocol for synapseai buffers, regardless of what
+	 * is specified by the user for protocol switch over points.
+	 */
+	if (efa_mr_is_synapseai(tx_entry->desc[0]))
+		return readbase_rtm;
 
 	if (tx_entry->total_len <= eager_rtm_max_data_size)
 		return eager_rtm;
