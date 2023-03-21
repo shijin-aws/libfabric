@@ -217,12 +217,26 @@ ssize_t rxr_msg_generic_send(struct fid_ep *ep, const struct fi_msg *msg,
 			shm_msg->desc = NULL;
 		}
 		if (op == ofi_op_msg) {
-			ret = fi_sendmsg(rxr_ep->shm_ep, shm_msg, flags);
+			if (flags & FI_INJECT) {
+				if (flags & FI_REMOTE_CQ_DATA)
+					ret = fi_injectdata(rxr_ep->shm_ep, shm_msg->msg_iov->iov_base, shm_msg->msg_iov->iov_len, shm_msg->data, shm_msg->addr);
+				else
+					ret = fi_inject(rxr_ep->shm_ep, shm_msg->msg_iov->iov_base, shm_msg->msg_iov->iov_len, shm_msg->addr);
+			} else {
+				ret = fi_sendmsg(rxr_ep->shm_ep, shm_msg, flags);
+			}
 		} else {
 			assert(op == ofi_op_tagged);
 			rxr_tmsg_construct(&shm_tmsg, msg->msg_iov, shm_msg->desc, msg->iov_count, peer->shm_fiaddr,
 				   msg->context, msg->data, tag);
-			ret = fi_tsendmsg(rxr_ep->shm_ep, &shm_tmsg, flags);
+			if (flags & FI_INJECT) {
+				if (flags & FI_REMOTE_CQ_DATA)
+					ret = fi_tinjectdata(rxr_ep->shm_ep, shm_tmsg.msg_iov->iov_base, shm_tmsg.msg_iov->iov_len, shm_tmsg.data, shm_tmsg.addr, shm_tmsg.tag);
+				else
+					ret = fi_tinject(rxr_ep->shm_ep, shm_tmsg.msg_iov->iov_base, shm_tmsg.msg_iov->iov_len, shm_tmsg.addr, shm_tmsg.tag);
+			} else {
+				ret = fi_tsendmsg(rxr_ep->shm_ep, &shm_tmsg, flags);
+			}
 		}
 		shm_msg->desc = tmp_desc;
 		shm_msg->addr = tmp_addr;
