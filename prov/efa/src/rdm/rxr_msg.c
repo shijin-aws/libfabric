@@ -182,8 +182,11 @@ ssize_t rxr_msg_generic_send(struct fid_ep *ep, const struct fi_msg *msg,
 	ssize_t err, ret, use_p2p;
 	struct rxr_op_entry *tx_entry;
 	struct efa_rdm_peer *peer;
-	struct fi_msg shm_msg = {0};
+	struct fi_msg *shm_msg;
 	struct fi_msg_tagged shm_tmsg = {0};
+	void *shm_desc[RXR_IOV_LIMIT];
+	void **tmp_desc;
+	fi_addr_t tmp_addr;
 
 	rxr_ep = container_of(ep, struct rxr_ep, base_ep.util_ep.ep_fid.fid);
 	assert(msg->iov_count <= rxr_ep->tx_iov_limit);
@@ -201,16 +204,29 @@ ssize_t rxr_msg_generic_send(struct fid_ep *ep, const struct fi_msg *msg,
 			fi_tostr(&((struct efa_mr *)msg->desc[0])->peer.iface, FI_TYPE_HMEM_IFACE));
 			return -FI_EINVAL;
 		}
+
+		tmp_desc = msg->desc;
+		tmp_addr = msg->addr;
+		shm_msg = (struct fi_msg *) msg;
+		shm_msg->addr = peer->shm_fiaddr;
+		if (msg->desc) {
+			memcpy(shm_desc, msg->desc, msg->iov_count * sizeof(void *));
+			rxr_convert_desc_for_shm(msg->iov_count, shm_desc);
+			shm_msg->desc = shm_desc;
+		} else {
+			shm_msg->desc = NULL;
+		}
 		if (op == ofi_op_msg) {
-			rxr_msg_construct(&shm_msg, msg->msg_iov, NULL, msg->iov_count, peer->shm_fiaddr,
-				   msg->context, msg->data);
-			return fi_sendmsg(rxr_ep->shm_ep, &shm_msg, flags);
+			ret = fi_sendmsg(rxr_ep->shm_ep, shm_msg, flags);
 		} else {
 			assert(op == ofi_op_tagged);
-			rxr_tmsg_construct(&shm_tmsg, msg->msg_iov, NULL, msg->iov_count, peer->shm_fiaddr,
+			rxr_tmsg_construct(&shm_tmsg, msg->msg_iov, shm_msg->desc, msg->iov_count, peer->shm_fiaddr,
 				   msg->context, msg->data, tag);
-			return fi_tsendmsg(rxr_ep->shm_ep, &shm_tmsg, flags);
+			ret = fi_tsendmsg(rxr_ep->shm_ep, &shm_tmsg, flags);
 		}
+		shm_msg->desc = tmp_desc;
+		shm_msg->addr = tmp_addr;
+		return ret;
 	}
 
 	efa_perfset_start(rxr_ep, perf_efa_tx);
