@@ -445,7 +445,16 @@ ssize_t rxr_rma_writemsg(struct fid_ep *ep,
 		} else {
 			msg_clone->desc = NULL;
 		}
-		err = fi_writemsg(rxr_ep->shm_ep, msg, flags);
+		if (flags & FI_INJECT) {
+			if (flags & FI_REMOTE_CQ_DATA)
+				err = fi_inject_writedata(rxr_ep->shm_ep, msg->msg_iov->iov_base, msg->msg_iov->iov_len,
+							  msg->addr, msg->rma_iov->addr, msg->rma_iov->key, msg->data);
+			else
+				err = fi_inject_write(rxr_ep->shm_ep, msg->msg_iov->iov_base, msg->msg_iov->iov_len,
+						      msg->addr, msg->rma_iov->addr, msg->rma_iov->key);
+		} else {
+			err = fi_writemsg(rxr_ep->shm_ep, msg, flags);
+		}
 		msg_clone->addr = tmp_addr;
 		msg_clone->desc = tmp_desc;
 		goto out;
