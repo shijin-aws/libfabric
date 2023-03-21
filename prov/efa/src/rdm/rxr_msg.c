@@ -191,8 +191,21 @@ ssize_t rxr_msg_generic_send(struct fid_ep *ep, const struct fi_msg *msg,
 	rxr_ep = container_of(ep, struct rxr_ep, base_ep.util_ep.ep_fid.fid);
 	assert(msg->iov_count <= rxr_ep->tx_iov_limit);
 
+	efa_perfset_start(rxr_ep, perf_efa_tx);
+	ofi_mutex_lock(&rxr_ep->base_ep.util_ep.lock);
+
+	if (OFI_UNLIKELY(is_tx_res_full(rxr_ep))) {
+		err = -FI_EAGAIN;
+		goto out;
+	}
+
 	peer = rxr_ep_get_peer(rxr_ep, msg->addr);
 	assert(peer);
+
+	if (peer->flags & EFA_RDM_PEER_IN_BACKOFF) {
+		err = -FI_EAGAIN;
+		goto out;
+	}
 
 	if (peer->is_local && rxr_ep->use_shm_for_tx) {
 		/*
@@ -219,11 +232,11 @@ ssize_t rxr_msg_generic_send(struct fid_ep *ep, const struct fi_msg *msg,
 		if (op == ofi_op_msg) {
 			if (flags & FI_INJECT) {
 				if (flags & FI_REMOTE_CQ_DATA)
-					ret = fi_injectdata(rxr_ep->shm_ep, shm_msg->msg_iov->iov_base, shm_msg->msg_iov->iov_len, shm_msg->data, shm_msg->addr);
+					err = fi_injectdata(rxr_ep->shm_ep, shm_msg->msg_iov->iov_base, shm_msg->msg_iov->iov_len, shm_msg->data, shm_msg->addr);
 				else
-					ret = fi_inject(rxr_ep->shm_ep, shm_msg->msg_iov->iov_base, shm_msg->msg_iov->iov_len, shm_msg->addr);
+					err = fi_inject(rxr_ep->shm_ep, shm_msg->msg_iov->iov_base, shm_msg->msg_iov->iov_len, shm_msg->addr);
 			} else {
-				ret = fi_sendmsg(rxr_ep->shm_ep, shm_msg, flags);
+				err = fi_sendmsg(rxr_ep->shm_ep, shm_msg, flags);
 			}
 		} else {
 			assert(op == ofi_op_tagged);
@@ -231,28 +244,15 @@ ssize_t rxr_msg_generic_send(struct fid_ep *ep, const struct fi_msg *msg,
 				   msg->context, msg->data, tag);
 			if (flags & FI_INJECT) {
 				if (flags & FI_REMOTE_CQ_DATA)
-					ret = fi_tinjectdata(rxr_ep->shm_ep, shm_tmsg.msg_iov->iov_base, shm_tmsg.msg_iov->iov_len, shm_tmsg.data, shm_tmsg.addr, shm_tmsg.tag);
+					err = fi_tinjectdata(rxr_ep->shm_ep, shm_tmsg.msg_iov->iov_base, shm_tmsg.msg_iov->iov_len, shm_tmsg.data, shm_tmsg.addr, shm_tmsg.tag);
 				else
-					ret = fi_tinject(rxr_ep->shm_ep, shm_tmsg.msg_iov->iov_base, shm_tmsg.msg_iov->iov_len, shm_tmsg.addr, shm_tmsg.tag);
+					err = fi_tinject(rxr_ep->shm_ep, shm_tmsg.msg_iov->iov_base, shm_tmsg.msg_iov->iov_len, shm_tmsg.addr, shm_tmsg.tag);
 			} else {
-				ret = fi_tsendmsg(rxr_ep->shm_ep, &shm_tmsg, flags);
+				err = fi_tsendmsg(rxr_ep->shm_ep, &shm_tmsg, flags);
 			}
 		}
 		shm_msg->desc = tmp_desc;
 		shm_msg->addr = tmp_addr;
-		return ret;
-	}
-
-	efa_perfset_start(rxr_ep, perf_efa_tx);
-	ofi_mutex_lock(&rxr_ep->base_ep.util_ep.lock);
-
-	if (OFI_UNLIKELY(is_tx_res_full(rxr_ep))) {
-		err = -FI_EAGAIN;
-		goto out;
-	}
-
-	if (peer->flags & EFA_RDM_PEER_IN_BACKOFF) {
-		err = -FI_EAGAIN;
 		goto out;
 	}
 
