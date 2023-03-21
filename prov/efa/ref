@@ -1,0 +1,70 @@
+src/dgram/efa_dgram_cq.c:	return cq->domain->fabric->util_fabric.fabric_fid.api_version;
+src/dgram/efa_dgram_cq.c:	ofi_spin_lock(&cq->lock);
+src/dgram/efa_dgram_cq.c:	if (!cq->ibv_cq_ex->status)
+src/dgram/efa_dgram_cq.c:	entry->op_context = (void *)(uintptr_t)cq->ibv_cq_ex->wr_id;
+src/dgram/efa_dgram_cq.c:	entry->flags = efa_dgram_cq_opcode_to_fi_flags(ibv_wc_read_opcode(cq->ibv_cq_ex));
+src/dgram/efa_dgram_cq.c:	entry->prov_errno = ibv_wc_read_vendor_err(cq->ibv_cq_ex);
+src/dgram/efa_dgram_cq.c:	ofi_spin_unlock(&cq->lock);
+src/dgram/efa_dgram_cq.c:	ofi_spin_unlock(&cq->lock);
+src/dgram/efa_dgram_cq.c:	ofi_spin_lock(&cq->lock);
+src/dgram/efa_dgram_cq.c:	err = ibv_start_poll(cq->ibv_cq_ex, &poll_cq_attr);
+src/dgram/efa_dgram_cq.c:		if (cq->ibv_cq_ex->status) {
+src/dgram/efa_dgram_cq.c:			qp_num = ibv_wc_read_qp_num(cq->ibv_cq_ex);
+src/dgram/efa_dgram_cq.c:			src_qp = ibv_wc_read_src_qp(cq->ibv_cq_ex);
+src/dgram/efa_dgram_cq.c:			slid = ibv_wc_read_slid(cq->ibv_cq_ex);
+src/dgram/efa_dgram_cq.c:			av = cq->domain->qp_table[qp_num & cq->domain->qp_table_sz_m1]->base_ep->av;
+src/dgram/efa_dgram_cq.c:		cq->read_entry(cq->ibv_cq_ex, num_cqe, buf);
+src/dgram/efa_dgram_cq.c:		err = ibv_next_poll(cq->ibv_cq_ex);
+src/dgram/efa_dgram_cq.c:		ibv_end_poll(cq->ibv_cq_ex);
+src/dgram/efa_dgram_cq.c:	ofi_spin_unlock(&cq->lock);
+src/dgram/efa_dgram_cq.c:	ofi_bufpool_destroy(cq->wce_pool);
+src/dgram/efa_dgram_cq.c:	ofi_spin_destroy(&cq->lock);
+src/dgram/efa_dgram_cq.c:	ret = -ibv_destroy_cq(ibv_cq_ex_to_cq(cq->ibv_cq_ex));
+src/dgram/efa_dgram_cq.c:	ret = ofi_cq_cleanup(&cq->util_cq);
+src/dgram/efa_dgram_cq.c: * @brief Create and set cq->ibv_cq_ex
+src/dgram/efa_dgram_cq.c: * @param[in] cq Pointer to the efa_dgram_cq. cq->ibv_cq_ex must be NULL.
+src/dgram/efa_dgram_cq.c:	if (cq->ibv_cq_ex) {
+src/dgram/efa_dgram_cq.c:	return efa_cq_ibv_cq_ex_open(attr, cq->domain->device->ibv_ctx,
+src/dgram/efa_dgram_cq.c:				    &cq->ibv_cq_ex, &ibv_cq_ex_type);
+src/dgram/efa_dgram_cq.c:	err = ofi_cq_init(&efa_prov, domain_fid, attr, &cq->util_cq,
+src/dgram/efa_dgram_cq.c:	cq->domain = container_of(domain_fid, struct efa_domain,
+src/dgram/efa_dgram_cq.c:	err = ofi_bufpool_create(&cq->wce_pool, sizeof(struct efa_wce), 16, 0,
+src/dgram/efa_dgram_cq.c:		cq->read_entry = efa_dgram_cq_read_context_entry;
+src/dgram/efa_dgram_cq.c:		cq->entry_size = sizeof(struct fi_cq_entry);
+src/dgram/efa_dgram_cq.c:		cq->read_entry = efa_dgram_cq_read_msg_entry;
+src/dgram/efa_dgram_cq.c:		cq->entry_size = sizeof(struct fi_cq_msg_entry);
+src/dgram/efa_dgram_cq.c:		cq->read_entry = efa_dgram_cq_read_data_entry;
+src/dgram/efa_dgram_cq.c:		cq->entry_size = sizeof(struct fi_cq_data_entry);
+src/dgram/efa_dgram_cq.c:	ofi_spin_init(&cq->lock);
+src/dgram/efa_dgram_cq.c:	*cq_fid = &cq->util_cq.cq_fid;
+src/dgram/efa_dgram_cq.c:	ofi_bufpool_destroy(cq->wce_pool);
+src/dgram/efa_dgram_cq.c:	ibv_destroy_cq(ibv_cq_ex_to_cq(cq->ibv_cq_ex));
+src/dgram/efa_dgram_cq.c:	ofi_cq_cleanup(&cq->util_cq);
+src/dgram/efa_dgram_ep.c:		if (ep->base_ep.domain != cq->domain)
+src/dgram/efa_dgram_ep.c:		ret = ofi_ep_bind_cq(&ep->base_ep.util_ep, &cq->util_cq, flags);
+src/dgram/efa_dgram_ep.c:		attr_ex.send_cq = ibv_cq_ex_to_cq(ep->scq->ibv_cq_ex);
+src/dgram/efa_dgram_ep.c:		ibv_pd = ep->scq->domain->ibv_pd;
+src/dgram/efa_dgram_ep.c:		attr_ex.send_cq = ibv_cq_ex_to_cq(ep->rcq->ibv_cq_ex);
+src/dgram/efa_dgram_ep.c:		ibv_pd = ep->rcq->domain->ibv_pd;
+src/dgram/efa_dgram_ep.c:		attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->rcq->ibv_cq_ex);
+src/dgram/efa_dgram_ep.c:		attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->scq->ibv_cq_ex);
+src/dgram/efa_dgram_ep.c:	cq = &efa_dgram_cq->util_cq;
+src/dgram/efa_dgram_ep.c:	ret = efa_dgram_cq_readfrom(&cq->cq_fid, cq_entry, efa_dgram_cq_PROGRESS_ENTRIES,
+src/dgram/efa_dgram_ep.c:		err = efa_dgram_cq_readerr(&cq->cq_fid, &cq_err_entry, flags);
+src/dgram/efa_dgram_ep.c:				((uint8_t *)temp_cq_entry + efa_dgram_cq->entry_size);
+src/rdm/efa_rdm_cq.c:	*cq_fid = &cq->cq_fid;
+src/rdm/rxr_ep.c:		ret = fi_close(&rxr_ep->shm_cq->fid);
+src/rdm/rxr_ep.c:		ret = fi_ep_bind(rxr_ep->shm_ep, &rxr_ep->shm_cq->fid,
+src/rdm/rxr_ep.c:		retv = fi_close(&rxr_ep->shm_cq->fid);
+src/rdm/rxr_ep.h:	ofi_genlock_lock(&rx_cq->cq_lock);
+src/rdm/rxr_ep.h:	if (ofi_cirque_isfull(rx_cq->cirq))
+src/rdm/rxr_ep.h:	ofi_genlock_unlock(&rx_cq->cq_lock);
+src/rdm/rxr_ep.h:	ofi_genlock_lock(&tx_cq->cq_lock);
+src/rdm/rxr_ep.h:	if (ofi_cirque_isfull(tx_cq->cirq))
+src/rdm/rxr_ep.h:	ofi_genlock_unlock(&tx_cq->cq_lock);
+src/rdm/rxr_op_entry.c:	api_version = util_cq->domain->fabric->fabric_fid.api_version;
+test/efa_unit_test_common.c:	fi_ep_bind(resource->ep, &resource->cq->fid, FI_SEND | FI_RECV);
+test/efa_unit_test_common.c:		assert_int_equal(fi_close(&resource->cq->fid), 0);
+test/efa_unit_test_cq.c:		ibv_cqx = efa_dgram_ep->rcq->ibv_cq_ex;
+test/efa_unit_test_cq.c:		ibv_cqx = efa_dgram_ep->rcq->ibv_cq_ex;
+test/efa_unit_test_cq.c:		efadv_cq->wc_read_sgid = &efa_mock_efadv_wc_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid;

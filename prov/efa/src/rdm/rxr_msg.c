@@ -541,7 +541,7 @@ int rxr_msg_handle_unexp_match(struct rxr_ep *ep,
 
 	data_len = rx_entry->total_len;
 
-	if (!rx_entry->rxr_flags && RXR_RX_ENTRY_FOR_PEER_SRX) {
+	if (!(rx_entry->rxr_flags & RXR_RX_ENTRY_FOR_PEER_SRX)) {
 		pkt_entry = rx_entry->unexp_pkt;
 		rx_entry->unexp_pkt = NULL;
 	}
@@ -743,8 +743,6 @@ struct rxr_op_entry *rxr_msg_split_rx_entry(struct rxr_ep *ep,
 	uint64_t tag, ignore;
 	struct fi_msg msg = {0};
 
-	assert(rxr_get_base_hdr(pkt_entry->wiredata)->type >= RXR_REQ_PKT_BEGIN);
-
 	if (!consumer_entry) {
 		tag = 0;
 		ignore = ~0;
@@ -762,6 +760,7 @@ struct rxr_op_entry *rxr_msg_split_rx_entry(struct rxr_ep *ep,
 		       "Splitting into new multi_recv consumer rx_entry %d from rx_entry %d\n",
 		       rx_entry->rx_id,
 		       posted_entry->rx_id);
+		assert(rxr_get_base_hdr(pkt_entry->wiredata)->type >= RXR_REQ_PKT_BEGIN);
 		rxr_pkt_rtm_update_rx_entry(pkt_entry, rx_entry);
 	} else {
 		rx_entry = consumer_entry;

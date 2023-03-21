@@ -46,7 +46,15 @@ void rxr_msg_update_peer_rx_entry(struct fi_peer_rx_entry *peer_rx_entry,
 {
 	assert(op == ofi_op_msg || op == ofi_op_tagged);
 
-	peer_rx_entry->flags = rx_entry->fi_flags;
+	/*
+	 * We cannot pass FI_MULTI_RECV flag to peer provider
+	 * because it will write it to the cqe for each completed rx.
+	 * However, this flag should only be written to the cqe of either
+	 * the last rx entry that consumed the posted buffer, or a dummy cqe
+	 * with FI_MULTI_RECV flag only that indicates the multi recv has finished.
+	 * We will do the second way, see efa_rdm_srx_free_entry().
+	 */
+	peer_rx_entry->flags = (rx_entry->fi_flags & ~FI_MULTI_RECV);
 	peer_rx_entry->desc = NULL;//&rx_entry->desc[0];
 	peer_rx_entry->iov = rx_entry->iov;
 	peer_rx_entry->count = rx_entry->iov_count;

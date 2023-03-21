@@ -193,6 +193,7 @@ static int efa_rdm_srx_get_tag(struct fid_peer_srx *srx, fi_addr_t addr,
 static int efa_rdm_srx_queue_msg(struct fi_peer_rx_entry *peer_rx_entry)
 {
 	struct rxr_op_entry *rx_entry;
+
 	rx_entry = container_of(peer_rx_entry, struct rxr_op_entry, peer_rx_entry);
 	rxr_msg_queue_unexp_rx_entry_for_msgrtm(rx_entry->ep, rx_entry);
 	return FI_SUCCESS;
@@ -225,6 +226,19 @@ static void efa_rdm_srx_free_entry(struct fi_peer_rx_entry *peer_rx_entry)
 {
 	struct rxr_op_entry *rx_entry;
 	rx_entry = container_of(peer_rx_entry, struct rxr_op_entry, peer_rx_entry);
+	if (rx_entry->fi_flags & FI_MULTI_RECV) {
+		rxr_msg_multi_recv_handle_completion(rx_entry->ep, rx_entry);
+		if (rx_entry->cq_entry.flags & FI_MULTI_RECV) {
+			if (ofi_peer_cq_write(rx_entry->ep->base_ep.util_ep.rx_cq,
+					      rx_entry->master_entry->cq_entry.op_context,
+					      FI_MULTI_RECV, 0, NULL, 0, 0,
+					      FI_ADDR_NOTAVAIL)) {
+				EFA_WARN(FI_LOG_EP_CTRL,
+					"unable to write rx MULTI_RECV completion\n");
+			}
+		}
+	}
+	rxr_msg_multi_recv_free_posted_entry(rx_entry->ep, rx_entry);
 	rxr_rx_entry_release(rx_entry);
 }
 
