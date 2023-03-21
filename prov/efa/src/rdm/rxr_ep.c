@@ -271,11 +271,10 @@ int rxr_ep_post_user_recv_buf(struct rxr_ep *ep, struct rxr_op_entry *rx_entry, 
  *
  * @param[in]	ep		endpoint
  * @param[in]	flags		flags passed to lower provider, can have FI_MORE
- * @param[in]	lower_ep_type	lower endpoint type, can be either SHM_EP or EFA_EP
  * @return	On success, return 0
  * 		On failure, return a negative error code.
  */
-int rxr_ep_post_internal_rx_pkt(struct rxr_ep *ep, uint64_t flags, enum rxr_lower_ep_type lower_ep_type)
+int rxr_ep_post_internal_rx_pkt(struct rxr_ep *ep, uint64_t flags)
 {
 	void *desc;
 	struct rxr_pkt_entry *rx_pkt_entry = NULL;
@@ -317,13 +316,11 @@ int rxr_ep_post_internal_rx_pkt(struct rxr_ep *ep, uint64_t flags, enum rxr_lowe
  *
  * @param[in]	ep		endpint
  * @param[in]	nrecv		number of receive buffers to post
- * @param[in]	lower_ep_type	device type, can be SHM_EP or EFA_EP
  * @return	On success, return 0
  * 		On failure, return negative libfabric error code
  */
 static inline
-ssize_t rxr_ep_bulk_post_internal_rx_pkts(struct rxr_ep *ep, int nrecv,
-					  enum rxr_lower_ep_type lower_ep_type)
+ssize_t rxr_ep_bulk_post_internal_rx_pkts(struct rxr_ep *ep, int nrecv)
 {
 	int i;
 	ssize_t err;
@@ -334,7 +331,7 @@ ssize_t rxr_ep_bulk_post_internal_rx_pkts(struct rxr_ep *ep, int nrecv,
 		if (i == nrecv - 1)
 			flags = 0;
 
-		err = rxr_ep_post_internal_rx_pkt(ep, flags, lower_ep_type);
+		err = rxr_ep_post_internal_rx_pkt(ep, flags);
 		if (OFI_UNLIKELY(err))
 			return err;
 	}
@@ -1563,7 +1560,7 @@ void rxr_ep_progress_post_internal_rx_pkts(struct rxr_ep *ep)
 		}
 	}
 
-	err = rxr_ep_bulk_post_internal_rx_pkts(ep, ep->efa_rx_pkts_to_post, EFA_EP);
+	err = rxr_ep_bulk_post_internal_rx_pkts(ep, ep->efa_rx_pkts_to_post);
 	if (err)
 		goto err_exit;
 
@@ -1786,7 +1783,7 @@ static inline void rdm_ep_poll_ibv_cq_ex(struct rxr_ep *ep, size_t cqe_to_proces
 
 			pkt_entry->pkt_size = ibv_wc_read_byte_len(ep->ibv_cq_ex);
 			assert(pkt_entry->pkt_size > 0);
-			rxr_pkt_handle_recv_completion(ep, pkt_entry, EFA_EP);
+			rxr_pkt_handle_recv_completion(ep, pkt_entry);
 #if ENABLE_DEBUG
 			ep->recv_comps++;
 #endif
@@ -2408,67 +2405,6 @@ void rxr_ep_record_tx_op_completed(struct rxr_ep *ep, struct rxr_pkt_entry *pkt_
 
 		if (op_entry)
 			op_entry->shm_outstanding_tx_ops--;
-	}
-}
-
-/**
- * @brief handle two types of completion entries from shm provider
- *
- * This function handles the following two scenarios:
- *  1. RMA writes with immediate data at remote endpoint,
- *  2. atomic completion on the requester
- * For both cases, this function report completion to user.
- *
- * @param[in]		ep		endpoint
- * @param[in]		cq_entry	CQ entry from shm provider
- * @param[in]		src_addr	source address
- */
-void rxr_ep_handle_misc_shm_completion(struct rxr_ep *ep,
-				       struct fi_cq_data_entry *cq_entry,
-				       fi_addr_t src_addr)
-{
-	struct util_cq *target_cq;
-	int ret;
-
-	if (cq_entry->flags & FI_ATOMIC) {
-		target_cq = ep->base_ep.util_ep.tx_cq;
-	} else {
-		assert(cq_entry->flags & FI_REMOTE_CQ_DATA);
-		target_cq = ep->base_ep.util_ep.rx_cq;
-	}
-
-	if (ep->base_ep.util_ep.caps & FI_SOURCE)
-		ret = ofi_cq_write_src(target_cq,
-				       cq_entry->op_context,
-				       cq_entry->flags,
-				       cq_entry->len,
-				       cq_entry->buf,
-				       cq_entry->data,
-				       0,
-				       src_addr);
-	else
-		ret = ofi_cq_write(target_cq,
-				   cq_entry->op_context,
-				   cq_entry->flags,
-				   cq_entry->len,
-				   cq_entry->buf,
-				   cq_entry->data,
-				   0);
-
-	rxr_rm_rx_cq_check(ep, target_cq);
-
-	if (OFI_UNLIKELY(ret)) {
-		EFA_WARN(FI_LOG_CQ,
-			"Unable to write a cq entry for shm operation: %s\n",
-			fi_strerror(-ret));
-		efa_eq_write_error(&ep->base_ep.util_ep, FI_EIO, FI_EFA_ERR_WRITE_SHM_CQ_ENTRY);
-	}
-
-	if (cq_entry->flags & FI_ATOMIC) {
-		efa_cntr_report_tx_completion(&ep->base_ep.util_ep, cq_entry->flags);
-	} else {
-		assert(cq_entry->flags & FI_REMOTE_CQ_DATA);
-		efa_cntr_report_rx_completion(&ep->base_ep.util_ep, cq_entry->flags);
 	}
 }
 
