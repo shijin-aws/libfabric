@@ -119,6 +119,7 @@ struct rxr_op_entry {
 	size_t iov_count;
 	struct iovec iov[RXR_IOV_LIMIT];
 	void *desc[RXR_IOV_LIMIT];
+	void *shm_desc[RXR_IOV_LIMIT];
 	struct fid_mr *mr[RXR_IOV_LIMIT];
 
 	size_t rma_iov_count;

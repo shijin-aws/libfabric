@@ -55,7 +55,13 @@ void rxr_msg_update_peer_rx_entry(struct fi_peer_rx_entry *peer_rx_entry,
 	 * We will do the second way, see efa_rdm_srx_free_entry().
 	 */
 	peer_rx_entry->flags = (rx_entry->fi_flags & ~FI_MULTI_RECV);
-	peer_rx_entry->desc = NULL;//&rx_entry->desc[0];
+	if (rx_entry->desc) {
+		memcpy(rx_entry->shm_desc, rx_entry->desc, rx_entry->iov_count * sizeof(void *));
+		rxr_convert_desc_for_shm(rx_entry->iov_count, rx_entry->shm_desc);
+		peer_rx_entry->desc = rx_entry->shm_desc;
+	} else {
+		peer_rx_entry->desc = NULL;
+	}
 	peer_rx_entry->iov = rx_entry->iov;
 	peer_rx_entry->count = rx_entry->iov_count;
 	peer_rx_entry->context = rx_entry->cq_entry.op_context;
