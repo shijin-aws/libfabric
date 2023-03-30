@@ -936,6 +936,8 @@ static int smr_ep_close(struct fid *fid)
 		free(ep->sock_info);
 	}
 
+	printf("shm inject call counter: %lu\n", ep->inject_call_cntr);
+	printf("shm progress counter: %lu\n", ep->progress_cntr);
 	ofi_endpoint_close(&ep->util_ep);
 
 	if (ep->region)
@@ -1830,6 +1832,8 @@ int smr_endpoint(struct fid_domain *domain, struct fi_info *info,
 	ep->util_ep.ep_fid.atomic = &smr_atomic_ops;
 
 	*ep_fid = &ep->util_ep.ep_fid;
+	ep->inject_call_cntr = 0;
+	ep->progress_cntr = 0;
 	return 0;
 ep:
 	ofi_endpoint_close(&ep->util_ep);

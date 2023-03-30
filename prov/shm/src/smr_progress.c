@@ -1278,6 +1278,7 @@ void smr_ep_progress(struct util_ep *util_ep)
 	struct smr_ep *ep;
 
 	ep = container_of(util_ep, struct smr_ep, util_ep);
+	ep->progress_cntr++;
 
 	if (ofi_atomic_cas_bool32(&ep->region->signal, 1, 0)) {
 		if (smr_env.use_dsa_sar)

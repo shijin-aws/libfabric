@@ -399,6 +399,7 @@ static ssize_t smr_generic_inject(struct fid_ep *ep_fid, const void *buf,
 	msg_iov.iov_len = len;
 
 	ep = container_of(ep_fid, struct smr_ep, util_ep.ep_fid.fid);
+	ep->inject_call_cntr++;
 
 	id = smr_verify_peer(ep, dest_addr);
 	if (id < 0)

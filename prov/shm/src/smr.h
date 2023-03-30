@@ -280,6 +280,8 @@ struct smr_ep {
 	int			ep_idx;
 	struct smr_sock_info	*sock_info;
 	void			*dsa_context;
+	uint64_t		inject_call_cntr;
+	uint64_t		progress_cntr;
 };
 
 static inline struct smr_srx_ctx *smr_get_smr_srx(struct smr_ep *ep)
