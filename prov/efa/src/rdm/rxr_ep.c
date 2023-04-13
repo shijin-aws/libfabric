@@ -2156,7 +2156,7 @@ void rxr_ep_progress(struct util_ep *util_ep)
 	ep->progress_cntr++;
 
 	ofi_mutex_lock(&ep->base_ep.util_ep.lock);
-	//rxr_ep_progress_internal(ep);
+	rxr_ep_progress_internal(ep);
 	ofi_mutex_unlock(&ep->base_ep.util_ep.lock);
 }
 
