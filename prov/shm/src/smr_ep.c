@@ -1640,7 +1640,7 @@ static int smr_ep_bind(struct fid *ep_fid, struct fid *bfid, uint64_t flags)
 		srx = calloc(1, sizeof(*srx));
 		srx_b = container_of(bfid, struct fid_peer_srx, ep_fid.fid);
 		srx->peer_ops = &smr_srx_peer_ops;
-		srx->owner_ops = &smr_srx_owner_ops;
+		srx->owner_ops = srx_b->owner_ops;
 		srx->ep_fid.fid.context = srx_b->ep_fid.fid.context;
 		ep->srx = &srx->ep_fid;
 		break;
@@ -1691,7 +1691,6 @@ static int smr_ep_ctrl(struct fid *fid, int command, void *arg)
 			}
 		}
 
-		ep->srx = NULL;
 		if (!ep->srx) {
 			domain = container_of(ep->util_ep.domain,
 					      struct smr_domain,

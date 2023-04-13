@@ -1340,7 +1340,6 @@ ssize_t rxr_msg_recvmsg(struct fid_ep *ep_fid, const struct fi_msg *msg,
 	struct rxr_ep *ep;
 
 	ep = container_of(ep_fid, struct rxr_ep, base_ep.util_ep.ep_fid.fid);
-	return fi_recvmsg(ep->shm_ep, msg, flags);
 
 	/*
 	 * For rxr_msg_recvmsg (trecvmsg), it should pass application
@@ -1360,7 +1359,6 @@ ssize_t rxr_msg_recv(struct fid_ep *ep_fid, void *buf, size_t len,
 	struct rxr_ep *ep;
 
 	ep = container_of(ep_fid, struct rxr_ep, base_ep.util_ep.ep_fid.fid);
-	return fi_recv(ep->shm_ep, buf, len, NULL, src_addr, context);
 
 	iov.iov_base = buf;
 	iov.iov_len = len;
@@ -1378,7 +1376,6 @@ ssize_t rxr_msg_recvv(struct fid_ep *ep_fid, const struct iovec *iov,
 	struct rxr_ep *ep;
 
 	ep = container_of(ep_fid, struct rxr_ep, base_ep.util_ep.ep_fid.fid);
-	return fi_recvv(ep->shm_ep, iov, NULL, count, src_addr, context);
 
 	rxr_msg_construct(&msg, iov, desc, count, src_addr, context, 0);
 	return rxr_msg_recvmsg(ep_fid, &msg, rxr_rx_flags(ep));
@@ -1397,7 +1394,6 @@ ssize_t rxr_msg_trecv(struct fid_ep *ep_fid, void *buf, size_t len, void *desc,
 	struct rxr_ep *ep;
 
 	ep = container_of(ep_fid, struct rxr_ep, base_ep.util_ep.ep_fid.fid);
-	return fi_trecv(ep->shm_ep, buf, len, NULL, src_addr, tag, ignore, context);
 
 	iov.iov_base = (void *)buf;
 	iov.iov_len = len;
@@ -1415,7 +1411,6 @@ ssize_t rxr_msg_trecvv(struct fid_ep *ep_fid, const struct iovec *iov,
 	struct rxr_ep *ep;
 
 	ep = container_of(ep_fid, struct rxr_ep, base_ep.util_ep.ep_fid.fid);
-	return fi_trecvv(ep->shm_ep, iov, NULL, count, src_addr, tag, ignore, context);
 
 	rxr_msg_construct(&msg, iov, desc, count, src_addr, context, 0);
 	return rxr_msg_generic_recv(ep_fid, &msg, tag, ignore, ofi_op_tagged, rxr_rx_flags(ep));
@@ -1430,7 +1425,6 @@ ssize_t rxr_msg_trecvmsg(struct fid_ep *ep_fid, const struct fi_msg_tagged *tmsg
 	struct rxr_ep *ep;
 
 	ep = container_of(ep_fid, struct rxr_ep, base_ep.util_ep.ep_fid.fid);
-	return fi_trecvmsg(ep->shm_ep, tmsg, flags);
 
 	/*
 	 * For rxr_msg_recvmsg (trecvmsg), it should pass application
