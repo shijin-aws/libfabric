@@ -490,15 +490,12 @@ void ofi_cq_progress(struct util_cq *cq)
 	struct util_ep *ep;
 	struct fid_list_entry *fid_entry;
 	struct dlist_entry *item;
-	int i = 0;
 
 	ofi_mutex_lock(&cq->ep_list_lock);
 	dlist_foreach(&cq->ep_list, item) {
-		printf("ofi_cq_progress: ep index: %d\n", i);
 		fid_entry = container_of(item, struct fid_list_entry, entry);
 		ep = container_of(fid_entry->fid, struct util_ep, ep_fid.fid);
 		ep->progress(ep);
-		i++;
 
 	}
 	ofi_mutex_unlock(&cq->ep_list_lock);
