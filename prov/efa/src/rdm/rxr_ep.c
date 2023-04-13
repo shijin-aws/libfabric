@@ -598,6 +598,7 @@ static int rxr_ep_close(struct fid *fid)
 		}
 	}
 
+	printf("rxr_ep_progress cntr: %lu\n", rxr_ep->progress_cntr);
 	rxr_ep_free_res(rxr_ep);
 	free(rxr_ep);
 	return retv;
@@ -2152,6 +2153,7 @@ void rxr_ep_progress(struct util_ep *util_ep)
 	struct rxr_ep *ep;
 
 	ep = container_of(util_ep, struct rxr_ep, base_ep.util_ep);
+	ep->progress_cntr++;
 
 	ofi_mutex_lock(&ep->base_ep.util_ep.lock);
 	rxr_ep_progress_internal(ep);
@@ -2222,6 +2224,7 @@ int rxr_endpoint(struct fid_domain *domain, struct fi_info *info,
 	rxr_ep->efa_max_outstanding_rx_ops = efa_domain->device->rdm_info->rx_attr->size;
 	rxr_ep->efa_device_iov_limit = efa_domain->device->rdm_info->tx_attr->iov_limit;
 	rxr_ep->use_device_rdma = efa_rdm_get_use_device_rdma(info->fabric_attr->api_version);
+	rxr_ep->progress_cntr = 0;
 
 	cq_attr.size = MAX(rxr_ep->rx_size + rxr_ep->tx_size,
 			   rxr_env.cq_size);
