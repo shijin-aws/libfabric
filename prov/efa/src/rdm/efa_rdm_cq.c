@@ -84,13 +84,19 @@ static struct fi_ops efa_rdm_cq_fi_ops = {
 static ssize_t efa_rdm_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count, fi_addr_t *src_addr)
 {
 	struct efa_rdm_cq *cq;
+	ssize_t ret;
 
 	cq = container_of(cq_fid, struct efa_rdm_cq, util_cq.cq_fid.fid);
 
 	if (cq->shm_cq)
 		fi_cq_read(cq->shm_cq, NULL, 0);
 
-	return ofi_cq_read_entries(&cq->util_cq, buf, count, src_addr);
+	ret = ofi_cq_read_entries(&cq->util_cq, buf, count, src_addr);
+
+	if (ret > 0)
+		return ret;
+
+	return ofi_cq_readfrom(&cq->util_cq.cq_fid, buf, count, src_addr);
 }
 
 static struct fi_ops_cq efa_rdm_cq_ops = {
