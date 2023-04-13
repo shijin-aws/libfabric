@@ -2153,9 +2153,9 @@ void rxr_ep_progress(struct util_ep *util_ep)
 
 	ep = container_of(util_ep, struct rxr_ep, base_ep.util_ep);
 
-	//ofi_mutex_lock(&ep->base_ep.util_ep.lock);
+	ofi_mutex_lock(&ep->base_ep.util_ep.lock);
 	rxr_ep_progress_internal(ep);
-	//ofi_mutex_unlock(&ep->base_ep.util_ep.lock);
+	ofi_mutex_unlock(&ep->base_ep.util_ep.lock);
 }
 
 int rxr_endpoint(struct fid_domain *domain, struct fi_info *info,
