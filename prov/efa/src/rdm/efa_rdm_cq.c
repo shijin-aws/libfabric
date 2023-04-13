@@ -91,11 +91,6 @@ static ssize_t efa_rdm_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t coun
 	if (cq->shm_cq)
 		fi_cq_read(cq->shm_cq, NULL, 0);
 
-	ret = ofi_cq_read_entries(&cq->util_cq, buf, count, src_addr);
-
-	if (ret > 0)
-		return ret;
-
 	return ofi_cq_readfrom(&cq->util_cq.cq_fid, buf, count, src_addr);
 }
 
