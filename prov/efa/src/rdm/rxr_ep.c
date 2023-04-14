@@ -192,7 +192,7 @@ struct efa_rdm_ope *rxr_ep_alloc_rxe(struct rxr_ep *ep, fi_addr_t addr, uint32_t
 	*  We always set it to the EFA provider's SRX here. For SHM messages, we will set
 	*  this to SHM provider's SRX in the get_msg/get_tag function call
 	*/
-	rxe->peer_rxe.srx = &ep->peer_srx;
+	rxe->peer_rxe.srx = util_get_peer_srx(ep->peer_srx_ep);
 
 	dlist_init(&rxe->entry);
 	switch (op) {
@@ -863,6 +863,9 @@ static int rxr_ep_ctrl(struct fid *fid, int command, void *arg)
 	char shm_ep_name[EFA_SHM_NAME_MAX], ep_addr_str[OFI_ADDRSTRLEN];
 	size_t shm_ep_name_len, ep_addr_strlen;
 	int ret = 0;
+	struct fi_peer_srx_context peer_srx_context = {0};
+	struct fi_rx_attr peer_srx_attr = {0};
+	struct fid_ep *peer_srx_ep = NULL;
 
 	switch (command) {
 	case FI_ENABLE:
@@ -890,6 +893,15 @@ static int rxr_ep_ctrl(struct fid *fid, int command, void *arg)
 		 * shared memory region.
 		 */
 		if (ep->shm_ep) {
+			ret = efa_rdm_peer_srx_construct(ep);
+			if (ret)
+				return ret;
+
+			peer_srx_context.srx = util_get_peer_srx(ep->peer_srx_ep);
+			peer_srx_attr.op_flags |= FI_PEER;
+			ret = fi_srx_context(rxr_ep_domain(ep)->shm_domain, &peer_srx_attr, &peer_srx_ep, &peer_srx_context);
+			if (ret)
+				goto out;
 			shm_ep_name_len = EFA_SHM_NAME_MAX;
 			ret = efa_shm_ep_name_construct(shm_ep_name, &shm_ep_name_len, &ep->base_ep.src_addr);
 			if (ret < 0)
@@ -897,7 +909,7 @@ static int rxr_ep_ctrl(struct fid *fid, int command, void *arg)
 			fi_setname(&ep->shm_ep->fid, shm_ep_name, shm_ep_name_len);
 
 			/* Bind srx to shm ep */
-			ret = fi_ep_bind(ep->shm_ep, &ep->peer_srx.ep_fid.fid, 0);
+			ret = fi_ep_bind(ep->shm_ep, &ep->peer_srx_ep->fid, 0);
 			if (ret)
 				goto out;
 
@@ -2146,9 +2158,6 @@ int rxr_endpoint(struct fid_domain *domain, struct fi_info *info,
 	struct rxr_ep *rxr_ep = NULL;
 	struct fi_cq_attr cq_attr;
 	int ret, retv, i;
-	struct fi_peer_srx_context peer_srx_context = {0};
-	struct fi_rx_attr peer_srx_attr = {0};
-	struct fid_ep *peer_srx_ep = NULL;
 
 	rxr_ep = calloc(1, sizeof(*rxr_ep));
 	if (!rxr_ep)
@@ -2165,15 +2174,7 @@ int rxr_endpoint(struct fid_domain *domain, struct fi_info *info,
 	if (ret)
 		goto err_free_ep;
 
-	efa_rdm_peer_srx_construct(rxr_ep, &rxr_ep->peer_srx);
-
 	if (efa_domain->shm_domain) {
-		peer_srx_context.srx = &rxr_ep->peer_srx;
-		peer_srx_attr.op_flags |= FI_PEER;
-		ret = fi_srx_context(efa_domain->shm_domain, &peer_srx_attr, &peer_srx_ep, &peer_srx_context);
-		if (ret)
-			goto err_destroy_base_ep;
-
 		if (rxr_env.use_sm2)
 			assert(!strcmp(efa_domain->shm_info->fabric_attr->name, "sm2"));
 		else

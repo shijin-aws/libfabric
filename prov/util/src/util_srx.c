@@ -586,7 +586,9 @@ ssize_t util_srx_generic_recv(struct fid_ep *ep_fid, const struct iovec *iov,
 
 	queue = addr == FI_ADDR_UNSPEC ? &srx->msg_queue :
 			ofi_array_at(&srx->src_recv_queues, addr);
+	//printf("locking srx spin lock, srx: %p\n", srx);
 	ofi_spin_lock(&srx->lock);
+	//printf("after locking srx spin lock\n");
 	rx_entry = util_get_unexp_msg(srx, addr);
 	if (!rx_entry) {
 		rx_entry = util_get_recv_entry(srx, iov, desc, iov_count, addr,
