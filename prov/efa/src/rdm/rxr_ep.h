@@ -214,7 +214,7 @@ struct rxr_ep {
 	int blocking_copy_rx_entry_num; /* number of RX entries that are using gdrcopy/cudaMemcpy */
 
 	int	hmem_p2p_opt; /* what to do for hmem transfers */
-	struct fid_peer_srx peer_srx; /* support sharing receive context with peer providers */
+	struct fid_ep *peer_srx_ep; /* support sharing receive context with peer providers */
 	bool cuda_api_permitted; /**< whether end point is permitted to call CUDA API */
 
 	/* use_device_rdma:
