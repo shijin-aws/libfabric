@@ -755,6 +755,8 @@ struct rxr_op_entry *rxr_msg_alloc_rx_entry(struct rxr_ep *ep,
 
 	if (msg->desc)
 		memcpy(&rx_entry->desc[0], msg->desc, sizeof(*msg->desc) * msg->iov_count);
+	else
+		memset(&rx_entry->desc[0], 0, sizeof(rx_entry->desc));
 
 	rx_entry->cq_entry.op_context = msg->context;
 

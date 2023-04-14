@@ -149,54 +149,6 @@ struct efa_rdm_peer *rxr_ep_get_peer(struct rxr_ep *ep, fi_addr_t addr)
  * @return		if allocation succeeded, return pointer to rx_entry
  * 			if allocation failed, return NULL
  */
-static const struct rxr_op_entry init_entries[ofi_op_max] = {
-    {.type = RXR_RX_ENTRY,      // ofi_op_msg
-     .op = ofi_op_msg,
-     .cq_entry.flags = (FI_RECV | FI_MSG),
-     .state = RXR_RX_INIT,
-     .cuda_copy_method = RXR_CUDA_COPY_UNSPEC},
-    {.type = RXR_RX_ENTRY,      // ofi_op_tagged
-     .op = ofi_op_tagged,
-     .cq_entry.flags = (FI_RECV | FI_MSG | FI_TAGGED),
-     .state = RXR_RX_INIT,
-     .cuda_copy_method = RXR_CUDA_COPY_UNSPEC},
-    {.type = RXR_RX_ENTRY,      // ofi_op_read_req
-     .op = ofi_op_read_req,
-     .state = RXR_RX_INVALID},
-    {.type = RXR_RX_ENTRY,      // ofi_op_read_rsp
-     .op = ofi_op_read_rsp,
-     .cq_entry.flags = (FI_REMOTE_READ | FI_RMA),
-     .state = RXR_RX_INIT,
-     .cuda_copy_method = RXR_CUDA_COPY_UNSPEC},
-    {.type = RXR_RX_ENTRY,      // ofi_op_write
-     .op = ofi_op_write,
-     .cq_entry.flags = (FI_REMOTE_WRITE | FI_RMA),
-     .state = RXR_RX_INIT,
-     .cuda_copy_method = RXR_CUDA_COPY_UNSPEC},
-    {.type = RXR_RX_ENTRY,      // ofi_op_write_async
-     .op = ofi_op_write_async,
-     .state = RXR_RX_INVALID},
-    {.type = RXR_RX_ENTRY,      // ofi_op_atomic
-     .op = ofi_op_atomic,
-     .cq_entry.flags = (FI_REMOTE_WRITE | FI_ATOMIC),
-     .state = RXR_RX_INIT,
-     .cuda_copy_method = RXR_CUDA_COPY_UNSPEC},
-    {.type = RXR_RX_ENTRY,      // ofi_op_atomic_fetch
-     .op = ofi_op_atomic_fetch,
-     .cq_entry.flags = (FI_REMOTE_READ | FI_ATOMIC),
-     .state = RXR_RX_INIT,
-     .cuda_copy_method = RXR_CUDA_COPY_UNSPEC},
-    {.type = RXR_RX_ENTRY,      // ofi_op_atomic_compare
-     .op = ofi_op_atomic_compare,
-     .cq_entry.flags = (FI_REMOTE_READ | FI_ATOMIC),
-     .state = RXR_RX_INIT,
-     .cuda_copy_method = RXR_CUDA_COPY_UNSPEC},
-    {.type = RXR_RX_ENTRY,      // ofi_op_read_async
-     .op = ofi_op_read_async,
-     .state = RXR_RX_INIT,
-     .cuda_copy_method = RXR_CUDA_COPY_UNSPEC},
-};
-
 struct rxr_op_entry *rxr_ep_alloc_rx_entry(struct rxr_ep *ep, fi_addr_t addr, uint32_t op)
 {
 	struct rxr_op_entry *rx_entry;
@@ -206,20 +158,15 @@ struct rxr_op_entry *rxr_ep_alloc_rx_entry(struct rxr_ep *ep, fi_addr_t addr, ui
 		EFA_WARN(FI_LOG_EP_CTRL, "RX entries exhausted\n");
 		return NULL;
 	}
-
-	if (op >= ofi_op_max || init_entries[op].state == RXR_RX_INVALID) {
-		EFA_WARN(FI_LOG_EP_CTRL,
-                       "Invalid operation code while %s\n", __func__);
-		assert(0 && "Invalid operation");
-	}
-
-	memcpy(rx_entry, &init_entries[op], sizeof(struct rxr_op_entry));
+	memset(rx_entry, 0, sizeof(struct rxr_op_entry));
 
 	rx_entry->ep = ep;
 	dlist_insert_tail(&rx_entry->ep_entry, &ep->rx_entry_list);
+	rx_entry->type = RXR_RX_ENTRY;
 	rx_entry->rx_id = ofi_buf_index(rx_entry);
 	dlist_init(&rx_entry->queued_pkts);
 
+	rx_entry->state = RXR_RX_INIT;
 	rx_entry->addr = addr;
 	if (addr != FI_ADDR_UNSPEC) {
 		rx_entry->peer = rxr_ep_get_peer(ep, addr);
@@ -231,7 +178,14 @@ struct rxr_op_entry *rxr_ep_alloc_rx_entry(struct rxr_ep *ep, fi_addr_t addr, ui
 		 * after it is matched with a message.
 		 */
 		assert(op == ofi_op_msg || op == ofi_op_tagged);
+		rx_entry->peer = NULL;
 	}
+
+	rx_entry->bytes_runt = 0;
+	rx_entry->bytes_received_via_mulreq = 0;
+	rx_entry->cuda_copy_method = RXR_CUDA_COPY_UNSPEC;
+	rx_entry->efa_outstanding_tx_ops = 0;
+	rx_entry->op = op;
 
 	rx_entry->peer_rx_entry.addr = addr;
 	/* This field points to the fid_peer_srx struct that's part of the peer API
@@ -241,6 +195,31 @@ struct rxr_op_entry *rxr_ep_alloc_rx_entry(struct rxr_ep *ep, fi_addr_t addr, ui
 	rx_entry->peer_rx_entry.srx = &ep->peer_srx;
 
 	dlist_init(&rx_entry->entry);
+	switch (op) {
+	case ofi_op_tagged:
+		rx_entry->cq_entry.flags = (FI_RECV | FI_MSG | FI_TAGGED);
+		break;
+	case ofi_op_msg:
+		rx_entry->cq_entry.flags = (FI_RECV | FI_MSG);
+		break;
+	case ofi_op_read_rsp:
+		rx_entry->cq_entry.flags = (FI_REMOTE_READ | FI_RMA);
+		break;
+	case ofi_op_write:
+		rx_entry->cq_entry.flags = (FI_REMOTE_WRITE | FI_RMA);
+		break;
+	case ofi_op_atomic:
+		rx_entry->cq_entry.flags = (FI_REMOTE_WRITE | FI_ATOMIC);
+		break;
+	case ofi_op_atomic_fetch:
+	case ofi_op_atomic_compare:
+		rx_entry->cq_entry.flags = (FI_REMOTE_READ | FI_ATOMIC);
+		break;
+	default:
+		EFA_WARN(FI_LOG_EP_CTRL,
+			"Unknown operation while %s\n", __func__);
+		assert(0 && "Unknown operation");
+	}
 
 	return rx_entry;
 }
