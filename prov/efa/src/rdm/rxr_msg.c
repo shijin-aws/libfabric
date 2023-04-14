@@ -1343,7 +1343,6 @@ static
 ssize_t rxr_msg_recv(struct fid_ep *ep_fid, void *buf, size_t len,
 		     void *desc, fi_addr_t src_addr, void *context)
 {
-	struct fi_msg msg = {0};
 	struct iovec iov;
 	struct rxr_ep *ep;
 
@@ -1352,8 +1351,8 @@ ssize_t rxr_msg_recv(struct fid_ep *ep_fid, void *buf, size_t len,
 	iov.iov_base = buf;
 	iov.iov_len = len;
 
-	rxr_msg_construct(&msg, &iov, &desc, 1, src_addr, context, 0);
-	return rxr_msg_recvmsg(ep_fid, &msg, rxr_rx_flags(ep));
+	return util_srx_generic_recv(ep->peer_srx_ep, &iov, NULL, 1, src_addr,
+				context, rxr_rx_flags(ep));
 }
 
 static
