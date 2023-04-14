@@ -106,9 +106,12 @@ void efa_shm_info_create(const struct fi_info *app_info, struct fi_info **shm_in
 	}
 
 	shm_hints = fi_allocinfo();
-	shm_hints->caps = FI_MSG | FI_TAGGED | FI_RECV | FI_SEND | FI_READ
-			   | FI_WRITE | FI_REMOTE_READ | FI_REMOTE_WRITE
-			   | FI_MULTI_RECV | FI_RMA | FI_SOURCE;
+	if (rxr_env.use_sm2)
+		shm_hints->caps = FI_MSG | FI_TAGGED | FI_RECV | FI_SEND;
+	else
+		shm_hints->caps = FI_MSG | FI_TAGGED | FI_RECV | FI_SEND | FI_READ
+				   | FI_WRITE | FI_REMOTE_READ | FI_REMOTE_WRITE
+				   | FI_MULTI_RECV | FI_RMA | FI_SOURCE;
 	shm_hints->domain_attr->av_type = FI_AV_TABLE;
 	shm_hints->domain_attr->mr_mode = FI_MR_VIRT_ADDR;
 	shm_hints->domain_attr->caps |= FI_LOCAL_COMM;
