@@ -53,6 +53,7 @@ enum rxr_op_comm_type {
 	RXR_RX_UNEXP,		/* rx_entry unexp msg waiting for post recv */
 	RXR_RX_MATCHED,		/* rx_entry matched with RTM */
 	RXR_RX_RECV,		/* rx_entry large msg recv data pkts */
+	RXR_RX_INVALID,		/* invalid rx_entry comm type */
 };
 
 struct rxr_atomic_hdr {
