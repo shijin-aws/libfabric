@@ -80,6 +80,11 @@ static inline void rxr_poison_mem_region(void *ptr, size_t size)
 #endif
 
 /*
+ * The alignment to support LL128 protocol in NCCL
+ */
+#define RXR_128_BYTES_ALIGNMENT (128)
+
+/*
  * Set alignment to x86 cache line size.
  */
 #define RXR_BUF_POOL_ALIGNMENT	(64)
