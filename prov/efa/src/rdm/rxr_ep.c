@@ -874,6 +874,7 @@ static int rxr_ep_ctrl(struct fid *fid, int command, void *arg)
 		ofi_mutex_lock(&ep->base_ep.util_ep.lock);
 
 		rxr_ep_set_extra_info(ep);
+		ep->sendrecv_in_order_aligned_128_bytes = true;
 
 		ep_addr_strlen = sizeof(ep_addr_str);
 		rxr_ep_raw_addr_str(ep, ep_addr_str, &ep_addr_strlen);
