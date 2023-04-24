@@ -479,6 +479,7 @@ int rxr_pkt_init_rtm(struct rxr_ep *ep,
 	size_t data_size;
 	struct rxr_rtm_base_hdr *rtm_hdr;
 	int ret;
+	static const size_t CUDA_MEMORY_ALIGNMENT = 64;
 
 	rxr_pkt_init_req_hdr(ep, txe, pkt_type, pkt_entry);
 
@@ -493,12 +494,8 @@ int rxr_pkt_init_rtm(struct rxr_ep *ep,
 		if (txe->max_req_data_size > 0)
 			data_size = MIN(data_size, txe->max_req_data_size);
 
-		if (efa_mr_is_cuda(txe->desc[0])) {
-			if (ep->sendrecv_in_order_aligned_128_bytes)
-				data_size &= ~(RXR_128_BYTES_ALIGNMENT - 1);
-			else
-				data_size &= ~(RXR_CUDA_MEMORY_ALIGNMENT -1);
-		}
+		if (efa_mr_is_cuda(txe->desc[0]))
+			data_size &= ~(CUDA_MEMORY_ALIGNMENT -1);
 	}
 
 
@@ -835,13 +832,6 @@ ssize_t rxr_pkt_init_runtread_rtm(struct rxr_ep *ep,
 
 	if (txe->max_req_data_size && data_size > txe->max_req_data_size)
 		data_size = txe->max_req_data_size;
-
-	if (efa_mr_is_cuda(txe->desc[0])) {
-		if (ep->sendrecv_in_order_aligned_128_bytes)
-			data_size &= ~(RXR_128_BYTES_ALIGNMENT -1);
-		else
-			data_size &= ~(RXR_CUDA_MEMORY_ALIGNMENT -1);
-	}
 
 	return rxr_pkt_init_data_from_ope(ep, pkt_entry, pkt_data_offset, txe, tx_data_offset, data_size);
 }

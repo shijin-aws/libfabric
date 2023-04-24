@@ -468,14 +468,12 @@ void efa_rdm_txe_set_max_req_data_size(struct rxr_ep *ep, struct efa_rdm_ope *tx
 	num_req = (mulreq_total_data_size - 1)/max_req_data_capacity + 1;
 
 	if (efa_mr_is_cuda(txe->desc[0])) {
-		if (ep->sendrecv_in_order_aligned_128_bytes)
-			memory_alignment = RXR_128_BYTES_ALIGNMENT;
-		else
-			memory_alignment = RXR_CUDA_MEMORY_ALIGNMENT;
+		memory_alignment = 64;
 	}
 
-	txe->max_req_data_size = MIN(max_req_data_capacity, (mulreq_total_data_size - 1)/num_req + 1);
-	txe->max_req_data_size &= ~(memory_alignment - 1);
+	txe->max_req_data_size = ofi_get_aligned_size((mulreq_total_data_size - 1)/num_req + 1, memory_alignment);
+	if (txe->max_req_data_size > max_req_data_capacity)
+		txe->max_req_data_size = max_req_data_capacity;
 }
 
 /**
