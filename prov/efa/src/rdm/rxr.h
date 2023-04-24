@@ -80,6 +80,11 @@ static inline void rxr_poison_mem_region(void *ptr, size_t size)
 #endif
 
 /*
+ * The CUDA memroy alignment
+ */
+#define RXR_CUDA_MEMORY_ALIGNMENT (64)
+
+/*
  * The alignment to support LL128 protocol in NCCL
  */
 #define RXR_128_BYTES_ALIGNMENT (128)
