@@ -333,9 +333,6 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	struct efa_rdm_ep *efa_rdm_ep = NULL;
 	struct fi_cq_attr cq_attr;
 	int ret, retv, i;
-	struct fi_peer_srx_context peer_srx_context = {0};
-	struct fi_rx_attr peer_srx_attr = {0};
-	struct fid_ep *peer_srx_ep = NULL;
 
 	efa_rdm_ep = calloc(1, sizeof(*efa_rdm_ep));
 	if (!efa_rdm_ep)
@@ -352,15 +349,7 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	if (ret)
 		goto err_free_ep;
 
-	efa_rdm_peer_srx_construct(efa_rdm_ep, &efa_rdm_ep->peer_srx);
-
 	if (efa_domain->shm_domain) {
-		peer_srx_context.srx = &efa_rdm_ep->peer_srx;
-		peer_srx_attr.op_flags |= FI_PEER;
-		ret = fi_srx_context(efa_domain->shm_domain, &peer_srx_attr, &peer_srx_ep, &peer_srx_context);
-		if (ret)
-			goto err_destroy_base_ep;
-
 		ret = fi_endpoint(efa_domain->shm_domain, efa_domain->shm_info,
 				  &efa_rdm_ep->shm_ep, efa_rdm_ep);
 		if (ret)
@@ -892,6 +881,9 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 	char shm_ep_name[EFA_SHM_NAME_MAX], ep_addr_str[OFI_ADDRSTRLEN];
 	size_t shm_ep_name_len, ep_addr_strlen;
 	int ret = 0;
+	struct fi_peer_srx_context peer_srx_context = {0};
+	struct fi_rx_attr peer_srx_attr = {0};
+	struct fid_ep *peer_srx_ep = NULL;
 
 	switch (command) {
 	case FI_ENABLE:
@@ -919,6 +911,16 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 		 * shared memory region.
 		 */
 		if (ep->shm_ep) {
+			ret = efa_rdm_peer_srx_construct(ep);
+			if (ret)
+				return ret;
+
+                        peer_srx_context.srx = util_get_peer_srx(ep->peer_srx_ep);
+                        peer_srx_attr.op_flags |= FI_PEER;
+                        ret = fi_srx_context(efa_rdm_ep_domain(ep)->shm_domain,
+					&peer_srx_attr, &peer_srx_ep, &peer_srx_context);
+                        if (ret)
+                                goto out;
 			shm_ep_name_len = EFA_SHM_NAME_MAX;
 			ret = efa_shm_ep_name_construct(shm_ep_name, &shm_ep_name_len, &ep->base_ep.src_addr);
 			if (ret < 0)
@@ -926,7 +928,7 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 			fi_setname(&ep->shm_ep->fid, shm_ep_name, shm_ep_name_len);
 
 			/* Bind srx to shm ep */
-			ret = fi_ep_bind(ep->shm_ep, &ep->peer_srx.ep_fid.fid, 0);
+			ret = fi_ep_bind(ep->shm_ep, &ep->peer_srx_ep->fid, 0);
 			if (ret)
 				goto out;
 

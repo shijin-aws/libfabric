@@ -388,12 +388,16 @@ static struct fi_ops_srx_peer efa_rdm_srx_peer_ops = {
  * @param[in] efa_rdm_ep efa_rdm_ep
  * @param[out] peer_srx the constructed peer srx
  */
-void efa_rdm_peer_srx_construct(struct efa_rdm_ep *efa_rdm_ep, struct fid_peer_srx *peer_srx)
+int efa_rdm_peer_srx_construct(struct efa_rdm_ep *ep)
 {
-	peer_srx->owner_ops = &efa_rdm_srx_owner_ops;
-	peer_srx->peer_ops = &efa_rdm_srx_peer_ops;
-	/* This is required to bind this srx to peer provider's ep */
-	peer_srx->ep_fid.fid.fclass = FI_CLASS_SRX_CTX;
-	/* This context will be used in the ops of peer SRX to access the owner provider resources */
-	peer_srx->ep_fid.fid.context = efa_rdm_ep;
+	int ret;
+	ret = util_ep_srx_context(&efa_rdm_ep_domain(ep)->util_domain,
+				ep->rx_size, RXR_IOV_LIMIT,
+				ep->inject_size, &ep->peer_srx_ep);
+	if (ret) {
+		EFA_WARN(FI_LOG_EP_CTRL, "util_ep_srx_context failed, err: %d\n", ret);
+		return ret;
+	}
+	util_get_peer_srx(ep->peer_srx_ep)->peer_ops = &efa_rdm_srx_peer_ops;
+	return FI_SUCCESS;
 }

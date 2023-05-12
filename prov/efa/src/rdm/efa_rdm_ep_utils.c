@@ -190,7 +190,7 @@ struct efa_rdm_ope *efa_rdm_ep_alloc_rxe(struct efa_rdm_ep *ep, fi_addr_t addr, 
 	*  We always set it to the EFA provider's SRX here. For SHM messages, we will set
 	*  this to SHM provider's SRX in the get_msg/get_tag function call
 	*/
-	rxe->peer_rxe.srx = &ep->peer_srx;
+	rxe->peer_rxe.srx = util_get_peer_srx(ep->peer_srx_ep);
 
 	dlist_init(&rxe->entry);
 	switch (op) {

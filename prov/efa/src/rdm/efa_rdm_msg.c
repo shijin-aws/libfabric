@@ -1113,7 +1113,6 @@ ssize_t efa_rdm_msg_generic_recv(struct fid_ep *ep, const struct fi_msg *msg,
 {
 	ssize_t ret = 0;
 	struct efa_rdm_ep *efa_rdm_ep;
-	struct dlist_entry *unexp_list;
 	struct efa_rdm_ope *rxe;
 
 	efa_rdm_ep = container_of(ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid.fid);
@@ -1124,48 +1123,28 @@ ssize_t efa_rdm_msg_generic_recv(struct fid_ep *ep, const struct fi_msg *msg,
 
 	ofi_mutex_lock(&efa_rdm_ep->base_ep.util_ep.lock);
 
-	if (flags & FI_MULTI_RECV) {
-		ret = efa_rdm_msg_multi_recv(efa_rdm_ep, msg, tag, ignore, op, flags);
-		goto out;
-	}
-
-	unexp_list = (op == ofi_op_tagged) ? &efa_rdm_ep->rx_unexp_tagged_list :
-		     &efa_rdm_ep->rx_unexp_list;
-
-	if (!dlist_empty(unexp_list)) {
-		ret = efa_rdm_msg_proc_unexp_msg_list(efa_rdm_ep, msg, tag,
-						  ignore, op, flags, NULL);
-
-		if (ret != -FI_ENOMSG)
-			goto out;
-		ret = 0;
-	}
-
-	rxe = efa_rdm_msg_alloc_rxe(efa_rdm_ep, msg, op, flags, tag, ignore);
-
-	if (OFI_UNLIKELY(!rxe)) {
-		ret = -FI_EAGAIN;
-		efa_rdm_ep_progress_internal(efa_rdm_ep);
-		goto out;
-	}
-
-	EFA_DBG(FI_LOG_EP_DATA,
-	       "%s: iov_len: %lu tag: %lx ignore: %lx op: %x flags: %lx\n",
-	       __func__, rxe->total_len, tag, ignore,
-	       op, flags);
-
-	rxr_tracepoint(recv_begin, rxe->msg_id, 
-		    (size_t) rxe->cq_entry.op_context, rxe->total_len);
 	rxr_tracepoint(recv_begin_msg_context, (size_t) msg->context, (size_t) msg->addr);
 
 	if (efa_rdm_ep->use_zcpy_rx) {
+		rxe = efa_rdm_msg_alloc_rxe(efa_rdm_ep, msg, op, flags, tag, ignore);
+		if (OFI_UNLIKELY(!rxe)) {
+			ret = -FI_EAGAIN;
+			efa_rdm_ep_progress_internal(efa_rdm_ep);
+			goto out;
+		}
+
 		ret = efa_rdm_ep_post_user_recv_buf(efa_rdm_ep, rxe, flags);
 		if (ret == -FI_EAGAIN)
 			efa_rdm_ep_progress_internal(efa_rdm_ep);
 	} else if (op == ofi_op_tagged) {
-		dlist_insert_tail(&rxe->entry, &efa_rdm_ep->rx_tagged_list);
+		ret = util_srx_generic_trecv(efa_rdm_ep->peer_srx_ep, msg->msg_iov, NULL,
+				     msg->iov_count, msg->addr, msg->context,
+				     tag, ignore,
+				     flags);
 	} else {
-		dlist_insert_tail(&rxe->entry, &efa_rdm_ep->rx_list);
+		ret = util_srx_generic_recv(efa_rdm_ep->peer_srx_ep, msg->msg_iov, NULL,
+				     msg->iov_count, msg->addr, msg->context,
+				     flags);
 	}
 
 out:
