@@ -41,4 +41,7 @@
 
 int efa_rdm_peer_srx_construct(struct efa_rdm_ep *efa_rdm_ep);
 
+void efa_rdm_srx_update_rxe(struct fi_peer_rx_entry *peer_rxe,
+			    struct efa_rdm_ope *rxe);
+
 #endif /* _EFA_RDM_SRX_H */

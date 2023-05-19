@@ -217,11 +217,6 @@ err_free:
  */
 void efa_rdm_ep_init_linked_lists(struct efa_rdm_ep *ep)
 {
-	/* Initialize entry list */
-	dlist_init(&ep->rx_list);
-	dlist_init(&ep->rx_unexp_list);
-	dlist_init(&ep->rx_tagged_list);
-	dlist_init(&ep->rx_unexp_tagged_list);
 	dlist_init(&ep->rx_posted_buf_list);
 	dlist_init(&ep->ope_queued_rnr_list);
 	dlist_init(&ep->ope_queued_ctrl_list);
@@ -578,28 +573,6 @@ static void efa_rdm_ep_destroy_buffer_pools(struct efa_rdm_ep *efa_rdm_ep)
 	struct rxr_pkt_entry *pkt_entry;
 #endif
 
-	dlist_foreach_safe(&efa_rdm_ep->rx_unexp_list, entry, tmp) {
-		rxe = container_of(entry, struct efa_rdm_ope, entry);
-		EFA_WARN(FI_LOG_EP_CTRL,
-			"Closing ep with unmatched unexpected rxe: %p pkt_entry %p\n",
-			rxe, rxe->unexp_pkt);
-		/* rxe for peer srx does not allocate unexp_pkt */
-		if (!(rxe->rxr_flags & EFA_RDM_RXE_FOR_PEER_SRX))
-			rxr_pkt_entry_release_rx(efa_rdm_ep, rxe->unexp_pkt);
-		efa_rdm_rxe_release(rxe);
-	}
-
-	dlist_foreach_safe(&efa_rdm_ep->rx_unexp_tagged_list, entry, tmp) {
-		rxe = container_of(entry, struct efa_rdm_ope, entry);
-		EFA_WARN(FI_LOG_EP_CTRL,
-			"Closing ep with unmatched unexpected tagged rxe: %p pkt_entry %p\n",
-			rxe, rxe->unexp_pkt);
-		/* rxe for peer srx does not allocate unexp_pkt */
-		if (!(rxe->rxr_flags & EFA_RDM_RXE_FOR_PEER_SRX))
-			rxr_pkt_entry_release_rx(efa_rdm_ep, rxe->unexp_pkt);
-		efa_rdm_rxe_release(rxe);
-	}
-
 	dlist_foreach_safe(&efa_rdm_ep->ope_queued_rnr_list, entry, tmp) {
 		txe = container_of(entry, struct efa_rdm_ope,
 					queued_rnr_entry);
@@ -649,9 +622,8 @@ static void efa_rdm_ep_destroy_buffer_pools(struct efa_rdm_ep *efa_rdm_ep)
 	dlist_foreach_safe(&efa_rdm_ep->rxe_list, entry, tmp) {
 		rxe = container_of(entry, struct efa_rdm_ope,
 					ep_entry);
-		if (!(rxe->rxr_flags & EFA_RDM_RXE_MULTI_RECV_POSTED))
-			EFA_WARN(FI_LOG_EP_CTRL,
-				"Closing ep with unreleased rxe\n");
+		EFA_WARN(FI_LOG_EP_CTRL,
+			"Closing ep with unreleased rxe\n");
 		efa_rdm_rxe_release(rxe);
 	}
 
@@ -763,6 +735,14 @@ static int efa_rdm_ep_close(struct fid *fid)
 		}
 	}
 
+	/*
+	 * util_srx_close will clean all efa_rdm_rxes that are
+	 * associated with peer_rx_entries in unexp msg/tag lists.
+	 */
+	if (efa_rdm_ep->peer_srx_ep) {
+		util_srx_close(&efa_rdm_ep->peer_srx_ep->fid);
+		efa_rdm_ep->peer_srx_ep = NULL;
+	}
 	efa_rdm_ep_destroy_buffer_pools(efa_rdm_ep);
 	free(efa_rdm_ep);
 	return retv;
@@ -903,6 +883,13 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 
 		efa_rdm_ep_set_use_shm_for_tx(ep);
 
+		/*
+		 * efa uses util SRX no matter shm is enabled, so we need to initialize
+		 * it anyway.
+		 */
+		ret = efa_rdm_peer_srx_construct(ep);
+		if (ret)
+			return ret;
 		/* Enable shm provider endpoint & post recv buff.
 		 * Once core ep enabled, 18 bytes efa_addr (16 bytes raw + 2 bytes qpn) is set.
 		 * We convert the address to 'gid_qpn' format, and set it as shm ep name, so
@@ -911,10 +898,6 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 		 * shared memory region.
 		 */
 		if (ep->shm_ep) {
-			ret = efa_rdm_peer_srx_construct(ep);
-			if (ret)
-				return ret;
-
                         peer_srx_context.srx = util_get_peer_srx(ep->peer_srx_ep);
                         peer_srx_attr.op_flags |= FI_PEER;
                         ret = fi_srx_context(efa_rdm_ep_domain(ep)->shm_domain,
@@ -945,84 +928,6 @@ out:
 	}
 
 	return ret;
-}
-
-/**
- * @brief compare context of an rxe with the given context
- */
-static
-int efa_rdm_ep_compare_rxe_context(struct dlist_entry *item,
-				const void *context)
-{
-	struct efa_rdm_ope *rxe = container_of(item,
-					       struct efa_rdm_ope,
-					       entry);
-	return rxe->cq_entry.op_context == context;
-}
-
-/**
- * @brief cancel a posted receive
- *
- * @param[in,out]	ep	EFA RDM endpoint
- */
-static
-ssize_t efa_rdm_ep_cancel_recv(struct efa_rdm_ep *ep,
-			       struct dlist_entry *recv_list,
-			       void *context)
-{
-	struct dlist_entry *entry;
-	struct efa_rdm_ope *rxe;
-	struct fi_cq_err_entry err_entry;
-	uint32_t api_version;
-
-	ofi_mutex_lock(&ep->base_ep.util_ep.lock);
-	entry = dlist_remove_first_match(recv_list,
-					 &efa_rdm_ep_compare_rxe_context,
-					 context);
-	if (!entry) {
-		ofi_mutex_unlock(&ep->base_ep.util_ep.lock);
-		return 0;
-	}
-
-	rxe = container_of(entry, struct efa_rdm_ope, entry);
-	rxe->rxr_flags |= EFA_RDM_RXE_RECV_CANCEL;
-	if (rxe->fi_flags & FI_MULTI_RECV &&
-	    rxe->rxr_flags & EFA_RDM_RXE_MULTI_RECV_POSTED) {
-		if (dlist_empty(&rxe->multi_recv_consumers)) {
-			/*
-			 * No pending messages for the buffer,
-			 * release it back to the app.
-			 */
-			rxe->cq_entry.flags |= FI_MULTI_RECV;
-		} else {
-			rxe = container_of(rxe->multi_recv_consumers.next,
-						struct efa_rdm_ope,
-						multi_recv_entry);
-			efa_rdm_msg_multi_recv_handle_completion(ep, rxe);
-		}
-	} else if (rxe->fi_flags & FI_MULTI_RECV &&
-		   rxe->rxr_flags & EFA_RDM_RXE_MULTI_RECV_CONSUMER) {
-		efa_rdm_msg_multi_recv_handle_completion(ep, rxe);
-	}
-	ofi_mutex_unlock(&ep->base_ep.util_ep.lock);
-	memset(&err_entry, 0, sizeof(err_entry));
-	err_entry.op_context = rxe->cq_entry.op_context;
-	err_entry.flags |= rxe->cq_entry.flags;
-	err_entry.tag = rxe->tag;
-	err_entry.err = FI_ECANCELED;
-	err_entry.prov_errno = -FI_ECANCELED;
-
-	api_version =
-		 efa_rdm_ep_domain(ep)->util_domain.fabric->fabric_fid.api_version;
-	if (FI_VERSION_GE(api_version, FI_VERSION(1, 5)))
-		err_entry.err_data_size = 0;
-	/*
-	 * Other states are currently receiving data. Subsequent messages will
-	 * be sunk (via EFA_RDM_RXE_RECV_CANCEL flag) and the completion suppressed.
-	 */
-	if (rxe->state & (EFA_RDM_RXE_INIT | EFA_RDM_RXE_UNEXP | EFA_RDM_RXE_MATCHED))
-		efa_rdm_rxe_release(rxe);
-	return ofi_cq_write_error(ep->base_ep.util_ep.rx_cq, &err_entry);
 }
 
 /**

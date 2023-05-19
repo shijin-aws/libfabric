@@ -147,14 +147,6 @@ struct efa_rdm_ep {
 	 * emulated fetch and compare atomic.
 	 */
 	struct ofi_bufpool *rx_atomrsp_pool;
-	/* rx_entries with recv buf */
-	struct dlist_entry rx_list;
-	/* rx_entries without recv buf (unexpected message) */
-	struct dlist_entry rx_unexp_list;
-	/* rx_entries with tagged recv buf */
-	struct dlist_entry rx_tagged_list;
-	/* rx_entries without tagged recv buf (unexpected message) */
-	struct dlist_entry rx_unexp_tagged_list;
 	/* list of pre-posted recv buffers */
 	struct dlist_entry rx_posted_buf_list;
 	/* op entries with queued rnr packets */
@@ -437,6 +429,17 @@ static inline int efa_rdm_ep_cap_check_atomic(struct efa_rdm_ep *ep) {
 		return 0;
 	EFA_WARN_ONCE(FI_LOG_EP_DATA, "Operation requires FI_ATOMIC capability, which was not requested.");
 	return -FI_EOPNOTSUPP;
+}
+
+/**
+ * @brief Get the peer_srx from ep
+ *
+ * @param ep efa rdm endpoint
+ * @return struct fid_peer_srx* a ptr to the peer srx
+ */
+static inline struct fid_peer_srx *efa_rdm_ep_get_peer_srx(struct efa_rdm_ep *ep)
+{
+	return container_of(ep->peer_srx_ep, struct fid_peer_srx, ep_fid);
 }
 
 #endif

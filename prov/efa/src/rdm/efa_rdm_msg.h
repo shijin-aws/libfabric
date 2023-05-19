@@ -95,54 +95,6 @@ void rxr_tmsg_construct(struct fi_msg_tagged *msg, const struct iovec *iov, void
 }
 
 /**
- * @brief Queue an unexp rxe to unexp msg queues
- *
- * @param ep efa_rdm_ep
- * @param unexp_rxe the unexp rxe to be queued
- */
-static inline
-void efa_rdm_msg_queue_unexp_rxe_for_msgrtm(struct efa_rdm_ep *ep,
-					      struct efa_rdm_ope *unexp_rxe)
-{
-	struct efa_rdm_peer *peer;
-
-	dlist_insert_tail(&unexp_rxe->entry, &ep->rx_unexp_list);
-	peer = efa_rdm_ep_get_peer(ep, unexp_rxe->addr);
-	dlist_insert_tail(&unexp_rxe->peer_unexp_entry, &peer->rx_unexp_list);
-}
-
-/**
- * @brief Queue an unexp rxe to unexp tag queues
- *
- * @param ep efa_rdm_ep
- * @param unexp_rxe the unexp rxe to be queued
- */
-static inline
-void efa_rdm_msg_queue_unexp_rxe_for_tagrtm(struct efa_rdm_ep *ep,
-					      struct efa_rdm_ope *unexp_rxe)
-{
-	struct efa_rdm_peer *peer;
-
-	dlist_insert_tail(&unexp_rxe->entry, &ep->rx_unexp_tagged_list);
-	peer = efa_rdm_ep_get_peer(ep, unexp_rxe->addr);
-	dlist_insert_tail(&unexp_rxe->peer_unexp_entry, &peer->rx_unexp_tagged_list);
-}
-
-/**
- * multi recv related functions
- */
-
-
-bool efa_rdm_msg_multi_recv_buffer_available(struct efa_rdm_ep *ep,
-					 struct efa_rdm_ope *rxe);
-
-void efa_rdm_msg_multi_recv_handle_completion(struct efa_rdm_ep *ep,
-					  struct efa_rdm_ope *rxe);
-
-void efa_rdm_msg_multi_recv_free_posted_entry(struct efa_rdm_ep *ep,
-					  struct efa_rdm_ope *rxe);
-
-/**
  * functions to allocate rxe for two sided operations
  */
 struct efa_rdm_ope *efa_rdm_msg_alloc_rxe(struct efa_rdm_ep *ep,
