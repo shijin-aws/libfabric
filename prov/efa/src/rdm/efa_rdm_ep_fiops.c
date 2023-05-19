@@ -744,6 +744,7 @@ static int efa_rdm_ep_close(struct fid *fid)
 		efa_rdm_ep->peer_srx_ep = NULL;
 	}
 	efa_rdm_ep_destroy_buffer_pools(efa_rdm_ep);
+	util_srx_close(&efa_rdm_ep->peer_srx_ep->fid);
 	free(efa_rdm_ep);
 	return retv;
 }
@@ -939,16 +940,10 @@ static
 ssize_t efa_rdm_ep_cancel(fid_t fid_ep, void *context)
 {
 	struct efa_rdm_ep *ep;
-	int ret;
 
 	ep = container_of(fid_ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid.fid);
 
-	ret = efa_rdm_ep_cancel_recv(ep, &ep->rx_list, context);
-	if (ret)
-		return ret;
-
-	ret = efa_rdm_ep_cancel_recv(ep, &ep->rx_tagged_list, context);
-	return ret;
+	return ep->peer_srx_ep->ops->cancel(&ep->peer_srx_ep->fid, context);
 }
 
 /**

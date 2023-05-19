@@ -729,12 +729,12 @@ ssize_t efa_rdm_msg_generic_recv(struct fid_ep *ep, const struct fi_msg *msg,
 		if (ret == -FI_EAGAIN)
 			efa_rdm_ep_progress_internal(efa_rdm_ep);
 	} else if (op == ofi_op_tagged) {
-		ret = util_srx_generic_trecv(efa_rdm_ep->peer_srx_ep, msg->msg_iov, NULL,
+		ret = util_srx_generic_trecv(efa_rdm_ep->peer_srx_ep, msg->msg_iov, msg->desc,
 				     msg->iov_count, msg->addr, msg->context,
 				     tag, ignore,
 				     flags);
 	} else {
-		ret = util_srx_generic_recv(efa_rdm_ep->peer_srx_ep, msg->msg_iov, NULL,
+		ret = util_srx_generic_recv(efa_rdm_ep->peer_srx_ep, msg->msg_iov, msg->desc,
 				     msg->iov_count, msg->addr, msg->context,
 				     flags);
 	}

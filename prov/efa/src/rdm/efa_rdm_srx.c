@@ -102,23 +102,6 @@ static int efa_rdm_srx_start(struct fi_peer_rx_entry *peer_rxe)
 }
 
 /**
- * @brief This call is invoked by the owner provider to progress the peer
- * rxe in the progress_msg_queue and progress_tag_queue. The rxe in these
- * queues were from unknown peers and had address as FI_ADDR_UNSPEC. When
- * application inserted the peer to av later and posted a directed recv
- * from it, libfabric needs to scan these progress_queue and update the
- * address of rxe if it is known already.
- *
- * @param peer_rxe the fi_peer_rx_entry to be progressed
- * @return int 0 on success, a negative integer on failure.
- */
-static int efa_rdm_srx_progress_addr(struct fi_peer_rx_entry *peer_rxe)
-{
-	/* no-op for efa provider */
-	return FI_SUCCESS;
-}
-
-/**
  * @brief This call is invoked by the owner provider to discard
  * the message and data associated with the specified fi_peer_rx_entry.
  * This often indicates that the application has canceled or discarded
@@ -152,11 +135,34 @@ static struct fi_ops_srx_peer efa_rdm_srx_peer_ops = {
 	.size = sizeof(struct fi_ops_srx_peer),
 	.start_msg = efa_rdm_srx_start,
 	.start_tag = efa_rdm_srx_start,
-	.progress_msg = efa_rdm_srx_progress_addr,
-	.progress_tag = efa_rdm_srx_progress_addr,
 	.discard_msg = efa_rdm_srx_discard,
 	.discard_tag = efa_rdm_srx_discard,
 };
+
+/**
+ * @brief update the mr desc in peer_rx_entry
+ * efa has different format of memory registration descriptor from other providers like shm.
+ * efa returns application a desc as the ptr to efa_mr struct, which has shm_mr as part of
+ * the struct. So the desc passed in by application cannot be handled by peer (shm).
+ * This function is invoked inside get_msg/tag, start_msg/tag to update the mr desc before
+ * handing off to peer provider.
+ * @param srx util_srx_ctx (context)
+ * @param rx_entry the util_rx_entry to be updated
+ */
+static void efa_rdm_srx_update_mr(struct util_srx_ctx *srx, struct util_rx_entry *rx_entry)
+{
+	struct fid_peer_srx *owner_srx;
+	struct fid_peer_srx *peer_srx;
+
+	owner_srx = &srx->peer_srx;
+	peer_srx = rx_entry->peer_entry.srx;
+
+	/* This means the rx_entry is handed off to peer (shm) provider */
+	if (owner_srx != peer_srx) /* Do inline update */
+		efa_rdm_get_desc_for_shm(rx_entry->peer_entry.count,
+					 rx_entry->peer_entry.desc,
+					 rx_entry->peer_entry.desc);
+}
 
 /**
  * @brief Construct peer srx
@@ -169,7 +175,9 @@ int efa_rdm_peer_srx_construct(struct efa_rdm_ep *ep)
 	int ret;
 	ret = util_ep_srx_context(&efa_rdm_ep_domain(ep)->util_domain,
 				ep->rx_size, RXR_IOV_LIMIT,
-				ep->min_multi_recv_size, &ep->peer_srx_ep);
+				ep->min_multi_recv_size,
+				&efa_rdm_srx_update_mr,
+				&ep->peer_srx_ep);
 	if (ret) {
 		EFA_WARN(FI_LOG_EP_CTRL, "util_ep_srx_context failed, err: %d\n", ret);
 		return ret;
