@@ -183,9 +183,9 @@ static int util_match_msg(struct fid_peer_srx *srx, fi_addr_t addr, size_t size,
 		} else {
 			(void) slist_remove_head(&srx_ctx->msg_queue);
 		}
-		srx_ctx->update_func(srx_ctx, util_entry);
 	}
 	util_entry->peer_entry.srx = srx;
+	srx_ctx->update_func(srx_ctx, util_entry);
 	*rx_entry = &util_entry->peer_entry;
 	return ret;
 }
@@ -233,9 +233,8 @@ static int util_get_msg(struct fid_peer_srx *srx, fi_addr_t addr,
 		(void) slist_remove_head(queue);
 	}
 
-	srx_ctx->update_func(srx_ctx, util_entry);
-
 	util_entry->peer_entry.srx = srx;
+	srx_ctx->update_func(srx_ctx, util_entry);
 	*rx_entry = &util_entry->peer_entry;
 	ret = FI_SUCCESS;
 out:
@@ -268,8 +267,8 @@ static int util_match_tag(struct fid_peer_srx *srx, fi_addr_t addr,
 		return -FI_ENOMEM;
 	ret = -FI_ENOENT;
 out:
-	srx_ctx->update_func(srx_ctx, util_entry);
 	util_entry->peer_entry.srx = srx;
+	srx_ctx->update_func(srx_ctx, util_entry);
 	*rx_entry = &util_entry->peer_entry;
 	return ret;
 }
@@ -321,8 +320,8 @@ check_any:
 			break;
 		}
 	}
-	srx_ctx->update_func(srx_ctx, util_entry);
 	util_entry->peer_entry.srx = srx;
+	srx_ctx->update_func(srx_ctx, util_entry);
 	*rx_entry = &util_entry->peer_entry;
 	slist_remove(queue, item, prev);
 out:
