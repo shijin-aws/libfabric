@@ -578,7 +578,6 @@ ssize_t rxr_pkt_copy_data_to_ope(struct efa_rdm_ep *ep,
 
 	desc = ope->desc[0];
 
-	printf("rxr_pkt_copy_data_to_ope: desc: %p\n", desc);
 	if (efa_mr_is_cuda(desc))
 		return rxr_pkt_copy_data_to_cuda(ep, pkt_entry, data, data_size, data_offset);
 
