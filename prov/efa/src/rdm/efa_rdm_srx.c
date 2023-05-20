@@ -157,6 +157,8 @@ static void efa_rdm_srx_update_mr(struct util_srx_ctx *srx, struct util_rx_entry
 	owner_srx = &srx->peer_srx;
 	peer_srx = rx_entry->peer_entry.srx;
 
+	assert(owner_srx);
+	assert(peer_srx);
 	/* This means the rx_entry is handed off to peer (shm) provider */
 	if (owner_srx != peer_srx) /* Do inline update */
 		efa_rdm_get_desc_for_shm(rx_entry->peer_entry.count,
