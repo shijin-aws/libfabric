@@ -158,10 +158,15 @@ static void efa_rdm_srx_update_mr(struct util_srx_ctx *srx, struct util_rx_entry
 	peer_srx = rx_entry->peer_entry.srx;
 
 	/* This means the rx_entry is handed off to peer (shm) provider */
-	if (owner_srx != peer_srx) /* Do inline update */
+	if (owner_srx != peer_srx) { /* Do inline update */
+		printf("efa_rdm_srx_update_mr: updating desc for shm, owner_srx: %p, peer_srx: %p\n",
+			(void *) owner_srx, (void *) peer_srx);
+		printf("desc before convert: %p\n", *(rx_entry->peer_entry.desc));
 		efa_rdm_get_desc_for_shm(rx_entry->peer_entry.count,
 					 rx_entry->peer_entry.desc,
 					 rx_entry->peer_entry.desc);
+		printf("desc after convert: %p\n", *(rx_entry->peer_entry.desc));
+	}
 }
 
 /**
