@@ -185,7 +185,8 @@ static int util_match_msg(struct fid_peer_srx *srx, fi_addr_t addr, size_t size,
 		}
 	}
 	util_entry->peer_entry.srx = srx;
-	srx_ctx->update_func(srx_ctx, util_entry);
+	if (ret == FI_SUCCESS)
+		srx_ctx->update_func(srx_ctx, util_entry);
 	*rx_entry = &util_entry->peer_entry;
 	return ret;
 }
@@ -268,7 +269,8 @@ static int util_match_tag(struct fid_peer_srx *srx, fi_addr_t addr,
 	ret = -FI_ENOENT;
 out:
 	util_entry->peer_entry.srx = srx;
-	srx_ctx->update_func(srx_ctx, util_entry);
+	if (ret == FI_SUCCESS)
+		srx_ctx->update_func(srx_ctx, util_entry);
 	*rx_entry = &util_entry->peer_entry;
 	return ret;
 }
