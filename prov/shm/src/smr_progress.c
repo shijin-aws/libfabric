@@ -193,6 +193,7 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 			"unidentified operation type\n");
 	}
 
+	peer_smr->cmd_cnt++;
 	if (tx_buf) {
 		smr_release_txbuf(peer_smr, tx_buf);
 	} else if (sar_buf) {
@@ -738,12 +739,14 @@ static int smr_start_common(struct smr_ep *ep, struct smr_cmd *cmd,
 		err = smr_progress_inline(cmd,
 				(struct ofi_mr **) rx_entry->desc,
 				rx_entry->iov, rx_entry->count, &total_len);
+		ep->region->cmd_cnt++;
 		break;
 	case smr_src_inject:
 		err = smr_progress_inject(cmd,
 				(struct ofi_mr **) rx_entry->desc,
 				rx_entry->iov, rx_entry->count, &total_len,
 				ep, 0);
+		ep->region->cmd_cnt++;
 		break;
 	case smr_src_iov:
 		err = smr_progress_iov(cmd, rx_entry->iov, rx_entry->count,
@@ -840,6 +843,7 @@ static void smr_progress_connreq(struct smr_ep *ep, struct smr_cmd *cmd)
 	smr_peer_data(ep->region)[idx].addr.id = cmd->msg.hdr.id;
 
 	smr_release_txbuf(ep->region, tx_buf);
+	ep->region->cmd_cnt++;
 	assert(ep->region->map->num_peers > 0);
 	ep->region->max_sar_buf_per_peer = SMR_MAX_PEERS /
 		ep->region->map->num_peers;
@@ -921,6 +925,7 @@ static int smr_progress_cmd_rma(struct smr_ep *ep, struct smr_cmd *cmd,
 
 	domain = container_of(ep->util_ep.domain, struct smr_domain,
 			      util_domain);
+	ep->region->cmd_cnt++;
 
 	ofi_genlock_lock(&domain->util_domain.lock);
 	for (iov_count = 0; iov_count < rma_cmd->rma.rma_count; iov_count++) {
@@ -938,12 +943,15 @@ static int smr_progress_cmd_rma(struct smr_ep *ep, struct smr_cmd *cmd,
 	}
 	ofi_genlock_unlock(&domain->util_domain.lock);
 
-	if (ret)
+	if (ret) {
+		ep->region->cmd_cnt++;
 		goto out;
+	}
 
 	switch (cmd->msg.hdr.op_src) {
 	case smr_src_inline:
 		err = smr_progress_inline(cmd, mr, iov, iov_count, &total_len);
+		ep->region->cmd_cnt++;
 		break;
 	case smr_src_inject:
 		err = smr_progress_inject(cmd, mr, iov, iov_count, &total_len,
@@ -953,6 +961,8 @@ static int smr_progress_cmd_rma(struct smr_ep *ep, struct smr_cmd *cmd,
 			resp = smr_get_ptr(peer_smr, cmd->msg.hdr.data);
 			resp->status = -err;
 			smr_signal(peer_smr);
+		} else {
+			ep->region->cmd_cnt++;
 		}
 		break;
 	case smr_src_iov:
@@ -1014,6 +1024,8 @@ static int smr_progress_cmd_atomic(struct smr_ep *ep, struct smr_cmd *cmd,
 	domain = container_of(ep->util_ep.domain, struct smr_domain,
 			      util_domain);
 
+	ep->region->cmd_cnt++;
+
 	for (ioc_count = 0; ioc_count < rma_cmd->rma.rma_count; ioc_count++) {
 		ret = ofi_mr_verify(&domain->util_domain.mr_map,
 				rma_cmd->rma.rma_ioc[ioc_count].count *
@@ -1028,8 +1040,10 @@ static int smr_progress_cmd_atomic(struct smr_ep *ep, struct smr_cmd *cmd,
 		ioc[ioc_count].addr = (void *) rma_cmd->rma.rma_ioc[ioc_count].addr;
 		ioc[ioc_count].count = rma_cmd->rma.rma_ioc[ioc_count].count;
 	}
-	if (ret)
+	if (ret) {
+		ep->region->cmd_cnt++;
 		goto out;
+	}
 
 	switch (cmd->msg.hdr.op_src) {
 	case smr_src_inline:
@@ -1048,6 +1062,8 @@ static int smr_progress_cmd_atomic(struct smr_ep *ep, struct smr_cmd *cmd,
 		resp = smr_get_ptr(peer_smr, cmd->msg.hdr.data);
 		resp->status = -err;
 		smr_signal(peer_smr);
+	} else {
+		ep->region->cmd_cnt++;
 	}
 
 	if (err) {
@@ -1114,6 +1130,7 @@ static void smr_progress_cmd(struct smr_ep *ep)
 			ofi_ep_lock_release(&ep->util_ep);
 			ofi_ep_rx_cntr_inc_func(&ep->util_ep,
 						ce->cmd.msg.hdr.op);
+			ep->region->cmd_cnt++;
 			break;
 		case ofi_op_atomic:
 		case ofi_op_atomic_fetch:

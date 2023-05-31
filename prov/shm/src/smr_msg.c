@@ -295,7 +295,7 @@ static ssize_t smr_generic_sendmsg(struct smr_ep *ep, const struct iovec *iov,
 	peer_id = smr_peer_data(ep->region)[id].addr.id;
 	peer_smr = smr_peer_region(ep->region, id);
 
-	if (smr_peer_data(ep->region)[id].sar_status)
+	if (!peer_smr->cmd_cnt || smr_peer_data(ep->region)[id].sar_status)
 		return -FI_EAGAIN;
 
 	ret = smr_cmd_queue_next(smr_cmd_queue(peer_smr), &ce, &pos);
@@ -416,7 +416,7 @@ static ssize_t smr_generic_inject(struct fid_ep *ep_fid, const void *buf,
 	peer_id = smr_peer_data(ep->region)[id].addr.id;
 	peer_smr = smr_peer_region(ep->region, id);
 
-	if (smr_peer_data(ep->region)[id].sar_status)
+	if (!peer_smr->cmd_cnt || smr_peer_data(ep->region)[id].sar_status)
 		return -FI_EAGAIN;
 
 	ret = smr_cmd_queue_next(smr_cmd_queue(peer_smr), &ce, &pos);
