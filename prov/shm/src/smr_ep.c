@@ -227,7 +227,7 @@ static void smr_send_name(struct smr_ep *ep, int64_t id)
 
 	peer_smr = smr_peer_region(ep->region, id);
 
-	if (smr_peer_data(ep->region)[id].name_sent || !peer_smr->cmd_cnt)
+	if (smr_peer_data(ep->region)[id].name_sent)
 		return;
 
 	ret = smr_cmd_queue_next(smr_cmd_queue(peer_smr), &ce, &pos);
@@ -246,7 +246,6 @@ static void smr_send_name(struct smr_ep *ep, int64_t id)
 
 	smr_peer_data(ep->region)[id].name_sent = 1;
 	smr_cmd_queue_commit(ce, pos);
-	peer_smr->cmd_cnt--;
 	smr_signal(peer_smr);
 }
 
@@ -693,7 +692,6 @@ static ssize_t smr_do_inline(struct smr_ep *ep, struct smr_region *peer_smr, int
 {
 	smr_generic_format(cmd, peer_id, op, tag, data, op_flags);
 	smr_format_inline(cmd, desc, iov, iov_count);
-	peer_smr->cmd_cnt--;
 
 	return FI_SUCCESS;
 }
@@ -710,7 +708,6 @@ static ssize_t smr_do_inject(struct smr_ep *ep, struct smr_region *peer_smr, int
 
 	smr_generic_format(cmd, peer_id, op, tag, data, op_flags);
 	smr_format_inject(cmd, desc, iov, iov_count, peer_smr, tx_buf);
-	peer_smr->cmd_cnt--;
 
 	return FI_SUCCESS;
 }
@@ -735,7 +732,6 @@ static ssize_t smr_do_iov(struct smr_ep *ep, struct smr_region *peer_smr, int64_
 	smr_format_pend_resp(pend, cmd, context, desc, iov,
 			     iov_count, op_flags, id, resp);
 	ofi_cirque_commit(smr_resp_queue(ep->region));
-	peer_smr->cmd_cnt--;
 
 	return FI_SUCCESS;
 }
@@ -767,7 +763,6 @@ static ssize_t smr_do_sar(struct smr_ep *ep, struct smr_region *peer_smr, int64_
 	smr_format_pend_resp(pend, cmd, context, desc, iov,
 			     iov_count, op_flags, id, resp);
 	ofi_cirque_commit(smr_resp_queue(ep->region));
-	peer_smr->cmd_cnt--;
 
 	return FI_SUCCESS;
 }
@@ -812,7 +807,6 @@ static ssize_t smr_do_ipc(struct smr_ep *ep, struct smr_region *peer_smr, int64_
 	smr_format_pend_resp(pend, cmd, context, desc, iov,
 			     iov_count, op_flags, id, resp);
 	ofi_cirque_commit(smr_resp_queue(ep->region));
-	peer_smr->cmd_cnt--;
 
 	return FI_SUCCESS;
 }
@@ -843,7 +837,6 @@ static ssize_t smr_do_mmap(struct smr_ep *ep, struct smr_region *peer_smr, int64
 	smr_format_pend_resp(pend, cmd, context, desc, iov,
 			     iov_count, op_flags, id, resp);
 	ofi_cirque_commit(smr_resp_queue(ep->region));
-	peer_smr->cmd_cnt--;
 
 	return FI_SUCCESS;
 }
