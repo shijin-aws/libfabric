@@ -424,6 +424,8 @@ smr_get_txbuf(struct smr_region *smr)
 	if (smr_freestack_isempty(smr_inject_pool(smr)))
 		goto out;
 
+	if (smr_inject_pool(smr)->free <=0 )
+		printf("smr_get_txbuf: smr_inject_pool(smr)->free = %d\n", smr_inject_pool(smr)->free);
 	txbuf = smr_freestack_pop(smr_inject_pool(smr));
 
 out:
