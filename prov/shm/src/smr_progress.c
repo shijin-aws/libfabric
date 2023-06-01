@@ -902,7 +902,6 @@ static int smr_progress_cmd_msg(struct smr_ep *ep, struct smr_cmd *cmd)
 		return ret;
 	}
 	ret = smr_start_common(ep, cmd, rx_entry);
-
 out:
 	return ret < 0 ? ret : 0;
 }

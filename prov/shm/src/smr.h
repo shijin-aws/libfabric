@@ -418,12 +418,16 @@ static inline int smr_cma_loop(pid_t pid, struct iovec *local,
 static inline struct smr_inject_buf *
 smr_get_txbuf(struct smr_region *smr)
 {
-	struct smr_inject_buf * txbuf;
+	struct smr_inject_buf * txbuf = NULL;
 
 	pthread_spin_lock(&smr->lock);
-	txbuf = smr_freestack_pop(smr_inject_pool(smr));
-	pthread_spin_unlock(&smr->lock);
+	if (smr_freestack_isempty(smr_inject_pool(smr)))
+		goto out;
 
+	txbuf = smr_freestack_pop(smr_inject_pool(smr));
+
+out:
+	pthread_spin_unlock(&smr->lock);
 	return txbuf;
 }
 
