@@ -330,6 +330,8 @@ static ssize_t smr_generic_sendmsg(struct smr_ep *ep, const struct iovec *iov,
 				   (struct ofi_mr **)desc, iov, iov_count, total_len,
 				   context, &ce->cmd);
 	if (ret) {
+		if (ret == -FI_EAGAIN)
+			printf("smr_generic_sendmsg, hitting eagain for buf: %p, len: %lu\n", iov[0].iov_base, iov[0].iov_len);
 		smr_cmd_queue_discard(ce, pos);
 		goto unlock_cq;
 	}
