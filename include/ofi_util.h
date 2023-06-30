@@ -372,6 +372,8 @@ static inline void ofi_ep_rx_cntr_inc_func(struct util_ep *ep, uint8_t op)
 	ofi_ep_rx_cntr_inc_funcs[op](ep);
 }
 
+struct util_cntr *ofi_get_tx_cntr_from_op(struct util_ep *ep, uint8_t op);
+struct util_cntr *ofi_get_rx_cntr_from_op(struct util_ep *ep, uint8_t op);
 /*
  * Tag and address match
  */
@@ -725,6 +727,9 @@ struct util_cntr {
 
 	int			internal_wait;
 	ofi_cntr_progress_func	progress;
+
+	struct fid_peer_cntr	*peer_cntr;
+	uint64_t		flags;
 };
 
 #define OFI_TIMEOUT_QUANTUM_MS 50
@@ -749,6 +754,20 @@ static inline void ofi_cntr_inc_noop(struct util_cntr *cntr)
 static inline void ofi_cntr_inc(struct util_cntr *cntr)
 {
 	cntr->cntr_fid.ops->add(&cntr->cntr_fid, 1);
+}
+
+static inline
+void ofi_peer_cntr_inc(struct util_cntr *cntr)
+{
+	assert(cntr);
+	return cntr->peer_cntr->owner_ops->inc(cntr->peer_cntr);
+}
+
+static inline
+void ofi_peer_cntr_incerr(struct util_cntr *cntr)
+{
+	assert(cntr);
+	return cntr->peer_cntr->owner_ops->incerr(cntr->peer_cntr);
 }
 
 /*
