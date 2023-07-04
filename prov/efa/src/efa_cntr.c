@@ -77,30 +77,80 @@ static int efa_cntr_wait(struct fid_cntr *cntr_fid, uint64_t threshold, int time
 static void efa_cntr_progress(struct util_cntr *cntr)
 {
 	struct util_srx_ctx *srx_ctx;
+	struct efa_cntr *efa_cntr;
+
 	srx_ctx = cntr->domain->srx->ep_fid.fid.context;
+	efa_cntr = container_of(cntr, struct efa_cntr, util_cntr);
 
 	ofi_genlock_lock(srx_ctx->lock);
+	if (efa_cntr->shm_cntr)
+		fi_cntr_read(efa_cntr->shm_cntr);
 	ofi_cntr_progress(cntr);
 	ofi_genlock_unlock(srx_ctx->lock);
+}
+
+static int efa_cntr_close(struct fid *fid)
+{
+	struct efa_cntr *cntr;
+	int ret, retv;
+
+	retv = 0;
+	cntr = container_of(fid, struct efa_cntr, util_cntr.cntr_fid.fid);
+
+	if (cntr->shm_cntr) {
+		ret = fi_close(&cntr->shm_cntr->fid);
+		if (ret) {
+			EFA_WARN(FI_LOG_CNTR, "Unable to close shm cntr: %s\n", fi_strerror(-ret));
+			retv = ret;
+		}
+	}
+
+	ret = ofi_cntr_cleanup(&cntr->util_cntr);
+	if (ret)
+		return ret;
+	free(cntr);
+	return retv;
 }
 
 int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 		  struct fid_cntr **cntr_fid, void *context)
 {
 	int ret;
-	struct util_cntr *cntr;
+	struct efa_cntr *cntr;
+	struct efa_domain *efa_domain;
+	struct fi_cntr_attr shm_cntr_attr = {0};
+	struct fi_peer_cntr_context peer_cntr_context = {0};
 
 	cntr = calloc(1, sizeof(*cntr));
 	if (!cntr)
 		return -FI_ENOMEM;
 
-	ret = ofi_cntr_init(&efa_prov, domain, attr, cntr,
+	efa_domain = container_of(domain, struct efa_domain,
+				  util_domain.domain_fid);
+
+	ret = ofi_cntr_init(&efa_prov, domain, attr, &cntr->util_cntr,
 			    &efa_cntr_progress, context);
 	if (ret)
 		goto free;
 
-	*cntr_fid = &cntr->cntr_fid;
-	cntr->cntr_fid.ops->wait = efa_cntr_wait;
+	*cntr_fid = &cntr->util_cntr.cntr_fid;
+	cntr->util_cntr.cntr_fid.ops->wait = efa_cntr_wait;
+	cntr->util_cntr.cntr_fid.fid.ops->close = efa_cntr_close;
+
+	/* open shm cntr as peer cntr */
+	if (efa_domain->shm_domain) {
+		memcpy(&shm_cntr_attr, attr, sizeof(*attr));
+		shm_cntr_attr.flags |= FI_PEER;
+		peer_cntr_context.size = sizeof(peer_cntr_context);
+		peer_cntr_context.cntr = cntr->util_cntr.peer_cntr;
+		ret = fi_cntr_open(efa_domain->shm_domain, &shm_cntr_attr,
+				   &cntr->shm_cntr, &peer_cntr_context);
+		if (ret) {
+			EFA_WARN(FI_LOG_CNTR, "Unable to open shm cntr, err: %s\n", fi_strerror(-ret));
+			goto free;
+		}
+	}
+
 	return FI_SUCCESS;
 
 free:
