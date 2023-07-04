@@ -1,0 +1,7 @@
+src/smr_domain.c:						    info->tx_attr->msg_order);
+src/smr_ep.c:	ep->tx_size = info->tx_attr->size;
+src/smr_ep.c:	ep->tx_fs = smr_tx_fs_create(info->tx_attr->size, NULL, NULL);
+src/smr_init.c:	fi_param_get_size_t(&smr_prov, "tx_size", &smr_info.tx_attr->size);
+src/smr_init.c:	msg_order = hints && hints->tx_attr ? hints->tx_attr->msg_order : 0;
+src/smr_init.c:	ret = smr_shm_space_check((*info)->tx_attr->size, (*info)->rx_attr->size);
+src/smr_init.c:			cur->tx_attr->msg_order = FI_ORDER_SAS;

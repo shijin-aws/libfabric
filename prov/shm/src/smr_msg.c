@@ -210,6 +210,7 @@ static ssize_t smr_generic_inject(struct fid_ep *ep_fid, const void *buf,
 	int proto;
 	struct smr_cmd_entry *ce;
 	int64_t pos;
+	struct util_cntr *cntr;
 
 	assert(len <= SMR_INJECT_SIZE);
 
@@ -242,7 +243,9 @@ static ssize_t smr_generic_inject(struct fid_ep *ep_fid, const void *buf,
 		goto signal;
 	}
 	smr_cmd_queue_commit(ce, pos);
-	ofi_ep_tx_cntr_inc_func(&ep->util_ep, op);
+	cntr = ofi_get_tx_cntr_from_op(&ep->util_ep, op);
+	if (cntr)
+		ofi_peer_cntr_inc(cntr);
 
 signal:
 	smr_signal(peer_smr);
