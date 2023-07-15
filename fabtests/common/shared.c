@@ -744,6 +744,7 @@ int ft_alloc_ep_res(struct fi_info *fi, struct fid_cq **new_txcq,
 			FT_PRINTERR("fi_cntr_open", ret);
 			return ret;
 		}
+		printf("fi_cntr_open new txcntr: %p\n", *new_txcntr);
 	}
 
 	if (!(opts.options & FT_OPT_CQ_SHARED)) {
@@ -766,6 +767,7 @@ int ft_alloc_ep_res(struct fi_info *fi, struct fid_cq **new_txcq,
 			FT_PRINTERR("fi_cntr_open", ret);
 			return ret;
 		}
+		printf("fi_cntr_open new rxcntr: %p\n", *new_rxcntr);
 	}
 
 	if (!av && (fi->ep_attr->type == FI_EP_RDM || fi->ep_attr->type == FI_EP_DGRAM)) {
@@ -1683,7 +1685,9 @@ void ft_close_fids(void)
 		FT_CLOSE_FID(rxcq);
 		FT_CLOSE_FID(txcq);
 	}
+	printf("closing rxcntr: %p\n", rxcntr);
 	FT_CLOSE_FID(rxcntr);
+	printf("closing txcntr: %p\n", txcntr);
 	FT_CLOSE_FID(txcntr);
 	FT_CLOSE_FID(pollset);
 	if (mr != &no_mr)

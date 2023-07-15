@@ -60,6 +60,7 @@ int smr_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 		goto free;
 
 	*cntr_fid = &cntr->cntr_fid;
+	printf("smr_cntr_open: cntr->cntr_fid.fid.ops: %p\n", cntr->cntr_fid.fid.ops);
 	return FI_SUCCESS;
 
 free:

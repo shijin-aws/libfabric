@@ -74,20 +74,52 @@ static int efa_cntr_wait(struct fid_cntr *cntr_fid, uint64_t threshold, int time
 	return ret;
 }
 
-static void efa_cntr_progress(struct util_cntr *cntr)
+static uint64_t efa_cntr_read(struct fid_cntr *cntr_fid)
 {
 	struct util_srx_ctx *srx_ctx;
 	struct efa_cntr *efa_cntr;
+	uint64_t ret;
 
-	srx_ctx = cntr->domain->srx->ep_fid.fid.context;
-	efa_cntr = container_of(cntr, struct efa_cntr, util_cntr);
+	efa_cntr = container_of(cntr_fid, struct efa_cntr, util_cntr.cntr_fid);
+	srx_ctx = efa_cntr->util_cntr.domain->srx->ep_fid.fid.context;
 
 	ofi_genlock_lock(srx_ctx->lock);
 	if (efa_cntr->shm_cntr)
 		fi_cntr_read(efa_cntr->shm_cntr);
-	ofi_cntr_progress(cntr);
+	ret = ofi_cntr_read(cntr_fid);
 	ofi_genlock_unlock(srx_ctx->lock);
+
+	return ret;
 }
+
+static uint64_t efa_cntr_readerr(struct fid_cntr *cntr_fid)
+{
+	struct util_srx_ctx *srx_ctx;
+	struct efa_cntr *efa_cntr;
+	uint64_t ret;
+
+	efa_cntr = container_of(cntr_fid, struct efa_cntr, util_cntr.cntr_fid);
+	srx_ctx = efa_cntr->util_cntr.domain->srx->ep_fid.fid.context;
+
+	ofi_genlock_lock(srx_ctx->lock);
+	if (efa_cntr->shm_cntr)
+		fi_cntr_read(efa_cntr->shm_cntr);
+	ret = ofi_cntr_readerr(cntr_fid);
+	ofi_genlock_unlock(srx_ctx->lock);
+
+	return ret;
+}
+
+static struct fi_ops_cntr efa_cntr_ops = {
+	.size = sizeof(struct fi_ops_cntr),
+	.read = efa_cntr_read,
+	.readerr = efa_cntr_readerr,
+	.add = ofi_cntr_add,
+	.adderr = ofi_cntr_adderr,
+	.set = ofi_cntr_set,
+	.seterr = ofi_cntr_seterr,
+	.wait = efa_cntr_wait
+};
 
 static int efa_cntr_close(struct fid *fid)
 {
@@ -98,6 +130,7 @@ static int efa_cntr_close(struct fid *fid)
 	cntr = container_of(fid, struct efa_cntr, util_cntr.cntr_fid.fid);
 
 	if (cntr->shm_cntr) {
+		printf("efa_cntr_close, close shm cntr: %p, efa_cntr: %p, cntr_fid: %p\n", cntr->shm_cntr, cntr, &cntr->util_cntr.cntr_fid);
 		ret = fi_close(&cntr->shm_cntr->fid);
 		if (ret) {
 			EFA_WARN(FI_LOG_CNTR, "Unable to close shm cntr: %s\n", fi_strerror(-ret));
@@ -111,6 +144,14 @@ static int efa_cntr_close(struct fid *fid)
 	free(cntr);
 	return retv;
 }
+
+static struct fi_ops efa_cntr_fi_ops = {
+	.size = sizeof(efa_cntr_fi_ops),
+	.close = efa_cntr_close,
+	.bind = fi_no_bind,
+	.control = fi_no_control,
+	.ops_open = fi_no_ops_open,
+};
 
 int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 		  struct fid_cntr **cntr_fid, void *context)
@@ -129,13 +170,13 @@ int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 				  util_domain.domain_fid);
 
 	ret = ofi_cntr_init(&efa_prov, domain, attr, &cntr->util_cntr,
-			    &efa_cntr_progress, context);
+			    &ofi_cntr_progress, context);
 	if (ret)
 		goto free;
 
 	*cntr_fid = &cntr->util_cntr.cntr_fid;
-	cntr->util_cntr.cntr_fid.ops->wait = efa_cntr_wait;
-	cntr->util_cntr.cntr_fid.fid.ops->close = efa_cntr_close;
+	cntr->util_cntr.cntr_fid.ops = &efa_cntr_ops;
+	cntr->util_cntr.cntr_fid.fid.ops = &efa_cntr_fi_ops;
 
 	/* open shm cntr as peer cntr */
 	if (efa_domain->shm_domain) {
@@ -145,6 +186,7 @@ int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 		peer_cntr_context.cntr = cntr->util_cntr.peer_cntr;
 		ret = fi_cntr_open(efa_domain->shm_domain, &shm_cntr_attr,
 				   &cntr->shm_cntr, &peer_cntr_context);
+		printf("efa_cntr_open, opened shm cntr: %p, efa_cntr: %p, cntr_fid: %p\n", cntr->shm_cntr, cntr, &cntr->util_cntr.cntr_fid);
 		if (ret) {
 			EFA_WARN(FI_LOG_CNTR, "Unable to open shm cntr, err: %s\n", fi_strerror(-ret));
 			goto free;
