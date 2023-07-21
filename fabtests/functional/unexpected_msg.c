@@ -162,7 +162,6 @@ static int run_test_loop(void)
 					     opts.transfer_size,
 					     op_data, &tx_ctx_arr[j].context,
 					     op_buf, mr_desc, op_tag + j);
-			printf("finished sending msg %d\n", j);
 			if (ret) {
 				printf("ERROR send_msg returned %d\n", ret);
 				return ret;
@@ -327,7 +326,6 @@ static int run_test(void)
 			return ret;
 	}
 
-	printf("start running test loop\n");
 	ret = run_test_loop();
 
 	return ret;
