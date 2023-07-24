@@ -129,10 +129,6 @@ union smr_cmd_data {
 		struct iovec	iov[(SMR_MSG_DATA_LEN - sizeof(size_t)) /
 				    sizeof(struct iovec)];
 	};
-	struct {
-		uint32_t	buf_batch_size;
-		int16_t		sar[SMR_BUF_BATCH_MAX];
-	};
 	struct ipc_info		ipc_info;
 };
 
@@ -247,6 +243,10 @@ struct smr_region {
 struct smr_resp {
 	uint64_t	msg_id;
 	uint64_t	status;
+	struct {
+		uint32_t	buf_batch_size;
+		int16_t		sar[SMR_BUF_BATCH_MAX];
+	};
 };
 
 struct smr_inject_buf {

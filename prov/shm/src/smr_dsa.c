@@ -426,10 +426,10 @@ static void smr_dsa_copy_sar(struct smr_freestack *sar_pool,
 	}
 
 	while ((iov_index < count) &&
-	       (sar_index < cmd->msg.data.buf_batch_size) &&
+	       (sar_index < resp->buf_batch_size) &&
 	       (cmd_index < MAX_CMD_BATCH_SIZE)) {
 		smr_sar_buf = smr_freestack_get_entry_from_index(
-		    sar_pool, cmd->msg.data.sar[sar_index]);
+		    sar_pool, resp->sar[sar_index]);
 		iov_len = iov[iov_index].iov_len;
 
 		iov_buf = (char *)iov[iov_index].iov_base + iov_offset;
