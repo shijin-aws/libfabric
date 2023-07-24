@@ -122,6 +122,8 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 					&pending->cmd, pending->mr, pending->iov,
 					pending->iov_count, &pending->bytes_done,
 					&pending->next, pending);
+		printf("smr_progress_resp_entry: buf: %p, size: %lu, bytes_done: %lu\n", pending->iov[0].iov_base, pending->cmd.msg.hdr.size,
+				pending->bytes_done);
 		if (pending->bytes_done != pending->cmd.msg.hdr.size ||
 		    resp->status != SMR_STATUS_SAR_FREE) {
 			return -FI_EAGAIN;
@@ -486,6 +488,7 @@ out:
 		memset(sar_entry->mr, 0, sizeof(*mr) * iov_count);
 
 	*total_len = cmd->msg.hdr.size;
+	printf("smr_progress_sar: buf: %p, total_len: %lu, bytes_done: %lu\n", sar_entry->iov[0].iov_base, sar_entry->cmd.msg.hdr.size, sar_entry->bytes_done);
 	return sar_entry;
 }
 
@@ -1250,6 +1253,7 @@ static void smr_progress_sar_list(struct smr_ep *ep)
 					&sar_entry->bytes_done,
 					&sar_entry->next, sar_entry);
 
+		printf("smr_progress_sar: buf: %p, total_len: %lu, bytes_done: %lu\n", sar_entry->iov[0].iov_base, sar_entry->cmd.msg.hdr.size, sar_entry->bytes_done);
 		if (sar_entry->bytes_done == sar_entry->cmd.msg.hdr.size) {
 			if (sar_entry->rx_entry) {
 				comp_ctx = sar_entry->rx_entry->context;

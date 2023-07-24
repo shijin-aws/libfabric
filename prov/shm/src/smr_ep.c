@@ -515,6 +515,8 @@ static int smr_format_sar(struct smr_ep *ep, struct smr_cmd *cmd,
 	pending->bytes_done = 0;
 	pending->next = 0;
 
+	printf("smr_format_sar: buf: %p, total_len: %lu, pending->bytes_done: %lu\n", iov[0].iov_base, total_len, pending->bytes_done);
+
 	return 0;
 }
 
