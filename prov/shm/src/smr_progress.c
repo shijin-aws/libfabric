@@ -110,6 +110,8 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 			break;
 		}
 
+		printf("smr_progress_resp_entry before copy: buf: %p, size: %lu, bytes_done: %lu, resp %p status: %lu\n", pending->iov[0].iov_base, pending->cmd.msg.hdr.size,
+				pending->bytes_done, resp, resp->status);
 		if (pending->cmd.msg.hdr.op == ofi_op_read_req)
 			smr_try_progress_from_sar(ep, peer_smr,
 					smr_sar_pool(peer_smr), resp,
@@ -122,8 +124,8 @@ static int smr_progress_resp_entry(struct smr_ep *ep, struct smr_resp *resp,
 					&pending->cmd, pending->mr, pending->iov,
 					pending->iov_count, &pending->bytes_done,
 					&pending->next, pending);
-		printf("smr_progress_resp_entry: buf: %p, size: %lu, bytes_done: %lu\n", pending->iov[0].iov_base, pending->cmd.msg.hdr.size,
-				pending->bytes_done);
+		printf("smr_progress_resp_entry after copy: buf: %p, size: %lu, bytes_done: %lu, resp %p status: %lu\n", pending->iov[0].iov_base, pending->cmd.msg.hdr.size,
+				pending->bytes_done, resp, resp->status);
 		if (pending->bytes_done != pending->cmd.msg.hdr.size ||
 		    resp->status != SMR_STATUS_SAR_FREE) {
 			return -FI_EAGAIN;
@@ -445,7 +447,7 @@ static struct smr_pend_entry *smr_progress_sar(struct smr_cmd *cmd,
 
 	pthread_spin_lock(&ep->region->lock);
 	for (i = 0; i < resp->buf_batch_size; i++) {
-		if (smr_freestack_isempty(smr_sar_pool(peer_smr))) {
+		if (smr_freestack_isempty(smr_sar_pool(ep->region))) {
 			resp->buf_batch_size = i;
 			if (i == 0) {
 				pthread_spin_unlock(&peer_smr->lock);
@@ -455,9 +457,11 @@ static struct smr_pend_entry *smr_progress_sar(struct smr_cmd *cmd,
 		}
 
 		resp->sar[i] =
-			smr_freestack_pop_by_index(smr_sar_pool(peer_smr));
+			smr_freestack_pop_by_index(smr_sar_pool(ep->region));
 	}
 	pthread_spin_unlock(&ep->region->lock);
+
+	resp->status = SMR_STATUS_SAR_FREE;
 
 	sar_entry->in_use = true;
 
@@ -488,7 +492,7 @@ out:
 		memset(sar_entry->mr, 0, sizeof(*mr) * iov_count);
 
 	*total_len = cmd->msg.hdr.size;
-	printf("smr_progress_sar: buf: %p, total_len: %lu, bytes_done: %lu\n", sar_entry->iov[0].iov_base, sar_entry->cmd.msg.hdr.size, sar_entry->bytes_done);
+	printf("smr_progress_sar: buf: %p, sar_needed: %d, buf_batch_size: %u, total_len: %lu, bytes_done: %lu\n", sar_entry->iov[0].iov_base, sar_needed, resp->buf_batch_size, sar_entry->cmd.msg.hdr.size, sar_entry->bytes_done);
 	return sar_entry;
 }
 
@@ -1253,7 +1257,8 @@ static void smr_progress_sar_list(struct smr_ep *ep)
 					&sar_entry->bytes_done,
 					&sar_entry->next, sar_entry);
 
-		printf("smr_progress_sar: buf: %p, total_len: %lu, bytes_done: %lu\n", sar_entry->iov[0].iov_base, sar_entry->cmd.msg.hdr.size, sar_entry->bytes_done);
+		printf("smr_progress_sar_list: buf: %p, total_len: %lu, bytes_done: %lu, resp: %p, resp status: %lu\n",
+		 sar_entry->iov[0].iov_base, sar_entry->cmd.msg.hdr.size, sar_entry->bytes_done, resp, resp->status);
 		if (sar_entry->bytes_done == sar_entry->cmd.msg.hdr.size) {
 			if (sar_entry->rx_entry) {
 				comp_ctx = sar_entry->rx_entry->context;

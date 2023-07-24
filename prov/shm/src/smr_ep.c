@@ -451,8 +451,10 @@ size_t smr_copy_to_sar(struct smr_freestack *sar_pool, struct smr_resp *resp,
 	size_t start = *bytes_done;
 	int next_sar_buf = 0;
 
-	if (resp->status != SMR_STATUS_SAR_FREE)
+	if (resp->status != SMR_STATUS_SAR_FREE) {
+		printf("smr_copy_to_sar: resp->status != SMR_STATUS_SAR_FREE, returning ...\n");
 		return 0;
+	}
 
 	while ((*bytes_done < cmd->msg.hdr.size) &&
 			(next_sar_buf < resp->buf_batch_size)) {
@@ -469,6 +471,7 @@ size_t smr_copy_to_sar(struct smr_freestack *sar_pool, struct smr_resp *resp,
 	ofi_wmb();
 
 	resp->status = SMR_STATUS_SAR_READY;
+	printf("smr_copy_to_sar: setting resp: %p, buf_batch_size: %u, status: %lu\n", resp, resp->buf_batch_size, resp->status);
 
 	return *bytes_done - start;
 }
@@ -482,9 +485,10 @@ size_t smr_copy_from_sar(struct smr_freestack *sar_pool, struct smr_resp *resp,
 	size_t start = *bytes_done;
 	int next_sar_buf = 0;
 
-	if (resp->status != SMR_STATUS_SAR_READY)
+	if (resp->status != SMR_STATUS_SAR_READY) {
+		printf("smr_copy_from_sar: resp->status != SMR_STATUS_SAR_READY, returning ...\n");
 		return 0;
-
+	}
 	while ((*bytes_done < cmd->msg.hdr.size) &&
 			(next_sar_buf < resp->buf_batch_size)) {
 		sar_buf = smr_freestack_get_entry_from_index(
@@ -499,6 +503,7 @@ size_t smr_copy_from_sar(struct smr_freestack *sar_pool, struct smr_resp *resp,
 	ofi_wmb();
 
 	resp->status = SMR_STATUS_SAR_FREE;
+	printf("smr_copy_from_sar: setting resp: %p, status: %lu\n", resp, resp->status);
 	return *bytes_done - start;
 }
 
@@ -508,14 +513,14 @@ static int smr_format_sar(struct smr_ep *ep, struct smr_cmd *cmd,
 		   struct smr_region *peer_smr, int64_t id,
 		   struct smr_tx_entry *pending, struct smr_resp *resp)
 {
-	resp->status = SMR_STATUS_SAR_FREE;
+	resp->status = SMR_STATUS_BUSY;
 	cmd->msg.hdr.op_src = smr_src_sar;
 	cmd->msg.hdr.src_data = smr_get_offset(smr, resp);
 	cmd->msg.hdr.size = total_len;
 	pending->bytes_done = 0;
 	pending->next = 0;
 
-	printf("smr_format_sar: buf: %p, total_len: %lu, pending->bytes_done: %lu\n", iov[0].iov_base, total_len, pending->bytes_done);
+	printf("smr_format_sar: buf: %p, total_len: %lu, pending->bytes_done: %lu, resp: %p, resp status: %lu\n", iov[0].iov_base, total_len, pending->bytes_done, resp, resp->status);
 
 	return 0;
 }
