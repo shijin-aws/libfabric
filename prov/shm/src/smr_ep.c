@@ -822,6 +822,11 @@ static int smr_ep_close(struct fid *fid)
 	smr_pend_fs_free(ep->pend_fs);
 	ofi_spin_destroy(&ep->tx_lock);
 
+	FI_WARN(&smr_prov, FI_LOG_EP_CTRL, "ep->max_unexp_msg_cntr_inline: %lu\n", ep->max_unexp_msg_cntr_inline);
+	FI_WARN(&smr_prov, FI_LOG_EP_CTRL, "ep->max_unexp_msg_cntr_inject: %lu\n", ep->max_unexp_msg_cntr_inject);
+	FI_WARN(&smr_prov, FI_LOG_EP_CTRL, "ep->max_unexp_msg_cntr_iov: %lu\n", ep->max_unexp_msg_cntr_iov);
+	FI_WARN(&smr_prov, FI_LOG_EP_CTRL, "ep->max_unexp_msg_cntr_sar: %lu\n", ep->max_unexp_msg_cntr_sar);
+
 	free((void *)ep->name);
 	free(ep);
 	return 0;
@@ -1479,6 +1484,15 @@ int smr_endpoint(struct fid_domain *domain, struct fi_info *info,
 	ep->util_ep.ep_fid.cm = &smr_cm_ops;
 	ep->util_ep.ep_fid.rma = &smr_rma_ops;
 	ep->util_ep.ep_fid.atomic = &smr_atomic_ops;
+
+	ep->unexp_msg_cntr_iov = 0;
+	ep->unexp_msg_cntr_inject = 0;
+	ep->unexp_msg_cntr_iov = 0;
+	ep->unexp_msg_cntr_sar = 0;
+	ep->max_unexp_msg_cntr_iov = 0;
+	ep->max_unexp_msg_cntr_inject = 0;
+	ep->max_unexp_msg_cntr_iov = 0;
+	ep->max_unexp_msg_cntr_sar = 0;
 
 	*ep_fid = &ep->util_ep.ep_fid;
 	return 0;

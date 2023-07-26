@@ -786,6 +786,25 @@ int smr_unexp_start(struct fi_peer_rx_entry *rx_entry)
 	struct smr_cmd_ctx *cmd_ctx = rx_entry->peer_context;
 	int ret;
 
+	switch (cmd_ctx->cmd.msg.hdr.op_src) {
+				case smr_src_inline:
+					cmd_ctx->ep->unexp_msg_cntr_inline--;
+					break;
+				case smr_src_inject:
+					cmd_ctx->ep->unexp_msg_cntr_inject--;
+					break;
+				case smr_src_iov:
+					cmd_ctx->ep->unexp_msg_cntr_iov--;
+					break;
+				case smr_src_sar:
+					cmd_ctx->ep->unexp_msg_cntr_sar--;
+					break;
+				default:
+					FI_WARN(&smr_prov, FI_LOG_EP_CTRL,
+							"unidentified operation type\n");
+					return -FI_EINVAL;
+			}
+
 	ret = smr_start_common(cmd_ctx->ep, &cmd_ctx->cmd, rx_entry);
 	ofi_buf_free(cmd_ctx);
 
@@ -858,6 +877,33 @@ static int smr_progress_cmd_msg(struct smr_ep *ep, struct smr_cmd *cmd)
 		ret = peer_srx->owner_ops->get_tag(peer_srx, addr,
 				cmd->msg.hdr.size, cmd->msg.hdr.tag, &rx_entry);
 		if (ret == -FI_ENOENT) {
+			switch (cmd->msg.hdr.op_src) {
+				case smr_src_inline:
+					ep->unexp_msg_cntr_inline++;
+					if (ep->unexp_msg_cntr_inline > ep->max_unexp_msg_cntr_inline)
+						ep->max_unexp_msg_cntr_inline = ep->unexp_msg_cntr_inline;
+					break;
+				case smr_src_inject:
+					ep->unexp_msg_cntr_inject++;
+					if (ep->unexp_msg_cntr_inject > ep->max_unexp_msg_cntr_inject)
+						ep->max_unexp_msg_cntr_inject = ep->unexp_msg_cntr_inject;
+					break;
+				case smr_src_iov:
+					ep->unexp_msg_cntr_iov++;
+					if (ep->unexp_msg_cntr_iov > ep->max_unexp_msg_cntr_iov)
+						ep->max_unexp_msg_cntr_iov = ep->unexp_msg_cntr_iov;
+					break;
+				case smr_src_sar:
+					ep->unexp_msg_cntr_sar++;
+					if (ep->unexp_msg_cntr_sar > ep->max_unexp_msg_cntr_sar)
+						ep->max_unexp_msg_cntr_sar = ep->unexp_msg_cntr_sar;
+					break;
+				default:
+					FI_WARN(&smr_prov, FI_LOG_EP_CTRL,
+							"unidentified operation type\n");
+					peer_srx->owner_ops->free_entry(rx_entry);
+					return -FI_EINVAL;
+			}
 			ret = smr_alloc_cmd_ctx(ep, rx_entry, cmd);
 			if (ret) {
 				peer_srx->owner_ops->free_entry(rx_entry);

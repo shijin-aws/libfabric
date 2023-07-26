@@ -229,6 +229,14 @@ struct smr_ep {
 	int			ep_idx;
 	struct smr_sock_info	*sock_info;
 	void			*dsa_context;
+	size_t		unexp_msg_cntr_inline;
+	size_t		unexp_msg_cntr_inject;
+	size_t		unexp_msg_cntr_iov;
+	size_t		unexp_msg_cntr_sar;
+	size_t		max_unexp_msg_cntr_inline;
+	size_t		max_unexp_msg_cntr_inject;
+	size_t		max_unexp_msg_cntr_iov;
+	size_t		max_unexp_msg_cntr_sar;
 };
 
 static inline struct fid_peer_srx *smr_get_peer_srx(struct smr_ep *ep)
