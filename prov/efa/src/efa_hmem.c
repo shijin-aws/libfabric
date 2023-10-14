@@ -148,6 +148,8 @@ static int efa_domain_hmem_info_init_cuda(struct efa_domain *efa_domain)
 	int ibv_access = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ;
 	size_t len = ofi_get_page_size() * 2, tmp_value;
 	int ret;
+	int dmabuf_fd;
+	uint64_t dmabuf_offset;
 
 	if (!ofi_hmem_is_initialized(FI_HMEM_CUDA)) {
 		EFA_INFO(FI_LOG_DOMAIN, "FI_HMEM_CUDA is not initialized\n");
@@ -174,7 +176,17 @@ static int efa_domain_hmem_info_init_cuda(struct efa_domain *efa_domain)
 	else
 		info->p2p_required_by_impl = true;
 
-	ibv_mr = ibv_reg_mr(g_device_list[0].ibv_pd, ptr, len, ibv_access);
+	ret = cuda_get_dmabuf_fd(ptr, len, &dmabuf_fd, &dmabuf_offset);
+	if (ret == FI_SUCCESS) {
+		ibv_mr = ibv_reg_dmabuf_mr(g_device_list[0].ibv_pd, dmabuf_offset,
+						len, (uint64_t)ptr, dmabuf_fd, ibv_access);
+	} else {
+		EFA_WARN(FI_LOG_MR,
+			"Unable to retrieve dmabuf fd of CUDA device buffer, "
+			"Fall back to ibv_reg_mr\n");
+		ibv_mr = ibv_reg_mr(g_device_list[0].ibv_pd, ptr, len, ibv_access);
+	}
+
 	if (!ibv_mr) {
 		info->p2p_supported_by_device = false;
 		efa_domain_hmem_info_init_protocol_thresholds(efa_domain, FI_HMEM_CUDA);
