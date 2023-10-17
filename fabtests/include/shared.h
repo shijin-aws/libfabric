@@ -279,7 +279,7 @@ extern int sock, oob_sock;
 extern int listen_sock;
 #define ADDR_OPTS "B:P:s:a:b::E::C:F:O:"
 #define FAB_OPTS "f:d:p:K"
-#define HMEM_OPTS "D:i:H"
+#define HMEM_OPTS "D:i:HR"
 #define INFO_OPTS FAB_OPTS HMEM_OPTS "e:M:"
 #define CS_OPTS ADDR_OPTS "I:QS:mc:t:w:l"
 #define API_OPTS "o:"

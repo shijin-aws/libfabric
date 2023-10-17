@@ -418,6 +418,9 @@ int ft_reg_mr(struct fi_info *fi, void *buf, size_t size, uint64_t access,
 	struct iovec iov = {0};
 	int ret;
 	uint64_t flags;
+	int dmabuf_fd;
+	uint64_t dmabuf_offset;
+	struct fi_mr_dmabuf dmabuf = {0};
 
 	if (!ft_need_mr_reg(fi))
 		return 0;
@@ -427,6 +430,21 @@ int ft_reg_mr(struct fi_info *fi, void *buf, size_t size, uint64_t access,
 	ft_fill_mr_attr(&iov, 1, access, key, iface, device, &attr);
 
 	flags = (iface) ? FI_HMEM_DEVICE_ONLY : 0;
+
+	if (opts.options & FT_OPT_REG_DMABUF_MR) {
+		ret = ft_hmem_get_dmabuf_fd_offset(iface, device, buf, size,
+								&dmabuf_fd, &dmabuf_offset);
+		if (ret)
+			return ret;
+
+		dmabuf.fd = dmabuf_fd;
+		dmabuf.offset = dmabuf_offset;
+		dmabuf.len = size;
+		dmabuf.base_addr = (void *)((uintptr_t) buf - dmabuf_offset);
+		attr.dmabuf = &dmabuf;
+		flags |= FI_MR_DMABUF;
+	}
+
 	ret = fi_mr_regattr(domain, &attr, flags, mr);
 	if (ret)
 		return ret;
@@ -3115,6 +3133,7 @@ void ft_hmem_usage()
 			    "Automatically enables FI_HMEM (-H)");
 	FT_PRINT_OPTS_USAGE("-i <device_id>", "Specify which device to use (default: 0)");
 	FT_PRINT_OPTS_USAGE("-H", "Enable provider FI_HMEM support");
+	FT_PRINT_OPTS_USAGE("-R", "Register HMEM memory with fi_mr_dmabuf API");
 }
 
 void ft_mcusage(char *name, char *desc)
@@ -3281,6 +3300,9 @@ void ft_parse_hmem_opts(int op, char *optarg, struct ft_opts *opts)
 		break;
 	case 'H':
 		opts->options |= FT_OPT_ENABLE_HMEM;
+		break;
+	case 'R':
+		opts->options |= FT_OPT_REG_DMABUF_MR;
 		break;
 	default:
 		/* Let getopt handle unknown opts*/
