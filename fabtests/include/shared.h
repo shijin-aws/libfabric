@@ -134,6 +134,7 @@ enum {
 	FT_OPT_PERF			= 1 << 24,
 	FT_OPT_DISABLE_TAG_VALIDATION	= 1 << 25,
 	FT_OPT_ADDR_IS_OOB		= 1 << 26,
+	FT_OPT_REG_DMABUF_MR	= 1 << 27,
 	FT_OPT_OOB_CTRL			= FT_OPT_OOB_SYNC | FT_OPT_OOB_ADDR_EXCH,
 };
 
@@ -686,5 +687,16 @@ void ft_longopts_usage();
 #ifdef __cplusplus
 }
 #endif
+
+static inline void *ft_get_page_start(const void *addr, size_t page_size)
+{
+	return (void *)((uintptr_t) addr & ~(page_size - 1));
+}
+
+static inline void *ft_get_page_end(const void *addr, size_t page_size)
+{
+	return (void *)((uintptr_t)ft_get_page_start((const char *)addr
+			+ page_size, page_size) - 1);
+}
 
 #endif /* _SHARED_H_ */
