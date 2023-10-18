@@ -717,8 +717,13 @@ fi_addr_t efa_rdm_pke_insert_addr(struct efa_rdm_pke *pkt_entry, void *raw_addr)
 	fi_addr_t rdm_addr;
 	struct efa_rdm_ep *ep;
 	struct efa_rdm_base_hdr *base_hdr;
+	bool is_local_peer;
+	struct ofi_genlock *lock;
+
 
 	ep = pkt_entry->ep;
+	lock = efa_rdm_ep_get_peer_srx_ctx(ep)->lock;
+	assert(ofi_genlock_held(lock));
 
 	base_hdr = efa_rdm_pke_get_base_hdr(pkt_entry);
 	if (base_hdr->version < EFA_RDM_PROTOCOL_VERSION) {
@@ -739,8 +744,20 @@ fi_addr_t efa_rdm_pke_insert_addr(struct efa_rdm_pke *pkt_entry, void *raw_addr)
 
 	assert(base_hdr->type >= EFA_RDM_REQ_PKT_BEGIN);
 
+	/*
+	 * efa_av_insert_one will insert shm av for local peer.
+	 * shm's fi_av_insert will acquire a srx_ctx lock
+	 * to process the unspec_unexp_msg_queue, we need to
+	 * release this lock inside efa's progress engine
+	 * before calling it.
+	 */
+	is_local_peer = efa_is_local_peer(raw_addr);
+	if (is_local_peer)
+		ofi_genlock_unlock(lock);
 	ret = efa_av_insert_one(ep->base_ep.av, (struct efa_ep_addr *)raw_addr,
 	                        &rdm_addr, 0, NULL);
+	if (is_local_peer)
+		ofi_genlock_lock(lock);
 	if (OFI_UNLIKELY(ret != 0)) {
 		efa_base_ep_write_eq_error(&ep->base_ep, FI_EINVAL, FI_EFA_ERR_AV_INSERT);
 		return -1;

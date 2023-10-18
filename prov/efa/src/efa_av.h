@@ -116,4 +116,31 @@ fi_addr_t efa_av_reverse_lookup_rdm(struct efa_av *av, uint16_t ahn, uint16_t qp
 
 fi_addr_t efa_av_reverse_lookup_dgram(struct efa_av *av, uint16_t ahn, uint16_t qpn);
 
+/*
+ * Local/remote peer detection by comparing peer GID with stored local GIDs
+ */
+static inline bool efa_is_local_peer(const void *addr)
+{
+	int i;
+	uint8_t *raw_gid = ((struct efa_ep_addr *)addr)->raw;
+
+#if ENABLE_DEBUG
+	char raw_gid_str[INET6_ADDRSTRLEN] = { 0 };
+
+	if (!inet_ntop(AF_INET6, raw_gid, raw_gid_str, INET6_ADDRSTRLEN)) {
+		EFA_WARN(FI_LOG_AV, "Failed to get current EFA's GID, errno: %d\n", errno);
+		return 0;
+	}
+	EFA_INFO(FI_LOG_AV, "The peer's GID is %s.\n", raw_gid_str);
+#endif
+	for (i = 0; i < g_device_cnt; ++i) {
+		if (!memcmp(raw_gid, g_device_list[i].ibv_gid.raw, EFA_GID_LEN)) {
+			EFA_INFO(FI_LOG_AV, "The peer is local.\n");
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
 #endif

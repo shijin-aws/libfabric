@@ -939,7 +939,7 @@ void efa_rdm_ep_set_use_shm_for_tx(struct efa_rdm_ep *ep)
 		return;
 	}
 
-	ep->use_shm_for_tx = efa_env.enable_shm_transfer;
+	ep->use_shm_for_tx = false; //efa_env.enable_shm_transfer;
 	return;
 }
 

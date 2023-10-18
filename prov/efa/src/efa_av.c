@@ -42,32 +42,6 @@
 #include "efa_av.h"
 #include "rdm/efa_rdm_pke_utils.h"
 
-/*
- * Local/remote peer detection by comparing peer GID with stored local GIDs
- */
-static bool efa_is_local_peer(struct efa_av *av, const void *addr)
-{
-	int i;
-	uint8_t *raw_gid = ((struct efa_ep_addr *)addr)->raw;
-
-#if ENABLE_DEBUG
-	char raw_gid_str[INET6_ADDRSTRLEN] = { 0 };
-
-	if (!inet_ntop(AF_INET6, raw_gid, raw_gid_str, INET6_ADDRSTRLEN)) {
-		EFA_WARN(FI_LOG_AV, "Failed to get current EFA's GID, errno: %d\n", errno);
-		return 0;
-	}
-	EFA_INFO(FI_LOG_AV, "The peer's GID is %s.\n", raw_gid_str);
-#endif
-	for (i = 0; i < g_device_cnt; ++i) {
-		if (!memcmp(raw_gid, g_device_list[i].ibv_gid.raw, EFA_GID_LEN)) {
-			EFA_INFO(FI_LOG_AV, "The peer is local.\n");
-			return 1;
-		}
-	}
-
-	return 0;
-}
 
 /**
  * @brief find efa_conn struct using fi_addr
@@ -306,7 +280,7 @@ int efa_conn_rdm_init(struct efa_av *av, struct efa_conn *conn)
 	efa_rdm_peer_construct(peer, efa_rdm_ep, conn);
 
 	/* If peer is local, insert the address into shm provider's av */
-	if (efa_is_local_peer(av, conn->ep_addr) && av->shm_rdm_av) {
+	if (efa_is_local_peer(conn->ep_addr) && av->shm_rdm_av) {
 		if (av->shm_used >= efa_env.shm_av_size) {
 			EFA_WARN(FI_LOG_AV,
 				 "Max number of shm AV entry (%d) has been reached.\n",
