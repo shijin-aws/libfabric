@@ -202,7 +202,8 @@ static struct fi_ops efa_mr_cache_ops = {
  * efa_mr structure based on the attributes requested by the user.
  *
  * @param[in]	efa_mr	efa_mr structure to be updated
- * @param[in]	attr	fi_mr_attr from the user's registration call
+ * @param[in]	attr	a copy of fi_mr_attr updated from the user's registration call
+
  * @param[in]	flags   MR flags
  *
  * @return FI_SUCCESS or negative FI error code
@@ -212,6 +213,14 @@ static int efa_mr_hmem_setup(struct efa_mr *efa_mr,
 							 uint64_t flags)
 {
 	int err;
+	struct iovec mr_iov = {0};
+
+	if (flags & FI_MR_DMABUF) {
+		mr_iov.iov_base = (void *) ((uintptr_t)attr->dmabuf->base_addr + attr->dmabuf->offset);
+		mr_iov.iov_len = attr->dmabuf->len;
+	} else {
+		memcpy(&mr_iov, attr->mr_iov, sizeof(*attr->mr_iov));
+	}
 
 	efa_mr->peer.flags = flags;
 
@@ -250,7 +259,7 @@ static int efa_mr_hmem_setup(struct efa_mr *efa_mr,
 		efa_mr->peer.device.cuda = attr->device.cuda;
 
 		if (efa_env.set_cuda_sync_memops) {
-			err = cuda_set_sync_memops(attr->mr_iov->iov_base);
+			err = cuda_set_sync_memops(mr_iov.iov_base);
 			if (err) {
 				EFA_WARN(FI_LOG_MR, "unable to set memops for cuda ptr\n");
 				return err;
@@ -258,12 +267,12 @@ static int efa_mr_hmem_setup(struct efa_mr *efa_mr,
 		}
 
 		if (cuda_is_gdrcopy_enabled()) {
-			err = cuda_gdrcopy_dev_register((struct fi_mr_attr *)attr, (uint64_t *)&efa_mr->peer.hmem_data);
+			err = cuda_gdrcopy_dev_register(mr_iov.iov_base, mr_iov.iov_len, (uint64_t *)&efa_mr->peer.hmem_data);
 			efa_mr->peer.flags |= OFI_HMEM_DATA_GDRCOPY_HANDLE;
 			if (err) {
 				EFA_WARN(FI_LOG_MR,
 				         "Unable to register handle for GPU memory. err: %d buf: %p len: %zu\n",
-				         err, attr->mr_iov->iov_base, attr->mr_iov->iov_len);
+				         err, mr_iov.iov_base, mr_iov.iov_len);
 				/* When gdrcopy pin buf failed, fallback to cudaMemcpy */
 				efa_mr->peer.hmem_data = NULL;
 				efa_mr->peer.flags &= ~OFI_HMEM_DATA_GDRCOPY_HANDLE;
@@ -792,7 +801,7 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 	ofi_mr_update_attr(
 		efa_mr->domain->util_domain.fabric->fabric_fid.api_version,
 		efa_mr->domain->util_domain.info_domain_caps,
-		(const struct fi_mr_attr *) attr, &mr_attr);
+		(const struct fi_mr_attr *) attr, &mr_attr, flags);
 
 	ret = efa_mr_hmem_setup(efa_mr, &mr_attr, flags);
 	if (ret)
