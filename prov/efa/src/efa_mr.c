@@ -914,8 +914,14 @@ static int efa_mr_regattr(struct fid *fid, const struct fi_mr_attr *attr,
 	 * can be access from host. EFA provider considers all device memory
 	 * to be accessed by device only. Therefore, this function claim
 	 * support of this flag, but do not save it in efa_mr.
+	 *
+	 * FI_MR_DMABUF:
+	 * This flag indicates that the memory region to registered is
+	 * a DMA-buf backed region. When set, the region is specified through
+	 * the dmabuf field of the fi_mr_attr structure. This flag is only
+	 * usable for domains opened with FI_HMEM capability support.
 	 */
-	supported_flags = OFI_MR_NOCACHE | FI_HMEM_DEVICE_ONLY;
+	supported_flags = OFI_MR_NOCACHE | FI_HMEM_DEVICE_ONLY | FI_MR_DMABUF;
 	if (flags & (~supported_flags)) {
 		EFA_WARN(FI_LOG_MR, "Unsupported flag type. requested"
 			 "[0x%" PRIx64 "] supported[0x%" PRIx64 "]\n",
