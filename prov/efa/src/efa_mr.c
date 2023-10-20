@@ -215,12 +215,10 @@ static int efa_mr_hmem_setup(struct efa_mr *efa_mr,
 	int err;
 	struct iovec mr_iov = {0};
 
-	if (flags & FI_MR_DMABUF) {
-		mr_iov.iov_base = (void *) ((uintptr_t)attr->dmabuf->base_addr + attr->dmabuf->offset);
-		mr_iov.iov_len = attr->dmabuf->len;
-	} else {
+	if (flags & FI_MR_DMABUF)
+		ofi_mr_get_iov_from_dmabuf(&mr_iov, attr->dmabuf, 1);
+	else
 		memcpy(&mr_iov, attr->mr_iov, sizeof(*attr->mr_iov));
-	}
 
 	efa_mr->peer.flags = flags;
 
