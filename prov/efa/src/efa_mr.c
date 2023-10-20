@@ -626,7 +626,7 @@ int efa_mr_is_cuda_memory_freed(struct efa_mr *efa_mr, bool *freed)
  * 		negative libfabric error code on failure.
  */
 static
-int efa_mr_update_domain_mr_map(struct efa_mr *efa_mr, struct fi_mr_attr *mr_attr)
+int efa_mr_update_domain_mr_map(struct efa_mr *efa_mr, struct fi_mr_attr *mr_attr, uint64_t flags)
 {
 	struct fid_mr *existing_mr_fid;
 	struct efa_mr *existing_mr;
@@ -636,7 +636,7 @@ int efa_mr_update_domain_mr_map(struct efa_mr *efa_mr, struct fi_mr_attr *mr_att
 	mr_attr->requested_key = efa_mr->mr_fid.key;
 	ofi_genlock_lock(&efa_mr->domain->util_domain.lock);
 	err = ofi_mr_map_insert(&efa_mr->domain->util_domain.mr_map, mr_attr,
-				&efa_mr->mr_fid.key, &efa_mr->mr_fid);
+				&efa_mr->mr_fid.key, &efa_mr->mr_fid, flags);
 	ofi_genlock_unlock(&efa_mr->domain->util_domain.lock);
 	if (!err)
 		return 0;
@@ -723,7 +723,7 @@ int efa_mr_update_domain_mr_map(struct efa_mr *efa_mr, struct fi_mr_attr *mr_att
 	 */
 	ofi_genlock_lock(&efa_mr->domain->util_domain.lock);
 	err = ofi_mr_map_insert(&efa_mr->domain->util_domain.mr_map, mr_attr,
-				&efa_mr->mr_fid.key, &efa_mr->mr_fid);
+				&efa_mr->mr_fid.key, &efa_mr->mr_fid, flags);
 	ofi_genlock_unlock(&efa_mr->domain->util_domain.lock);
 	if (err) {
 		EFA_WARN(FI_LOG_MR,
@@ -742,14 +742,14 @@ int efa_mr_update_domain_mr_map(struct efa_mr *efa_mr, struct fi_mr_attr *mr_att
 }
 #else /* HAVE_CUDA */
 static
-int efa_mr_update_domain_mr_map(struct efa_mr *efa_mr, struct fi_mr_attr *mr_attr)
+int efa_mr_update_domain_mr_map(struct efa_mr *efa_mr, struct fi_mr_attr *mr_attr, uint64_t flags)
 {
 	int err;
 
 	mr_attr->requested_key = efa_mr->mr_fid.key;
 	ofi_genlock_lock(&efa_mr->domain->util_domain.lock);
 	err = ofi_mr_map_insert(&efa_mr->domain->util_domain.mr_map, mr_attr,
-				&efa_mr->mr_fid.key, &efa_mr->mr_fid);
+				&efa_mr->mr_fid.key, &efa_mr->mr_fid, flags);
 	ofi_genlock_unlock(&efa_mr->domain->util_domain.lock);
 	if (err) {
 		EFA_WARN(FI_LOG_MR,
@@ -855,7 +855,7 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 	efa_mr->mr_fid.mem_desc = efa_mr;
 	assert(efa_mr->mr_fid.key != FI_KEY_NOTAVAIL);
 
-	ret = efa_mr_update_domain_mr_map(efa_mr, &mr_attr);
+	ret = efa_mr_update_domain_mr_map(efa_mr, &mr_attr, flags);
 	if (ret) {
 		efa_mr_dereg_impl(efa_mr);
 		return ret;
