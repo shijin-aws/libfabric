@@ -347,8 +347,11 @@ static int efa_mr_cache_regattr(struct fid *fid, const struct fi_mr_attr *attr,
 	struct ofi_mr_info info = {0};
 	int ret;
 
-	if (attr->iface == FI_HMEM_NEURON || attr->iface == FI_HMEM_SYNAPSEAI)
+	if (attr->iface == FI_HMEM_NEURON || attr->iface == FI_HMEM_SYNAPSEAI || (flags & FI_MR_DMABUF))
 		flags |= OFI_MR_NOCACHE;
+
+	if (flags & FI_MR_DMABUF)
+		printf("efa_mr_cache_regattr: flags has FI_MR_DMABUF\n");
 
 	if (flags & OFI_MR_NOCACHE) {
 		ret = efa_mr_regattr(fid, attr, flags, mr_fid);
@@ -517,10 +520,27 @@ struct fi_ops efa_mr_ops = {
  * @param flags flags in fi_mr_reg/fi_mr_regattr
  * @return struct ibv_mr* the ptr to the registered MR
  */
-static struct ibv_mr *efa_mr_reg_ibv_mr(struct efa_mr *efa_mr, struct fi_mr_attr *mr_attr, int access, const int flags)
+static struct ibv_mr *efa_mr_reg_ibv_mr(struct efa_mr *efa_mr, struct fi_mr_attr *mr_attr, int access, const uint64_t flags)
 {
 	int dmabuf_fd;
 	int ret;
+
+	if (flags & FI_MR_DMABUF) {
+		fprintf(stderr, "efa_mr_reg_ibv_mr: fd: %d, offset: %lu, len: %lu, va: %p\n",
+			mr_attr->dmabuf->fd, mr_attr->dmabuf->offset, mr_attr->dmabuf->len,
+			(void *) ((uintptr_t) mr_attr->dmabuf->base_addr + mr_attr->dmabuf->offset)
+		);
+		return ibv_reg_dmabuf_mr(
+			efa_mr->domain->ibv_pd,
+			mr_attr->dmabuf->offset,
+			mr_attr->dmabuf->len,
+			(uintptr_t) mr_attr->dmabuf->base_addr + mr_attr->dmabuf->offset,
+			mr_attr->dmabuf->fd,
+			access
+		);
+	}
+
+	fprintf(stderr, "efa_mr_reg_ibv_mr: NON DMABUF reg\n");
 #if HAVE_SYNAPSEAI
 	if (efa_mr_is_synapseai(efa_mr)) {
 		ret = synapseai_get_dmabuf_fd((uint64_t) mr_attr->mr_iov->iov_base,
@@ -563,16 +583,6 @@ static struct ibv_mr *efa_mr_reg_ibv_mr(struct efa_mr *efa_mr, struct fi_mr_attr
 		}
 	}
 #endif
-
-	if (flags & FI_MR_DMABUF)
-		return ibv_reg_dmabuf_mr(
-			efa_mr->domain->ibv_pd,
-			mr_attr->dmabuf->offset,
-			mr_attr->dmabuf->len,
-			(uintptr_t) mr_attr->dmabuf->base_addr + mr_attr->dmabuf->offset,
-			mr_attr->dmabuf->fd,
-			access
-		);
 
 	return ibv_reg_mr(efa_mr->domain->ibv_pd,
 			(void *)mr_attr->mr_iov->iov_base,
@@ -790,6 +800,9 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 	uint64_t shm_flags;
 	int ret = 0;
 
+	if (flags & FI_MR_DMABUF)
+		printf("efa_mr_reg_impl: flags has FI_MR_DMABUF\n");
+
 	efa_mr->ibv_mr = NULL;
 	efa_mr->shm_mr = NULL;
 	efa_mr->inserted_to_mr_map = false;
@@ -836,6 +849,8 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 	if (mr_attr.iface == FI_HMEM_CUDA && !efa_mr->domain->hmem_info[FI_HMEM_CUDA].p2p_supported_by_device) {
 		efa_mr->mr_fid.key = efa_mr_cuda_non_p2p_keygen();
 	} else {
+		if (flags & FI_MR_DMABUF)
+			printf("efa_mr_reg_impl: flags has FI_MR_DMABUF before efa_mr_reg_ibv_mr\n");
 		efa_mr->ibv_mr = efa_mr_reg_ibv_mr(efa_mr, &mr_attr, fi_ibv_access, flags);
 		if (!efa_mr->ibv_mr) {
 			EFA_WARN(FI_LOG_MR, "Unable to register MR: %s\n",
@@ -903,6 +918,9 @@ static int efa_mr_regattr(struct fid *fid, const struct fi_mr_attr *attr,
 	struct efa_mr *efa_mr = NULL;
 	uint64_t supported_flags;
 	int ret = 0;
+
+	if (flags & FI_MR_DMABUF)
+		printf("efa_mr_regattr: flags has FI_MR_DMABUF\n");
 
 	/*
 	 * Notes supported memory registration flags:

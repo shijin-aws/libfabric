@@ -418,6 +418,7 @@ int ft_cuda_get_dmabuf_fd_offset(uint64_t device, void *buf, size_t len,
 						aligned_ptr, aligned_size,
 						CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
 						0);
+
 	if (cuda_ret != CUDA_SUCCESS) {
 		ft_cuda_driver_api_print_error(cuda_ret,
 				"cuMemGetHandleForAddressRange");
@@ -425,6 +426,8 @@ int ft_cuda_get_dmabuf_fd_offset(uint64_t device, void *buf, size_t len,
 	}
 
 	*dmabuf_offset = (uintptr_t) buf - (uintptr_t) aligned_ptr;
+	printf("get dmabuf fd %d, offset: %lu, base_address: %p\n",
+	*dmabuf_fd, *dmabuf_offset, (void *) aligned_ptr);
 
 	return FI_SUCCESS;
 }

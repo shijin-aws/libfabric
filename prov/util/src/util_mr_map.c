@@ -57,8 +57,8 @@ dup_mr_attr(const struct fi_mr_attr *attr, uint64_t flags)
 	 * is inserted to the mr_map
 	 */
 	if (flags & FI_MR_DMABUF)
-		ofi_mr_get_iov_from_dmabuf(dup_attr->mr_iov,
-			attr->dmabuf, attr->iov_count);
+		ofi_mr_get_iov_from_dmabuf((struct iovec*) dup_attr->mr_iov,
+			(struct fi_mr_dmabuf*) attr->dmabuf, attr->iov_count);
 	else
 		memcpy((void *) dup_attr->mr_iov, attr->mr_iov,
 			sizeof(*attr->mr_iov) * attr->iov_count);

@@ -298,7 +298,7 @@ static inline bool ofi_mr_all_host(struct ofi_mr **mr, size_t count)
 
 static inline
 void ofi_mr_get_iov_from_dmabuf(struct iovec *iov,
-						struct fi_mr_dmabuf *dmabuf,
+						const struct fi_mr_dmabuf *dmabuf,
 						size_t count)
 {
 	int i;

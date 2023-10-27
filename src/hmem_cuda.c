@@ -327,7 +327,7 @@ int cuda_copy_from_dev(uint64_t device, void *dst, const void *src, size_t size)
 
 int cuda_dev_register(const void *addr, size_t size, uint64_t *handle)
 {
-	return cuda_gdrcopy_dev_register(addr, size, handle);
+	return cuda_gdrcopy_dev_register((void *)addr, size, handle);
 }
 
 int cuda_dev_unregister(uint64_t handle)
