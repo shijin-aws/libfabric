@@ -18,3 +18,7 @@ def memory_type(request):
                                         "r:0,1024,1048576"])
 def message_size(request):
     return request.param
+
+@pytest.fixture(scope="module")
+def do_dmabuf_reg_for_hmem(memory_type):
+    return True if "cuda" in memory_type else False

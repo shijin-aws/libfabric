@@ -10,7 +10,6 @@ SHM_DEFAULT_RX_SIZE = 1024
 @pytest.mark.parametrize("msg_size", [1, 512, 9000, 1048576]) # cover various switch points of shm/efa protocols
 @pytest.mark.parametrize("msg_count", [1, 1024, 2048]) # below and above shm's default rx size
 def test_unexpected_msg(cmdline_args, msg_size, msg_count, memory_type, completion_semantic):
-    from common import ClientServerTest
     if cmdline_args.server_id == cmdline_args.client_id:
         if (msg_size > SHM_DEFAULT_MAX_INJECT_SIZE or memory_type != "host_to_host" or completion_semantic == "delivery_complete") and msg_count > SHM_DEFAULT_RX_SIZE:
             pytest.skip("SHM's CMA/IPC protocol currently cannot handle > rx size number of unexpected messages")

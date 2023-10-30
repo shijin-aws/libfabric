@@ -12,8 +12,11 @@ def efa_run_client_server_test(cmdline_args, executable, iteration_type,
 
     # It is observed that cuda tests requires larger time-out limit to test all
     # message sizes (especailly when running with multiple workers).
+    do_dmabuf_reg_for_hmem = False
     if "cuda" in memory_type:
         timeout = max(1000, timeout)
+        # Use dmabuf reg for cuda interface
+        do_dmabuf_reg_for_hmem = True
 
     test = ClientServerTest(cmdline_args, executable, iteration_type,
                             completion_semantic=completion_semantic,
@@ -22,7 +25,8 @@ def efa_run_client_server_test(cmdline_args, executable, iteration_type,
                             memory_type=memory_type,
                             timeout=timeout,
                             warmup_iteration_type=warmup_iteration_type,
-                            completion_type=completion_type)
+                            completion_type=completion_type,
+                            do_dmabuf_reg_for_hmem=do_dmabuf_reg_for_hmem)
     test.run()
 
 @retry(retry_on_exception=is_ssh_connection_error, stop_max_attempt_number=3, wait_fixed=5000)
