@@ -424,7 +424,7 @@ int ft_reg_mr(struct fi_info *fi, void *buf, size_t size, uint64_t access,
 	return ft_regv_mr(fi, &iov, 1, access, key, iface, device, mr, desc);
 }
 
-int ft_regv_mr(struct fi_info *info, struct iovec *iov, size_t iov_count,
+int ft_regv_mr(struct fi_info *fi, struct iovec *iov, size_t iov_count,
 		uint64_t access, uint64_t key, enum fi_hmem_iface iface,
 		uint64_t device, struct fid_mr **mr, void **desc)
 {
