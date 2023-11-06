@@ -122,6 +122,7 @@ static int ft_cuda_pointer_set_attribute(void *buf)
  */
 static int ft_cuda_hmem_detect_dmabuf_support(void)
 {
+	dmabuf_supported = false;
 #if HAVE_CUDA_DMABUF
 	CUresult cuda_ret;
 	CUdevice dev;
