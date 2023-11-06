@@ -419,6 +419,10 @@ int ft_reg_mr(struct fi_info *fi, void *buf, size_t size, uint64_t access,
 	      struct fid_mr **mr, void **desc)
 {
 	struct iovec iov;
+
+	if (!ft_need_mr_reg(fi))
+		return 0;
+
 	iov.iov_base = buf;
 	iov.iov_len = size;
 	return ft_regv_mr(fi, &iov, 1, access, key, iface, device, mr, desc);
@@ -435,9 +439,6 @@ int ft_regv_mr(struct fi_info *fi, struct iovec *iov, size_t iov_count,
 	uint64_t dmabuf_offset;
 	struct fi_mr_dmabuf *dmabuf;
 	size_t i;
-
-	if (!ft_need_mr_reg(fi))
-		return 0;
 
 	dmabuf = calloc(iov_count, sizeof(*dmabuf));
 	if (!dmabuf) {
