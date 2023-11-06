@@ -157,7 +157,6 @@ static int mr_regattr()
 	int testret = FAIL;
 	struct fid_mr *mr;
 	struct iovec *iov;
-	struct fi_mr_attr attr = {0};
 	char *base;
 
 	iov = calloc(fi->domain_attr->mr_iov_limit, sizeof(*iov));
@@ -178,11 +177,10 @@ static int mr_regattr()
 			base += iov[j].iov_len;
 		}
 
-		ft_fill_mr_attr(&iov[0], NULL, n, ft_info_to_mr_access(fi),
-				FT_MR_KEY, opts.iface, opts.device, &attr, 0);
-		ret = fi_mr_regattr(domain, &attr, 0, &mr);
+		ret = ft_regv_mr(fi, iov, n, ft_info_to_mr_access(fi), FT_MR_KEY,
+				 opts.iface, opts.device, &mr, &mr_desc);
 		if (ret) {
-			FT_UNIT_STRERR(err_buf, "fi_mr_regattr failed", ret);
+			FT_UNIT_STRERR(err_buf, "ft_regv_mr failed", ret);
 			goto free;
 		}
 
@@ -204,21 +202,19 @@ static int mr_reg_free_then_alloc()
 	int i, ret, testret;
 	size_t buf_size = test_size[test_cnt-1].size;
 	struct fid_mr *mr;
+	void *mr_desc;
 	char *buf2;
-	struct iovec iov;
-	struct fi_mr_attr attr = {0};
 	int numtry = 5;
+	struct iovec iov;
 
 	testret = FAIL;
 	for (i = 0; i < numtry; ++i) {
 		iov.iov_base = buf;
 		iov.iov_len = buf_size;
-		ft_fill_mr_attr(&iov, NULL, 1, ft_info_to_mr_access(fi),
-				FT_MR_KEY, opts.iface, opts.device, &attr, 0);
-
-		ret = fi_mr_regattr(domain, &attr, 0, &mr);
+		ret = ft_regv_mr(fi, &iov, 1, ft_info_to_mr_access(fi), FT_MR_KEY,
+				 opts.iface, opts.device, &mr, &mr_desc);
 		if (ret) {
-			FT_UNIT_STRERR(err_buf, "fi_mr_reg failed", ret);
+			FT_UNIT_STRERR(err_buf, "ft_regv_mr failed", ret);
 			goto out;
 		}
 
