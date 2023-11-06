@@ -141,10 +141,8 @@ static int ft_cuda_hmem_detect_dmabuf_support(void)
 	}
 
 	dmabuf_supported = (is_supported == 1);
-	return FI_SUCCESS;
-#else
-	return -FI_EOPNOTSUPP;
 #endif
+	return FI_SUCCESS;
 }
 
 int ft_cuda_init(void)
