@@ -461,6 +461,9 @@ bool ft_need_mr_reg(struct fi_info *fi);
 int ft_reg_mr(struct fi_info *info, void *buf, size_t size, uint64_t access,
 	      uint64_t key, enum fi_hmem_iface iface, uint64_t device,
 	      struct fid_mr **mr, void **desc);
+int ft_regv_mr(struct fi_info *info, struct iovec *iov, size_t iov_count,
+		uint64_t access, uint64_t key, enum fi_hmem_iface iface,
+		uint64_t device, struct fid_mr **mr, void **desc);
 void ft_freehints(struct fi_info *hints);
 void ft_free_res();
 void init_test(struct ft_opts *opts, char *test_name, size_t test_name_len);

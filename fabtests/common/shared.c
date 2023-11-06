@@ -418,39 +418,57 @@ int ft_reg_mr(struct fi_info *fi, void *buf, size_t size, uint64_t access,
 	      uint64_t key, enum fi_hmem_iface iface, uint64_t device,
 	      struct fid_mr **mr, void **desc)
 {
+	struct iovec iov;
+	iov.iov_base = buf;
+	iov.iov_len = size;
+	return ft_regv_mr(fi, &iov, 1, access, key, iface, device, mr, desc);
+}
+
+int ft_regv_mr(struct fi_info *info, struct iovec *iov, size_t iov_count,
+		uint64_t access, uint64_t key, enum fi_hmem_iface iface,
+		uint64_t device, struct fid_mr **mr, void **desc)
+{
 	struct fi_mr_attr attr = {0};
-	struct iovec iov = {0};
-	int ret;
+	int ret = FI_SUCCESS;
 	uint64_t flags;
 	int dmabuf_fd;
 	uint64_t dmabuf_offset;
-	struct fi_mr_dmabuf dmabuf = {0};
+	struct fi_mr_dmabuf *dmabuf;
+	size_t i;
 
 	if (!ft_need_mr_reg(fi))
 		return 0;
 
-	iov.iov_base = buf;
-	iov.iov_len = size;
+	dmabuf = calloc(iov_count, sizeof(*dmabuf));
+	if (!dmabuf) {
+		perror("calloc for dmabuf");
+		ret = -FI_ENOMEM;
+		goto out;
+	}
 
 	flags = (iface) ? FI_HMEM_DEVICE_ONLY : 0;
 
 	if (opts.options & FT_OPT_REG_DMABUF_MR) {
-		ret = ft_hmem_get_dmabuf_fd(iface, buf, size,
-					    &dmabuf_fd, &dmabuf_offset);
-		if (ret)
-			return ret;
+		for (i = 0; i < iov_count; i++) {
+			ret = ft_hmem_get_dmabuf_fd(iface,
+				iov[i].iov_base, iov[i].iov_len,
+				&dmabuf_fd, &dmabuf_offset);
+			if (ret)
+				goto out;
 
-		dmabuf.fd = dmabuf_fd;
-		dmabuf.offset = dmabuf_offset;
-		dmabuf.len = size;
-		dmabuf.base_addr = (void *)((uintptr_t) buf - dmabuf_offset);
-		flags |= FI_MR_DMABUF;
+			dmabuf[i].fd = dmabuf_fd;
+			dmabuf[i].offset = dmabuf_offset;
+			dmabuf[i].len = iov[i].iov_len;
+			dmabuf[i].base_addr = (void *)(
+				(uintptr_t) iov[i].iov_base - dmabuf_offset);
+			flags |= FI_MR_DMABUF;
+		}
 	}
 
-	ft_fill_mr_attr(&iov, &dmabuf, 1, access, key, iface, device, &attr, flags);
+	ft_fill_mr_attr(iov, dmabuf, iov_count, access, key, iface, device, &attr, flags);
 	ret = fi_mr_regattr(domain, &attr, flags, mr);
 	if (ret)
-		return ret;
+		goto out;
 
 	if (desc)
 		*desc = fi_mr_desc(*mr);
@@ -458,14 +476,16 @@ int ft_reg_mr(struct fi_info *fi, void *buf, size_t size, uint64_t access,
         if (fi->domain_attr->mr_mode & FI_MR_ENDPOINT) {
 		ret = fi_mr_bind(*mr, &ep->fid, 0);
 		if (ret)
-			return ret;
+			goto out;
 
 		ret = fi_mr_enable(*mr);
 		if (ret)
-			return ret;
+			goto out;
 	}
 
-	return FI_SUCCESS;
+out:
+	free(dmabuf);
+	return ret;
 }
 
 static int ft_alloc_ctx_array(struct ft_context **mr_array, char ***mr_bufs,
