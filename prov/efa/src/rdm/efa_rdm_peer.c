@@ -59,6 +59,8 @@ void efa_rdm_peer_construct(struct efa_rdm_peer *peer, struct efa_rdm_ep *ep, st
 	ofi_recvwin_buf_alloc(&peer->robuf, efa_env.recvwin_size);
 	dlist_init(&peer->outstanding_tx_pkts);
 	dlist_init(&peer->txe_list);
+	peer->num_txe = 0;
+	peer->max_num_txe = 0;
 	dlist_init(&peer->rxe_list);
 }
 
@@ -96,6 +98,7 @@ void efa_rdm_peer_destruct(struct efa_rdm_peer *peer, struct efa_rdm_ep *ep)
 		return;
 	}
 
+	printf("ep: %p, peer: %p, max num of txe: %lu\n", (void *)ep, (void *)peer, peer->max_num_txe);
 	/* we cannot release outstanding TX packets because device
 	 * will report completion of these packets later. Setting
 	 * the address to FI_ADDR_NOTAVAIL, so efa_rdm_ep_get_peer()

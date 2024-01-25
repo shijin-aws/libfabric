@@ -471,9 +471,13 @@ static inline void efa_rdm_ep_poll_ibv_cq(struct efa_rdm_ep *ep, size_t cqe_to_p
 			prov_errno = ibv_wc_read_vendor_err(ep->ibv_cq_ex);
 			switch (opcode) {
 			case IBV_WC_SEND: /* fall through */
+				efa_rdm_pke_handle_tx_error(pkt_entry, FI_EIO, prov_errno, FI_SEND);
+				break;
 			case IBV_WC_RDMA_WRITE: /* fall through */
+				efa_rdm_pke_handle_tx_error(pkt_entry, FI_EIO, prov_errno, FI_WRITE);
+				break;
 			case IBV_WC_RDMA_READ:
-				efa_rdm_pke_handle_tx_error(pkt_entry, FI_EIO, prov_errno);
+				efa_rdm_pke_handle_tx_error(pkt_entry, FI_EIO, prov_errno, FI_READ);
 				break;
 			case IBV_WC_RECV: /* fall through */
 			case IBV_WC_RECV_RDMA_WITH_IMM:

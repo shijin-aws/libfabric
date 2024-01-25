@@ -108,6 +108,13 @@ struct efa_rdm_ep {
 	/* rx/tx queue size of core provider */
 	size_t efa_max_outstanding_rx_ops;
 	size_t efa_max_outstanding_tx_ops;
+	size_t efa_max_outstanding_tx_ops_curr;
+	size_t efa_outstanding_send_ops;
+	size_t efa_outstanding_write_ops;
+	size_t efa_outstanding_read_ops;
+	size_t efa_max_outstanding_send_ops_curr;
+	size_t efa_max_outstanding_write_ops_curr;
+	size_t efa_max_outstanding_read_ops_curr;
 	size_t efa_rnr_queued_pkt_cnt;
 	size_t max_data_payload_size;
 
@@ -231,6 +238,12 @@ struct efa_rdm_ep {
 	bool write_in_order_aligned_128_bytes; /**< whether to support in order write of each aligned 128 bytes memory region */
 	char err_msg[EFA_RDM_ERROR_MSG_BUFFER_LENGTH]; /* A large enough buffer to store CQ/EQ error data used by e.g. fi_cq_readerr */
 	struct efa_rdm_pke **pke_vec;
+	size_t num_ofi_send;
+	size_t max_num_ofi_send;
+	size_t num_ofi_read;
+	size_t max_num_ofi_read;
+	size_t num_ofi_write;
+	size_t max_num_ofi_write;
 };
 
 int efa_rdm_ep_flush_queued_blocking_copy_to_hmem(struct efa_rdm_ep *ep);
@@ -260,9 +273,9 @@ struct efa_rdm_ope *efa_rdm_ep_alloc_txe(struct efa_rdm_ep *efa_rdm_ep,
 struct efa_rdm_ope *efa_rdm_ep_alloc_rxe(struct efa_rdm_ep *ep,
 					   fi_addr_t addr, uint32_t op);
 
-void efa_rdm_ep_record_tx_op_submitted(struct efa_rdm_ep *ep, struct efa_rdm_pke *pkt_entry);
+void efa_rdm_ep_record_tx_op_submitted(struct efa_rdm_ep *ep, struct efa_rdm_pke *pkt_entry, int op);
 
-void efa_rdm_ep_record_tx_op_completed(struct efa_rdm_ep *ep, struct efa_rdm_pke *pkt_entry);
+void efa_rdm_ep_record_tx_op_completed(struct efa_rdm_ep *ep, struct efa_rdm_pke *pkt_entry, int op);
 
 static inline size_t efa_rdm_ep_get_rx_pool_size(struct efa_rdm_ep *ep)
 {

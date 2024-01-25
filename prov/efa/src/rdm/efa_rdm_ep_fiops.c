@@ -58,14 +58,15 @@ int efa_rdm_ep_create_base_ep_ibv_qp(struct efa_rdm_ep *ep)
 {
 	struct ibv_qp_init_attr_ex attr_ex = { 0 };
 
-	attr_ex.cap.max_send_wr = ep->base_ep.domain->device->rdm_info->tx_attr->size;
+	attr_ex.cap.max_send_wr = ep->user_info->tx_attr->size; // ep->base_ep.domain->device->rdm_info->tx_attr->size;
 	attr_ex.cap.max_send_sge = ep->base_ep.domain->device->rdm_info->tx_attr->iov_limit;
 	attr_ex.send_cq = ibv_cq_ex_to_cq(ep->ibv_cq_ex);
 
-	attr_ex.cap.max_recv_wr = ep->base_ep.domain->device->rdm_info->rx_attr->size;
+	attr_ex.cap.max_recv_wr = ep->user_info->rx_attr->size; // ep->base_ep.domain->device->rdm_info->rx_attr->size;
 	attr_ex.cap.max_recv_sge = ep->base_ep.domain->device->rdm_info->rx_attr->iov_limit;
 	attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->ibv_cq_ex);
 
+	//printf("efa_rdm_ep_create_base_ep_ibv_qp: tx_size: %u, rx_size: %u, iov_limit: %u\n", attr_ex.cap.max_send_wr, attr_ex.cap.max_recv_wr, attr_ex.cap.max_send_sge);
 	attr_ex.cap.max_inline_data = ep->base_ep.domain->device->efa_attr.inline_buf_size;
 
 	attr_ex.qp_type = IBV_QPT_DRIVER;
@@ -462,8 +463,7 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	efa_rdm_ep->efa_device_iov_limit = efa_domain->device->rdm_info->tx_attr->iov_limit;
 	efa_rdm_ep->use_device_rdma = efa_rdm_get_use_device_rdma(info->fabric_attr->api_version);
 
-	cq_attr.size = MAX(efa_rdm_ep->rx_size + efa_rdm_ep->tx_size,
-			   efa_env.cq_size);
+	cq_attr.size = efa_rdm_ep->rx_size + efa_rdm_ep->tx_size;
 
 	if (info->tx_attr->op_flags & FI_DELIVERY_COMPLETE)
 		EFA_INFO(FI_LOG_CQ, "FI_DELIVERY_COMPLETE unsupported\n");
@@ -498,6 +498,19 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	efa_rdm_ep->efa_rx_pkts_posted = 0;
 	efa_rdm_ep->efa_rx_pkts_to_post = 0;
 	efa_rdm_ep->efa_outstanding_tx_ops = 0;
+	efa_rdm_ep->efa_max_outstanding_tx_ops_curr = 0;
+	efa_rdm_ep->efa_max_outstanding_send_ops_curr = 0;
+	efa_rdm_ep->efa_max_outstanding_read_ops_curr = 0;
+	efa_rdm_ep->efa_max_outstanding_write_ops_curr = 0;
+	efa_rdm_ep->efa_outstanding_send_ops = 0;
+	efa_rdm_ep->efa_outstanding_read_ops = 0;
+	efa_rdm_ep->efa_outstanding_write_ops = 0;
+	efa_rdm_ep->max_num_ofi_send = 0;
+	efa_rdm_ep->num_ofi_send = 0;
+	efa_rdm_ep->max_num_ofi_read = 0;
+	efa_rdm_ep->num_ofi_read = 0;
+	efa_rdm_ep->max_num_ofi_write = 0;
+	efa_rdm_ep->num_ofi_write = 0;
 
 	assert(!efa_rdm_ep->ibv_cq_ex);
 
@@ -851,6 +864,12 @@ static int efa_rdm_ep_close(struct fid *fid)
 	}
 	efa_rdm_ep_destroy_buffer_pools(efa_rdm_ep);
 
+	printf("ep: %p max num of ibv send: %lu, max num of ibv read: %lu, max num of ibv write: %lu, max in-flight fi_send: %lu, max in-flight fi_read: %lu, max in-flight fi_write: %lu \n", (void *)efa_rdm_ep,
+		//efa_rdm_ep->efa_max_outstanding_tx_ops_curr,
+		efa_rdm_ep->efa_max_outstanding_send_ops_curr,
+		efa_rdm_ep->efa_max_outstanding_read_ops_curr,
+		efa_rdm_ep->efa_max_outstanding_write_ops_curr,
+		efa_rdm_ep->max_num_ofi_send, efa_rdm_ep->max_num_ofi_read, efa_rdm_ep->max_num_ofi_write);
 	if (efa_rdm_ep->pke_vec)
 		free(efa_rdm_ep->pke_vec);
 	free(efa_rdm_ep);

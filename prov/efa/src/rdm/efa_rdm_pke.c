@@ -457,6 +457,7 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 #if HAVE_LTTNG
 		efa_tracepoint_wr_id_post_send((void *)pkt_entry);
 #endif
+		efa_rdm_ep_record_tx_op_submitted(ep, pkt_entry_vec[pkt_idx], FI_SEND);
 	}
 
 	ret = ibv_wr_complete(qp->ibv_qp_ex);
@@ -464,8 +465,8 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 		return ret;
 	}
 
-	for (pkt_idx = 0; pkt_idx < pkt_entry_cnt; ++pkt_idx)
-		efa_rdm_ep_record_tx_op_submitted(ep, pkt_entry_vec[pkt_idx]);
+	//for (pkt_idx = 0; pkt_idx < pkt_entry_cnt; ++pkt_idx)
+	//	efa_rdm_ep_record_tx_op_submitted(ep, pkt_entry_vec[pkt_idx], FI_SEND);
 	return 0;
 }
 
@@ -527,7 +528,7 @@ int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 	if (OFI_UNLIKELY(err))
 		return err;
 
-	efa_rdm_ep_record_tx_op_submitted(ep, pkt_entry);
+	efa_rdm_ep_record_tx_op_submitted(ep, pkt_entry, FI_READ);
 	return 0;
 }
 
@@ -615,7 +616,7 @@ int efa_rdm_pke_write(struct efa_rdm_pke *pkt_entry)
 	if (OFI_UNLIKELY(err))
 		return err;
 
-	efa_rdm_ep_record_tx_op_submitted(ep, pkt_entry);
+	efa_rdm_ep_record_tx_op_submitted(ep, pkt_entry, FI_WRITE);
 	return 0;
 }
 

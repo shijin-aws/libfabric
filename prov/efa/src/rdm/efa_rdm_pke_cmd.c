@@ -407,7 +407,7 @@ void efa_rdm_pke_handle_data_copied(struct efa_rdm_pke *pkt_entry)
  * @param[in]	err		libfabric error code
  * @param[in]	prov_errno	provider specific error code
  */
-void efa_rdm_pke_handle_tx_error(struct efa_rdm_pke *pkt_entry, int err, int prov_errno)
+void efa_rdm_pke_handle_tx_error(struct efa_rdm_pke *pkt_entry, int err, int prov_errno, int op)
 {
 	struct efa_rdm_peer *peer;
 	struct efa_rdm_ope *txe;
@@ -420,7 +420,7 @@ void efa_rdm_pke_handle_tx_error(struct efa_rdm_pke *pkt_entry, int err, int pro
 	        efa_strerror(prov_errno, NULL), prov_errno);
 
 	ep = pkt_entry->ep;
-	efa_rdm_ep_record_tx_op_completed(ep, pkt_entry);
+	efa_rdm_ep_record_tx_op_completed(ep, pkt_entry, op);
 
 	peer = efa_rdm_ep_get_peer(ep, pkt_entry->addr);
 	if (!peer) {
@@ -569,7 +569,7 @@ void efa_rdm_pke_handle_send_completion(struct efa_rdm_pke *pkt_entry)
 	if (pkt_entry->addr == FI_ADDR_NOTAVAIL &&
 	    !(pkt_entry->flags & EFA_RDM_PKE_LOCAL_READ)) {
 		EFA_WARN(FI_LOG_CQ, "ignoring send completion of a packet to a removed peer.\n");
-		efa_rdm_ep_record_tx_op_completed(ep, pkt_entry);
+		efa_rdm_ep_record_tx_op_completed(ep, pkt_entry, FI_SEND);
 		efa_rdm_pke_release_tx(pkt_entry);
 		return;
 	}
@@ -674,7 +674,7 @@ void efa_rdm_pke_handle_send_completion(struct efa_rdm_pke *pkt_entry)
 		return;
 	}
 
-	efa_rdm_ep_record_tx_op_completed(ep, pkt_entry);
+	efa_rdm_ep_record_tx_op_completed(ep, pkt_entry, FI_SEND);
 	efa_rdm_pke_release_tx(pkt_entry);
 }
 

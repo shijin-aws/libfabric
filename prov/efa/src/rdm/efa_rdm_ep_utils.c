@@ -308,7 +308,20 @@ struct efa_rdm_ope *efa_rdm_ep_alloc_txe(struct efa_rdm_ep *efa_rdm_ep,
 		txe->tag = tag;
 	}
 
+	if (op == ofi_op_tagged || op == ofi_op_msg) {
+		efa_rdm_ep->num_ofi_send++;
+		if (efa_rdm_ep->num_ofi_send > efa_rdm_ep->max_num_ofi_send)
+			efa_rdm_ep->max_num_ofi_send = efa_rdm_ep->num_ofi_send;
+	}
+
+	if (op == ofi_op_write) {
+		efa_rdm_ep->num_ofi_write++;
+		if (efa_rdm_ep->num_ofi_write > efa_rdm_ep->max_num_ofi_write)
+			efa_rdm_ep->max_num_ofi_write = efa_rdm_ep->num_ofi_write;
+	}
+
 	dlist_insert_tail(&txe->ep_entry, &efa_rdm_ep->txe_list);
+
 	return txe;
 }
 
@@ -336,7 +349,7 @@ struct efa_rdm_ope *efa_rdm_ep_alloc_txe(struct efa_rdm_ep *efa_rdm_ep,
  * @param[in]		pkt_entry	TX pkt_entry, which contains
  * 					the info of the TX op.
  */
-void efa_rdm_ep_record_tx_op_submitted(struct efa_rdm_ep *ep, struct efa_rdm_pke *pkt_entry)
+void efa_rdm_ep_record_tx_op_submitted(struct efa_rdm_ep *ep, struct efa_rdm_pke *pkt_entry, int op)
 {
 	struct efa_rdm_peer *peer;
 	struct efa_rdm_ope *ope;
@@ -355,6 +368,33 @@ void efa_rdm_ep_record_tx_op_submitted(struct efa_rdm_ep *ep, struct efa_rdm_pke
 
 	assert(pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_TX_POOL);
 	ep->efa_outstanding_tx_ops++;
+
+	switch (op) {
+		case FI_SEND:
+			ep->efa_outstanding_send_ops++;
+			break;
+		case FI_READ:
+			ep->efa_outstanding_read_ops++;
+			break;
+		case FI_WRITE:
+			ep->efa_outstanding_write_ops++;
+			break;
+		default:
+			break;
+	}
+
+	if (ep->efa_outstanding_tx_ops > ep->efa_max_outstanding_tx_ops_curr)
+		ep->efa_max_outstanding_tx_ops_curr = ep->efa_outstanding_tx_ops;
+
+	if (ep->efa_outstanding_send_ops > ep->efa_max_outstanding_send_ops_curr)
+		ep->efa_max_outstanding_send_ops_curr = ep->efa_outstanding_send_ops;
+
+	if (ep->efa_outstanding_write_ops > ep->efa_max_outstanding_write_ops_curr)
+		ep->efa_max_outstanding_write_ops_curr = ep->efa_outstanding_write_ops;
+
+	if (ep->efa_outstanding_read_ops > ep->efa_max_outstanding_read_ops_curr)
+		ep->efa_max_outstanding_read_ops_curr = ep->efa_outstanding_read_ops;
+
 	if (peer)
 		peer->efa_outstanding_tx_ops++;
 
@@ -398,7 +438,7 @@ void efa_rdm_ep_record_tx_op_submitted(struct efa_rdm_ep *ep, struct efa_rdm_pke
  * @param[in]		pkt_entry	TX pkt_entry, which contains
  * 					the info of the TX op
  */
-void efa_rdm_ep_record_tx_op_completed(struct efa_rdm_ep *ep, struct efa_rdm_pke *pkt_entry)
+void efa_rdm_ep_record_tx_op_completed(struct efa_rdm_ep *ep, struct efa_rdm_pke *pkt_entry, int op)
 {
 	struct efa_rdm_ope *ope = NULL;
 	struct efa_rdm_peer *peer;
@@ -419,6 +459,19 @@ void efa_rdm_ep_record_tx_op_completed(struct efa_rdm_ep *ep, struct efa_rdm_pke
 
 	assert(pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_TX_POOL);
 	ep->efa_outstanding_tx_ops--;
+	switch (op) {
+		case FI_SEND:
+			ep->efa_outstanding_send_ops--;
+			break;
+		case FI_READ:
+			ep->efa_outstanding_read_ops--;
+			break;
+		case FI_WRITE:
+			ep->efa_outstanding_write_ops--;
+			break;
+		default:
+			break;
+	}
 	if (peer)
 		peer->efa_outstanding_tx_ops--;
 

@@ -51,7 +51,7 @@ fi_addr_t efa_rdm_pke_determine_addr(struct efa_rdm_pke *pkt_entry);
 void efa_rdm_pke_handle_data_copied(struct efa_rdm_pke *pkt_entry);
 
 void efa_rdm_pke_handle_tx_error(struct efa_rdm_pke *pkt_entry,
-				   int err, int prov_errno);
+				   int err, int prov_errno, int op);
 
 void efa_rdm_pke_handle_send_completion(struct efa_rdm_pke *pkt_entry);
 

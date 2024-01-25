@@ -74,6 +74,18 @@ efa_rdm_rma_alloc_txe(struct efa_rdm_ep *efa_rdm_ep,
 	       sizeof(struct fi_rma_iov) * msg_rma->rma_iov_count);
 
 	dlist_insert_tail(&txe->ep_entry, &efa_rdm_ep->txe_list);
+	if (op == ofi_op_read_req) {
+		efa_rdm_ep->num_ofi_read++;
+		if (efa_rdm_ep->num_ofi_read > efa_rdm_ep->max_num_ofi_read)
+			efa_rdm_ep->max_num_ofi_read = efa_rdm_ep->num_ofi_read;
+	}
+
+	if (op == ofi_op_write) {
+		efa_rdm_ep->num_ofi_write++;
+		if (efa_rdm_ep->num_ofi_write > efa_rdm_ep->max_num_ofi_write)
+			efa_rdm_ep->max_num_ofi_write = efa_rdm_ep->num_ofi_write;
+	}
+
 	return txe;
 }
 

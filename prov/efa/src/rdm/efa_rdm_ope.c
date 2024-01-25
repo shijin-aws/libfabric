@@ -60,6 +60,9 @@ void efa_rdm_txe_construct(struct efa_rdm_ope *txe,
 	/* peer would be NULL for local read operation */
 	if (txe->peer) {
 		dlist_insert_tail(&txe->peer_entry, &txe->peer->txe_list);
+		peer->num_txe++;
+		if (peer->num_txe > peer->max_num_txe)
+			peer->max_num_txe = peer->num_txe;
 	}
 
 	txe->internal_flags = 0;
@@ -135,10 +138,12 @@ void efa_rdm_txe_release(struct efa_rdm_ope *txe)
 	int i, err = 0;
 	struct dlist_entry *tmp;
 	struct efa_rdm_pke *pkt_entry;
+	int op = txe->op;
 
 	/* txe->peer would be NULL for local read operation */
 	if (txe->peer) {
 		dlist_remove(&txe->peer_entry);
+		txe->peer->num_txe--;
 	}
 
 	for (i = 0; i < txe->iov_count; i++) {
@@ -154,6 +159,12 @@ void efa_rdm_txe_release(struct efa_rdm_ope *txe)
 	}
 
 	dlist_remove(&txe->ep_entry);
+	if (op == ofi_op_msg || op == ofi_op_tagged)
+		txe->ep->num_ofi_send--;
+	if (op == ofi_op_read_req)
+		txe->ep->num_ofi_read--;
+	if (op == ofi_op_write)
+		txe->ep->num_ofi_write--;
 
 	dlist_foreach_container_safe(&txe->queued_pkts,
 				     struct efa_rdm_pke,
@@ -1716,7 +1727,9 @@ ssize_t efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type)
 	segment_offset = efa_rdm_pkt_type_contains_data(pkt_type) ? ope->bytes_sent : -1;
 	for (i = 0; i < pkt_entry_cnt; ++i) {
 		pkt_entry_vec[i] = efa_rdm_pke_alloc(ep, ep->efa_tx_pkt_pool, EFA_RDM_PKE_FROM_EFA_TX_POOL);
-		assert(pkt_entry_vec[i]);
+		if (!pkt_entry_vec[i])
+			return -FI_EAGAIN;
+		//assert(pkt_entry_vec[i]);
 
 		err = efa_rdm_pke_fill_data(pkt_entry_vec[i],
 					    pkt_type,
@@ -1736,11 +1749,8 @@ ssize_t efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type)
 	}
 
 	err = efa_rdm_pke_sendv(pkt_entry_vec, pkt_entry_cnt);
-	if (err) {
-		for (i = 0; i < pkt_entry_cnt; ++i)
-			efa_rdm_pke_release_tx(pkt_entry_vec[i]);
+	if (err)
 		goto handle_err;
-	}
 
 	ope->peer->flags |= EFA_RDM_PEER_REQ_SENT;
 	for (i = 0; i < pkt_entry_cnt; ++i)
@@ -1748,6 +1758,8 @@ ssize_t efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type)
 	return 0;
 
 handle_err:
+		for (i = 0; i < pkt_entry_cnt; ++i)
+			efa_rdm_pke_release_tx(pkt_entry_vec[i]);
 		return efa_rdm_ope_post_send_fallback(ope, pkt_type, err);
 }
 

@@ -52,6 +52,8 @@ struct efa_rdm_peer {
 	struct dlist_entry rx_unexp_tagged_list; /**< a list of unexpected tagged rxe for this peer */
 	struct dlist_entry txe_list; /**< a list of txe related to this peer */
 	struct dlist_entry rxe_list; /**< a list of rxe relased to this peer */
+	size_t num_txe;
+	size_t max_num_txe;
 
 	/**
 	 * @brief number of bytes that has been sent as part of runting protocols
