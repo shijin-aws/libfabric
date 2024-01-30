@@ -29,7 +29,7 @@ int efa_rdm_ep_bulk_post_internal_rx_pkts(struct efa_rdm_ep *ep)
 	if (ep->efa_rx_pkts_to_post == 0)
 		return 0;
 
-	assert(ep->efa_rx_pkts_to_post + ep->efa_rx_pkts_posted <= ep->efa_max_outstanding_rx_ops);
+	assert(ep->efa_rx_pkts_to_post + ep->efa_rx_pkts_posted + ep->efa_rx_pkts_held == efa_rdm_ep_get_rx_pool_size(ep));
 	for (i = 0; i < ep->efa_rx_pkts_to_post; ++i) {
 		ep->pke_vec[i] = efa_rdm_pke_alloc(ep, ep->efa_rx_pkt_pool,
 					       EFA_RDM_PKE_FROM_EFA_RX_POOL);
@@ -180,8 +180,9 @@ void efa_rdm_ep_progress_post_internal_rx_pkts(struct efa_rdm_ep *ep)
 			ep->efa_rx_pkts_to_post = 0;
 		}
 	} else {
-		if (ep->efa_rx_pkts_posted == 0 && ep->efa_rx_pkts_to_post == 0) {
-			/* Both efa_rx_pkts_posted and efa_rx_pkts_to_post equal to 0 means
+		if (ep->efa_rx_pkts_posted == 0 && ep->efa_rx_pkts_to_post == 0 && ep->efa_rx_pkts_held == 0) {
+			/* All of efa_rx_pkts_posted, efa_rx_pkts_to_post equal and
+			 * efa_rx_pkts_held to 0 means
 			 * this is the first call of the progress engine on this endpoint.
 			 *
 			 * In this case, we explictly allocate the 1st chunk of memory

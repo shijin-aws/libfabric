@@ -199,6 +199,7 @@ int efa_rdm_ep_flush_queued_blocking_copy_to_hmem(struct efa_rdm_ep *ep)
 		pkt_entry = ep->queued_copy_vec[i].pkt_entry;
 		segment_offset = ep->queued_copy_vec[i].data_offset;
 		rxe = pkt_entry->ope;
+		ep->efa_rx_pkts_held--;
 
 		if (bytes_copied[i] != MIN(pkt_entry->payload_size,
 					   rxe->cq_entry.len - segment_offset)) {
@@ -246,6 +247,7 @@ int efa_rdm_pke_queued_copy_payload_to_hmem(struct efa_rdm_pke *pke,
 
 	if (ep->queued_copy_num < EFA_RDM_MAX_QUEUED_COPY &&
 	    rxe->bytes_copied + rxe->bytes_queued_blocking_copy < rxe->total_len) {
+		ep->efa_rx_pkts_held++;
 		return 0;
 	}
 

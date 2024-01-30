@@ -1287,6 +1287,7 @@ int efa_rdm_ope_post_read(struct efa_rdm_ope *ope)
 	size_t read_once_len, max_read_once_len;
 	struct efa_rdm_ep *ep;
 	struct efa_rdm_pke *pkt_entry;
+	struct efa_rdm_pke *local_read_pkt_entry = NULL;
 
 	assert(ope->iov_count > 0);
 	assert(ope->rma_iov_count > 0);
@@ -1327,6 +1328,7 @@ int efa_rdm_ope_post_read(struct efa_rdm_ope *ope)
 		err = efa_rdm_txe_prepare_local_read_pkt_entry(ope);
 		if (err)
 			return err;
+		local_read_pkt_entry = ope->local_read_pkt_entry;
 	}
 
 	efa_rdm_ope_try_fill_desc(ope, 0, FI_RECV);
@@ -1405,6 +1407,9 @@ int efa_rdm_ope_post_read(struct efa_rdm_ope *ope)
 			rma_iov_idx += 1;
 			rma_iov_offset = 0;
 		}
+
+		if (local_read_pkt_entry && (local_read_pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_RX_POOL))
+			ep->efa_rx_pkts_held++;
 	}
 
 	return 0;
@@ -1656,7 +1661,7 @@ int efa_rdm_rxe_post_local_read_or_queue(struct efa_rdm_ope *rxe,
 	msg_rma.rma_iov_count = 1;
 
 	txe = efa_rdm_rma_alloc_txe(rxe->ep,
-				    efa_rdm_ep_get_peer(rxe->ep, msg_rma.addr),
+				    NULL, /* peer is NULL for FI_ADDR_NOTAVAIL */
 				    &msg_rma,
 				    ofi_op_read_req,
 				    0 /* flags*/);
