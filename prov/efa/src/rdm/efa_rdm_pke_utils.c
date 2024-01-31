@@ -199,7 +199,12 @@ int efa_rdm_ep_flush_queued_blocking_copy_to_hmem(struct efa_rdm_ep *ep)
 		pkt_entry = ep->queued_copy_vec[i].pkt_entry;
 		segment_offset = ep->queued_copy_vec[i].data_offset;
 		rxe = pkt_entry->ope;
-		ep->efa_rx_pkts_held--;
+		if (pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_RX_POOL) {
+			assert(ep->efa_rx_pkts_held > 0);
+			ep->efa_rx_pkts_held--;
+		}
+		//printf("efa_rdm_ep_flush_queued_blocking_copy_to_hmem: flush copy, pke: %p, efa_rx_pkts_posted: %lu, efa_rx_pkts_to_post: %lu, efa_rx_pkts_held: %lu\n",
+		//(void *)pkt_entry, ep->efa_rx_pkts_posted, ep->efa_rx_pkts_to_post, ep->efa_rx_pkts_held);
 
 		if (bytes_copied[i] != MIN(pkt_entry->payload_size,
 					   rxe->cq_entry.len - segment_offset)) {
@@ -244,10 +249,13 @@ int efa_rdm_pke_queued_copy_payload_to_hmem(struct efa_rdm_pke *pke,
 	ep->queued_copy_num += 1;
 
 	rxe->bytes_queued_blocking_copy += pke->payload_size;
+	if (pke->alloc_type == EFA_RDM_PKE_FROM_EFA_RX_POOL)
+		ep->efa_rx_pkts_held++;
+	//printf("efa_rdm_pke_queued_copy_payload_to_hmem: queue copy, pke: %p, efa_rx_pkts_posted: %lu, efa_rx_pkts_to_post: %lu, efa_rx_pkts_held: %lu\n",
+	//(void *)pke, ep->efa_rx_pkts_posted, ep->efa_rx_pkts_to_post, ep->efa_rx_pkts_held);
 
 	if (ep->queued_copy_num < EFA_RDM_MAX_QUEUED_COPY &&
 	    rxe->bytes_copied + rxe->bytes_queued_blocking_copy < rxe->total_len) {
-		ep->efa_rx_pkts_held++;
 		return 0;
 	}
 

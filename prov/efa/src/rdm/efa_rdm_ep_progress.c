@@ -29,6 +29,7 @@ int efa_rdm_ep_bulk_post_internal_rx_pkts(struct efa_rdm_ep *ep)
 	if (ep->efa_rx_pkts_to_post == 0)
 		return 0;
 
+	//printf("efa_rdm_ep_bulk_post_internal_rx_pkts: rx pkts posted: %lu, rx pkts to post: %lu, rx pkts held: %lu\n", ep->efa_rx_pkts_posted, ep->efa_rx_pkts_to_post, ep->efa_rx_pkts_held);
 	assert(ep->efa_rx_pkts_to_post + ep->efa_rx_pkts_posted + ep->efa_rx_pkts_held == efa_rdm_ep_get_rx_pool_size(ep));
 	for (i = 0; i < ep->efa_rx_pkts_to_post; ++i) {
 		ep->pke_vec[i] = efa_rdm_pke_alloc(ep, ep->efa_rx_pkt_pool,

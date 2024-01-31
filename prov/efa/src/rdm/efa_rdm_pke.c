@@ -190,6 +190,7 @@ void efa_rdm_pke_release_rx(struct efa_rdm_pke *pkt_entry)
 		assert(ep->rx_readcopy_pkt_pool_used > 0);
 		ep->rx_readcopy_pkt_pool_used--;
 	}
+	//printf("efa_rdm_pke_release_rx: pke: %p, efa_rx_pkts_to_post: %lu\n", (void *)pkt_entry, ep->efa_rx_pkts_to_post);
 
 #if ENABLE_DEBUG
 	dlist_remove(&pkt_entry->dbg_entry);

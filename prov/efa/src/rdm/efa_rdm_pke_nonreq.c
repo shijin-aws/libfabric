@@ -498,8 +498,12 @@ void efa_rdm_pke_handle_rma_read_completion(struct efa_rdm_pke *context_pkt_entr
 				data_pkt_entry = txe->local_read_pkt_entry;
 				assert(data_pkt_entry->payload_size > 0);
 				/* We were using a held rx pkt to post local read */
-				if (data_pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_RX_POOL)
+				if (data_pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_RX_POOL) {
+					assert(txe->ep->efa_rx_pkts_held > 0);
 					txe->ep->efa_rx_pkts_held--;
+					//printf("efa_rdm_pke_handle_rma_read_completion: finished read, pke: %p, efa_rx_pkts_posted: %lu, efa_rx_pkts_to_post: %lu, efa_rx_pkts_held: %lu\n",
+					//(void *)data_pkt_entry, txe->ep->efa_rx_pkts_posted, txe->ep->efa_rx_pkts_to_post, txe->ep->efa_rx_pkts_held);
+				}
 				efa_rdm_pke_handle_data_copied(data_pkt_entry);
 			} else {
 				assert(txe && txe->cq_entry.flags & FI_READ);

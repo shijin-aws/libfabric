@@ -1408,8 +1408,11 @@ int efa_rdm_ope_post_read(struct efa_rdm_ope *ope)
 			rma_iov_offset = 0;
 		}
 
-		if (local_read_pkt_entry && (local_read_pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_RX_POOL))
+		if (local_read_pkt_entry && (local_read_pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_RX_POOL)) {
 			ep->efa_rx_pkts_held++;
+			//printf("efa_rdm_ope_post_read: queue copy, pke: %p, efa_rx_pkts_posted: %lu, efa_rx_pkts_to_post: %lu, efa_rx_pkts_held: %lu\n",
+			//(void *)local_read_pkt_entry, ep->efa_rx_pkts_posted, ep->efa_rx_pkts_to_post, ep->efa_rx_pkts_held);
+		}
 	}
 
 	return 0;

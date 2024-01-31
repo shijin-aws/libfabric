@@ -967,6 +967,7 @@ ssize_t efa_rdm_pke_proc_matched_mulreq_rtm(struct efa_rdm_pke *pkt_entry)
 		nxt = cur->next;
 		cur->next = NULL;
 
+		//printf("efa_rdm_pke_proc_matched_mulreq_rtm is calling efa_rdm_pke_copy_payload_to_ope, cur: %p, rxe: %p, total len: %lu\n", (void *)cur, (void *)rxe, rxe->total_len);
 		err = efa_rdm_pke_copy_payload_to_ope(cur, rxe);
 		if (err) {
 			efa_rdm_pke_release_rx(cur);

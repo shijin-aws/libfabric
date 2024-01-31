@@ -879,6 +879,8 @@ void efa_rdm_pke_handle_recv_completion(struct efa_rdm_pke *pkt_entry)
 	assert(ep->efa_rx_pkts_posted > 0);
 	ep->efa_rx_pkts_posted--;
 
+	//printf("efa_rdm_pke_handle_recv_completion: finished ibv recv, pke: %p, efa_rx_pkts_posted: %lu, efa_rx_pkts_to_post: %lu, efa_rx_pkts_held: %lu\n",
+	//(void *)pkt_entry, ep->efa_rx_pkts_posted, ep->efa_rx_pkts_to_post, ep->efa_rx_pkts_held);
 	base_hdr = efa_rdm_pke_get_base_hdr(pkt_entry);
 	pkt_type = base_hdr->type;
 	if (pkt_type >= EFA_RDM_EXTRA_REQ_PKT_END) {
