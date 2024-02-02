@@ -331,9 +331,9 @@ void efa_rdm_pke_handle_data_copied(struct efa_rdm_pke *pkt_entry)
 	efa_rdm_pke_release_rx(pkt_entry);
 
 	if (ope->total_len == ope->bytes_copied) {
-		if (ope->cuda_copy_method == EFA_RDM_CUDA_COPY_BLOCKING) {
+		if (ope->hmem_copy_method == EFA_RDM_HMEM_COPY_BLOCKING) {
 			assert(ep->blocking_copy_rxe_num > 0);
-			ope->cuda_copy_method = EFA_RDM_CUDA_COPY_UNSPEC;
+			ope->hmem_copy_method = EFA_RDM_HMEM_COPY_UNSPEC;
 			ep->blocking_copy_rxe_num -= 1;
 		}
 

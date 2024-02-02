@@ -88,10 +88,10 @@ struct efa_rdm_atomic_ex {
 /**
  * @brief how to copy data from bounce buffer to CUDA receive buffer
  */
-enum efa_rdm_cuda_copy_method {
-	EFA_RDM_CUDA_COPY_UNSPEC = 0,
-	EFA_RDM_CUDA_COPY_BLOCKING,   /** gdrcopy or cudaMemcpy */
-	EFA_RDM_CUDA_COPY_LOCALREAD   /** device driven copy by using local RDMA read */
+enum efa_rdm_hmem_copy_method {
+	EFA_RDM_HMEM_COPY_UNSPEC = 0,
+	EFA_RDM_HMEM_COPY_BLOCKING,   /** gdrcopy or cudaMemcpy */
+	EFA_RDM_HMEM_COPY_LOCALREAD   /** device driven copy by using local RDMA read */
 };
 
 /**
@@ -191,7 +191,7 @@ struct efa_rdm_ope {
 
 	struct efa_rdm_pke *unexp_pkt;
 	char *atomrsp_data;
-	enum efa_rdm_cuda_copy_method cuda_copy_method;
+	enum efa_rdm_hmem_copy_method hmem_copy_method;
 	/* end of RX related variables */
 	/* the following variables are for TX operation only */
 	uint64_t bytes_acked;

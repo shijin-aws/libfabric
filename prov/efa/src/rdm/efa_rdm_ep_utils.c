@@ -159,7 +159,7 @@ struct efa_rdm_ope *efa_rdm_ep_alloc_rxe(struct efa_rdm_ep *ep, fi_addr_t addr, 
 	rxe->bytes_acked = 0;
 	rxe->bytes_sent = 0;
 	rxe->bytes_runt = 0;
-	rxe->cuda_copy_method = EFA_RDM_CUDA_COPY_UNSPEC;
+	rxe->hmem_copy_method = EFA_RDM_HMEM_COPY_UNSPEC;
 	rxe->efa_outstanding_tx_ops = 0;
 	rxe->window = 0;
 	rxe->op = op;

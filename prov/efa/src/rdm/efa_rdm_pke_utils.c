@@ -179,13 +179,14 @@ int efa_rdm_ep_flush_queued_blocking_copy_to_hmem(struct efa_rdm_ep *ep)
 		desc = rxe->desc[0];
 		assert(desc && desc->peer.iface != FI_HMEM_SYSTEM);
 
-		if (FI_HMEM_CUDA == desc->peer.iface &&
-		    (desc->peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE)) {
+		if (desc->peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE) {
 			assert(desc->peer.hmem_data);
-			bytes_copied[i] = ofi_gdrcopy_to_cuda_iov((uint64_t)desc->peer.hmem_data,
-								  rxe->iov, rxe->iov_count,
-								  segment_offset + ep->msg_prefix_size,
-			                                          data, pkt_entry->payload_size);
+			bytes_copied[i] = ofi_dev_reg_copy_to_hmem_iov(
+								desc->peer.iface,
+								(uint64_t)desc->peer.hmem_data,
+								rxe->iov, rxe->iov_count,
+								segment_offset + ep->msg_prefix_size,
+								data, pkt_entry->payload_size);
 		} else {
 			bytes_copied[i] = ofi_copy_to_hmem_iov(desc->peer.iface,
 			                                       desc->peer.device.reserved,
@@ -282,18 +283,18 @@ int efa_rdm_pke_queued_copy_payload_to_hmem(struct efa_rdm_pke *pke,
  * 			On failure, return libfabric error code
  */
 static inline
-int efa_rdm_pke_copy_payload_to_cuda(struct efa_rdm_pke *pke,
+int efa_rdm_pke_copy_payload_to_hmem(struct efa_rdm_pke *pke,
 				     struct efa_rdm_ope *rxe)
 {
 	static const int max_blocking_copy_rxe_num = 4;
 	struct efa_mr *desc;
 	struct efa_rdm_ep *ep;
 	size_t segment_offset;
-	bool p2p_available, local_read_available, gdrcopy_available, cuda_memcpy_available;
-	int ret, err;
+	bool p2p_available, local_read_available, dev_reg_copy_available, api_memcpy_available;
+	int ret, err, iface;
 
 	desc = rxe->desc[0];
-	assert(efa_mr_is_cuda(desc));
+	iface = ((struct efa_mr *)desc)->peer.iface;
 
 	ep = pke->ep;
 	assert(ep);
@@ -306,29 +307,32 @@ int efa_rdm_pke_copy_payload_to_cuda(struct efa_rdm_pke *pke,
 
 	p2p_available = ret;
 	local_read_available = p2p_available && efa_rdm_ep_support_rdma_read(ep);
-	cuda_memcpy_available = ep->cuda_api_permitted;
-	gdrcopy_available = desc->peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE;
+	api_memcpy_available = true;
+	dev_reg_copy_available = desc->peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE;
+
+	if (iface == FI_HMEM_CUDA)
+		api_memcpy_available = ep->cuda_api_permitted;
 
 	/* For in-order aligned send/recv, only allow local read to be used to copy data */
 	if (ep->sendrecv_in_order_aligned_128_bytes) {
-		cuda_memcpy_available = false;
-		gdrcopy_available = false;
+		api_memcpy_available = false;
+		dev_reg_copy_available = false;
 	}
 
-	if (!local_read_available && !gdrcopy_available && !cuda_memcpy_available) {
-		EFA_WARN(FI_LOG_CQ, "None of the copy methods: localread, gdrcopy or cudaMemcpy is available,"
-			"thus libfabric is not able to copy received data to Nvidia GPU\n");
+	if (!local_read_available && !dev_reg_copy_available && !api_memcpy_available) {
+		EFA_WARN(FI_LOG_CQ, "None of the copy methods: localread, dev reg copy or api copy is available,"
+			"thus libfabric is not able to copy received data to accelerator memory\n");
 		return -FI_EINVAL;
 	}
 
 	if (!local_read_available) {
-		assert(cuda_memcpy_available || gdrcopy_available);
+		assert(api_memcpy_available || dev_reg_copy_available);
 		return efa_rdm_pke_queued_copy_payload_to_hmem(pke, rxe);
 	}
 
 	assert(local_read_available);
 
-	if (!gdrcopy_available) {
+	if (iface == FI_HMEM_CUDA && (!dev_reg_copy_available)) {
 		/* prefer local read over cudaMemcpy (when it is available)
 		 * because local read copy is faster
 		 */
@@ -341,40 +345,48 @@ int efa_rdm_pke_copy_payload_to_cuda(struct efa_rdm_pke *pke,
 		return err;
 	}
 
-	assert(gdrcopy_available && local_read_available);
+	/* when both local read and blocking copy are available, we use a mixed approach */
 
-	/* when both local read and gdrcopy are available, we use a mixed approach */
-
-	if (rxe->cuda_copy_method != EFA_RDM_CUDA_COPY_LOCALREAD) {
+	if (rxe->hmem_copy_method != EFA_RDM_HMEM_COPY_LOCALREAD) {
 		assert(rxe->bytes_copied + pke->payload_size <= rxe->total_len);
 
 		/* If this packet is the last uncopied piece (or the only piece), copy it right away
 		 * to achieve best latency.
 		 */
 		if (rxe->bytes_copied + pke->payload_size == rxe->total_len) {
-			assert(desc->peer.hmem_data);
-			ofi_gdrcopy_to_cuda_iov((uint64_t)desc->peer.hmem_data,
-			                        rxe->iov, rxe->iov_count,
-			                        segment_offset + ep->msg_prefix_size,
-			                        pke->payload, pke->payload_size);
+			if (desc->peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE) {
+				assert(desc->peer.hmem_data);
+				ofi_dev_reg_copy_to_hmem_iov(
+						desc->peer.iface,
+						(uint64_t)desc->peer.hmem_data,
+						rxe->iov, rxe->iov_count,
+						segment_offset + ep->msg_prefix_size,
+						pke->payload, pke->payload_size);
+			} else {
+				ofi_copy_to_hmem_iov(desc->peer.iface,
+						desc->peer.device.reserved,
+						rxe->iov, rxe->iov_count,
+						segment_offset + ep->msg_prefix_size,
+						pke->payload, pke->payload_size);
+			}
 			efa_rdm_pke_handle_data_copied(pke);
 			return 0;
 		}
 
-		/* If this rxe is already been chosen to use gdrcopy/cudaMemcpy, keep using on it */
-		if (rxe->cuda_copy_method == EFA_RDM_CUDA_COPY_BLOCKING)
+		/* If this rxe is already been chosen to use blocking copy, keep using on it */
+		if (rxe->hmem_copy_method == EFA_RDM_HMEM_COPY_BLOCKING)
 			return efa_rdm_pke_queued_copy_payload_to_hmem(pke, rxe);
 
-		/* If there are still empty slot for using gdrcopy, use gdrcopy on this rxe */
-		if (rxe->cuda_copy_method == EFA_RDM_CUDA_COPY_UNSPEC && ep->blocking_copy_rxe_num < max_blocking_copy_rxe_num) {
-			rxe->cuda_copy_method = EFA_RDM_CUDA_COPY_BLOCKING;
+		/* If there are still empty slot for using blocking copy, use it */
+		if (rxe->hmem_copy_method == EFA_RDM_HMEM_COPY_UNSPEC && ep->blocking_copy_rxe_num < max_blocking_copy_rxe_num) {
+			rxe->hmem_copy_method = EFA_RDM_HMEM_COPY_BLOCKING;
 			ep->blocking_copy_rxe_num += 1;
 			return efa_rdm_pke_queued_copy_payload_to_hmem(pke, rxe);
 		}
 	}
 
-	if (rxe->cuda_copy_method == EFA_RDM_CUDA_COPY_UNSPEC)
-		rxe->cuda_copy_method = EFA_RDM_CUDA_COPY_LOCALREAD;
+	if (rxe->hmem_copy_method == EFA_RDM_HMEM_COPY_UNSPEC)
+		rxe->hmem_copy_method = EFA_RDM_HMEM_COPY_LOCALREAD;
 
 	err = efa_rdm_rxe_post_local_read_or_queue(rxe, segment_offset,
 						   pke, pke->payload, pke->payload_size);
@@ -457,11 +469,18 @@ ssize_t efa_rdm_pke_copy_payload_to_ope(struct efa_rdm_pke *pke,
 
 	desc = ope->desc[0];
 
-	if (efa_mr_is_cuda(desc))
-		return efa_rdm_pke_copy_payload_to_cuda(pke, ope);
 
+	// pure blocking copy
+	//if (efa_mr_is_neuron(desc))
+    //    return efa_rdm_pke_queued_copy_payload_to_hmem(pke, ope);
+
+	// pure local read
+	if (efa_mr_is_neuron(desc))
+		return efa_rdm_rxe_post_local_read_or_queue(ope, segment_offset, pke, pke->payload, pke->payload_size);
+
+	// mixed
 	if (efa_mr_is_hmem(desc))
-		return efa_rdm_pke_queued_copy_payload_to_hmem(pke, ope);
+		return efa_rdm_pke_copy_payload_to_hmem(pke, ope);
 
 	assert( !desc || desc->peer.iface == FI_HMEM_SYSTEM);
 	bytes_copied = ofi_copy_to_iov(ope->iov, ope->iov_count,
