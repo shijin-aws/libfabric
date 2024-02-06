@@ -345,7 +345,7 @@ int efa_rdm_rxe_post_local_read_or_queue(struct efa_rdm_ope *rxe,
 ssize_t efa_rdm_ope_prepare_to_post_send(struct efa_rdm_ope *ope,
 					 int pkt_type,
 					 int *pkt_entry_cnt,
-					 int *pkt_entry_data_size_vec);
+					 size_t *pkt_entry_data_size_vec);
 
 ssize_t efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type);
 

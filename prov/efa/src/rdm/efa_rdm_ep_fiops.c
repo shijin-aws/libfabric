@@ -543,11 +543,18 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	if (ret)
 		goto err_close_core_cq;
 
-	efa_rdm_ep->pke_vec = calloc(sizeof(struct efa_rdm_pke *), EFA_RDM_EP_MAX_WR_PER_IBV_POST_RECV);
+	efa_rdm_ep->pke_vec = calloc(sizeof(struct efa_rdm_pke *), MAX(EFA_RDM_EP_MAX_WR_PER_IBV_POST_SEND, EFA_RDM_EP_MAX_WR_PER_IBV_POST_RECV));
 	if (!efa_rdm_ep->pke_vec) {
 		EFA_WARN(FI_LOG_EP_CTRL, "cannot alloc memory for efa_rdm_ep->pke_vec!\n");
 		ret = -FI_ENOMEM;
 		goto err_close_core_cq;
+	}
+
+	efa_rdm_ep->pke_data_size_vec = calloc(sizeof(size_t), EFA_RDM_EP_MAX_WR_PER_IBV_POST_SEND);
+	if (!efa_rdm_ep->pke_data_size_vec) {
+		EFA_WARN(FI_LOG_EP_CTRL, "cannot alloc memory for efa_rdm_ep->pke_data_size_vec!\n");
+		ret = -FI_ENOMEM;
+		goto free_pke_vec;
 	}
 
 	*ep = &efa_rdm_ep->base_ep.util_ep.ep_fid;
@@ -559,6 +566,10 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	(*ep)->ops = &efa_rdm_ep_ep_ops;
 	(*ep)->cm = &efa_rdm_ep_cm_ops;
 	return 0;
+
+free_pke_vec:
+	if (efa_rdm_ep->pke_vec)
+		free(efa_rdm_ep->pke_vec);
 
 err_close_core_cq:
 	retv = -ibv_destroy_cq(ibv_cq_ex_to_cq(efa_rdm_ep->ibv_cq_ex));
@@ -855,6 +866,10 @@ static int efa_rdm_ep_close(struct fid *fid)
 
 	if (efa_rdm_ep->pke_vec)
 		free(efa_rdm_ep->pke_vec);
+
+	if (efa_rdm_ep->pke_data_size_vec)
+		free(efa_rdm_ep->pke_data_size_vec);
+
 	free(efa_rdm_ep);
 	return retv;
 }

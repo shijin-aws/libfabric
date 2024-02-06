@@ -13,7 +13,8 @@ void test_efa_rdm_ope_prepare_to_post_send_impl(struct efa_resource *resource,
 	struct efa_rdm_peer mock_peer;
 	size_t raw_addr_len = sizeof(raw_addr);
 	fi_addr_t addr;
-	int pkt_entry_cnt, pkt_entry_data_size_vec[1024];
+	int pkt_entry_cnt;
+	size_t pkt_entry_data_size_vec[1024];
 	int i, err, ret;
 
 	ret = fi_getname(&resource->ep->fid, &raw_addr, &raw_addr_len);
