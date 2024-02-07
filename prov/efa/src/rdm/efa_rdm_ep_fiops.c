@@ -58,11 +58,11 @@ int efa_rdm_ep_create_base_ep_ibv_qp(struct efa_rdm_ep *ep)
 {
 	struct ibv_qp_init_attr_ex attr_ex = { 0 };
 
-	attr_ex.cap.max_send_wr = ep->base_ep.domain->device->rdm_info->tx_attr->size;
+	attr_ex.cap.max_send_wr = ep->user_info->tx_attr->size;
 	attr_ex.cap.max_send_sge = ep->base_ep.domain->device->rdm_info->tx_attr->iov_limit;
 	attr_ex.send_cq = ibv_cq_ex_to_cq(ep->ibv_cq_ex);
 
-	attr_ex.cap.max_recv_wr = ep->base_ep.domain->device->rdm_info->rx_attr->size;
+	attr_ex.cap.max_recv_wr = ep->user_info->rx_attr->size;
 	attr_ex.cap.max_recv_sge = ep->base_ep.domain->device->rdm_info->rx_attr->iov_limit;
 	attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->ibv_cq_ex);
 
@@ -463,8 +463,7 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	efa_rdm_ep->use_device_rdma = efa_rdm_get_use_device_rdma(info->fabric_attr->api_version);
 	efa_rdm_ep->shm_permitted = true;
 
-	cq_attr.size = MAX(efa_rdm_ep->rx_size + efa_rdm_ep->tx_size,
-			   efa_env.cq_size);
+	cq_attr.size = efa_rdm_ep->rx_size + efa_rdm_ep->tx_size;
 
 	if (info->tx_attr->op_flags & FI_DELIVERY_COMPLETE)
 		EFA_INFO(FI_LOG_CQ, "FI_DELIVERY_COMPLETE unsupported\n");
