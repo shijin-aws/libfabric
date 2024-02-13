@@ -2,7 +2,6 @@
 /* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
 
 #include "efa.h"
-#include "efa_cq.h"
 #include "efa_av.h"
 #include "efa_rdm_ep.h"
 #include "efa_rdm_cq.h"
@@ -28,13 +27,39 @@ int efa_rdm_ep_create_base_ep_ibv_qp(struct efa_rdm_ep *ep)
 {
 	struct ibv_qp_init_attr_ex attr_ex = { 0 };
 
-	attr_ex.cap.max_send_wr = ep->base_ep.domain->device->rdm_info->tx_attr->size;
-	attr_ex.cap.max_send_sge = ep->base_ep.domain->device->rdm_info->tx_attr->iov_limit;
-	attr_ex.send_cq = ibv_cq_ex_to_cq(ep->ibv_cq_ex);
+	if (!ep->tx_cq && !ep->rx_cq) {
+		EFA_WARN(FI_LOG_EP_CTRL,
+			"Endpoint is not bound to a send or receive completion queue\n");
+		return -FI_ENOCQ;
+	}
 
-	attr_ex.cap.max_recv_wr = ep->base_ep.domain->device->rdm_info->rx_attr->size;
-	attr_ex.cap.max_recv_sge = ep->base_ep.domain->device->rdm_info->rx_attr->iov_limit;
-	attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->ibv_cq_ex);
+	if (!ep->tx_cq && ofi_needs_tx(ep->base_ep.info->caps)) {
+		EFA_WARN(FI_LOG_EP_CTRL,
+			"Endpoint is not bound to a send completion queue when it has transmit capabilities enabled (FI_SEND).\n");
+		return -FI_ENOCQ;
+	}
+
+	if (!ep->rx_cq && ofi_needs_rx(ep->base_ep.info->caps)) {
+		EFA_WARN(FI_LOG_EP_CTRL,
+			"Endpoint is not bound to a receive completion queue when it has receive capabilities enabled. (FI_RECV)\n");
+		return -FI_ENOCQ;
+	}
+
+	if (ep->tx_cq) {
+		attr_ex.cap.max_send_wr = ep->base_ep.domain->device->rdm_info->tx_attr->size;
+		attr_ex.cap.max_send_sge = ep->base_ep.domain->device->rdm_info->tx_attr->iov_limit;
+		attr_ex.send_cq = ibv_cq_ex_to_cq(ep->tx_cq->ibv_cq_ex);
+	} else {
+		attr_ex.send_cq = ibv_cq_ex_to_cq(ep->rx_cq->ibv_cq_ex);
+	}
+
+	if (ep->rx_cq) {
+		attr_ex.cap.max_recv_wr = ep->base_ep.domain->device->rdm_info->rx_attr->size;
+		attr_ex.cap.max_recv_sge = ep->base_ep.domain->device->rdm_info->rx_attr->iov_limit;
+		attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->rx_cq->ibv_cq_ex);
+	} else {
+		attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->tx_cq->ibv_cq_ex);
+	}
 
 	attr_ex.cap.max_inline_data = ep->base_ep.domain->device->efa_attr.inline_buf_size;
 
@@ -471,11 +496,6 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	efa_rdm_ep->efa_rx_pkts_held = 0;
 	efa_rdm_ep->efa_outstanding_tx_ops = 0;
 
-	assert(!efa_rdm_ep->ibv_cq_ex);
-
-	ret = efa_cq_ibv_cq_ex_open(&cq_attr, efa_domain->device->ibv_ctx,
-				    &efa_rdm_ep->ibv_cq_ex, &efa_rdm_ep->ibv_cq_ex_type);
-
 	if (ret) {
 		EFA_WARN(FI_LOG_CQ, "Unable to create extended CQ: %s\n", strerror(errno));
 		goto err_close_shm_ep;
@@ -483,7 +503,7 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 
 	ret = efa_rdm_ep_create_buffer_pools(efa_rdm_ep);
 	if (ret)
-		goto err_close_core_cq;
+		goto err_close_shm_ep;
 
 	efa_rdm_ep_init_linked_lists(efa_rdm_ep);
 
@@ -509,15 +529,11 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	efa_rdm_ep->sendrecv_in_order_aligned_128_bytes = false;
 	efa_rdm_ep->write_in_order_aligned_128_bytes = false;
 
-	ret = efa_rdm_ep_create_base_ep_ibv_qp(efa_rdm_ep);
-	if (ret)
-		goto err_close_core_cq;
-
 	efa_rdm_ep->pke_vec = calloc(sizeof(struct efa_rdm_pke *), EFA_RDM_EP_MAX_WR_PER_IBV_POST_RECV);
 	if (!efa_rdm_ep->pke_vec) {
 		EFA_WARN(FI_LOG_EP_CTRL, "cannot alloc memory for efa_rdm_ep->pke_vec!\n");
 		ret = -FI_ENOMEM;
-		goto err_close_core_cq;
+		goto err_close_shm_ep;
 	}
 
 	*ep = &efa_rdm_ep->base_ep.util_ep.ep_fid;
@@ -530,11 +546,6 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	(*ep)->cm = &efa_rdm_ep_cm_ops;
 	return 0;
 
-err_close_core_cq:
-	retv = -ibv_destroy_cq(ibv_cq_ex_to_cq(efa_rdm_ep->ibv_cq_ex));
-	if (retv)
-		EFA_WARN(FI_LOG_CQ, "Unable to close cq: %s\n",
-			fi_strerror(-retv));
 err_close_shm_ep:
 	if (efa_rdm_ep->shm_ep) {
 		retv = fi_close(&efa_rdm_ep->shm_ep->fid);
@@ -594,6 +605,12 @@ static int efa_rdm_ep_bind(struct fid *ep_fid, struct fid *bfid, uint64_t flags)
 		ret = ofi_ep_bind_cq(&efa_rdm_ep->base_ep.util_ep, &cq->util_cq, flags);
 		if (ret)
 			return ret;
+
+		if (flags & FI_TRANSMIT)
+			efa_rdm_ep->tx_cq = cq;
+
+		if (flags & FI_RECV)
+			efa_rdm_ep->rx_cq = cq;
 
 		if (cq->shm_cq) {
 			/* Bind ep with shm provider's cq */
@@ -799,12 +816,6 @@ static int efa_rdm_ep_close(struct fid *fid)
 		retv = ret;
 	}
 
-	ret = -ibv_destroy_cq(ibv_cq_ex_to_cq(efa_rdm_ep->ibv_cq_ex));
-	if (ret) {
-		EFA_WARN(FI_LOG_EP_CTRL, "Unable to close ibv_cq_ex\n");
-		retv = ret;
-	}
-
 	if (efa_rdm_ep->shm_ep) {
 		ret = fi_close(&efa_rdm_ep->shm_ep->fid);
 		if (ret) {
@@ -982,6 +993,35 @@ void efa_rdm_ep_update_shm(struct efa_rdm_ep *ep)
 		efa_rdm_ep_close_shm_resources(ep);
 }
 
+/**
+ * @brief If user requests in-order aligned 128 bytes capability,
+ * check if the qp supports it.
+ * @param ep efa_rdm_ep
+ * @return int 0 on success, -FI_EOPNOTSUPP when qp doesn't support the request.
+ */
+static
+int efa_rdm_ep_check_qp_support_in_order_aligned_128_bytes(struct efa_rdm_ep *ep)
+{
+	if (ep->write_in_order_aligned_128_bytes &&
+	    !efa_base_ep_support_op_in_order_aligned_128_bytes(&ep->base_ep, IBV_WR_RDMA_WRITE)) {
+		EFA_WARN(FI_LOG_EP_CTRL,
+			"FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES is set to true but the QP doesn't support it\n");
+		return -FI_EOPNOTSUPP;
+	}
+
+	/*
+	 * RDMA read is used to copy data from host bounce buffer to the
+	 * application buffer on device
+	 */
+	if (ep->sendrecv_in_order_aligned_128_bytes &&
+	    !efa_base_ep_support_op_in_order_aligned_128_bytes(&ep->base_ep, IBV_WR_RDMA_READ)) {
+		EFA_WARN(FI_LOG_EP_CTRL,
+			"FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES is set to true but the QP doesn't support it\n");
+		return -FI_EOPNOTSUPP;
+	}
+
+	return 0;
+}
 
 /**
  * @brief implement the fi_enable() API for EFA RDM endpoint
@@ -1003,15 +1043,27 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 	switch (command) {
 	case FI_ENABLE:
 		ep = container_of(fid, struct efa_rdm_ep, base_ep.util_ep.ep_fid.fid);
-		ret = efa_base_ep_enable(&ep->base_ep);
-		if (ret)
-			return ret;
 
 		/*
 		 * efa uses util SRX no matter shm is enabled, so we need to initialize
 		 * it anyway.
 		 */
 		ret = efa_rdm_peer_srx_construct(ep);
+		if (ret)
+			return ret;
+
+		ret = efa_rdm_ep_create_base_ep_ibv_qp(ep);
+		if (ret)
+			return ret;
+
+		ret = efa_rdm_ep_check_qp_support_in_order_aligned_128_bytes(ep);
+		if (ret) {
+			efa_base_ep_destruct_qp(&ep->base_ep);
+			return ret;
+		}
+
+		/* efa_base_ep_enable destroys qp in the error path */
+		ret = efa_base_ep_enable(&ep->base_ep);
 		if (ret)
 			return ret;
 
@@ -1041,23 +1093,22 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
                         ret = fi_srx_context(efa_rdm_ep_domain(ep)->shm_domain,
 					     &peer_srx_attr, &peer_srx_ep, &peer_srx_context);
                         if (ret)
-                                goto out;
+                                goto err_unlock_and_destroy_qp;
 			shm_ep_name_len = EFA_SHM_NAME_MAX;
 			ret = efa_shm_ep_name_construct(shm_ep_name, &shm_ep_name_len, &ep->base_ep.src_addr);
 			if (ret < 0)
-				goto out;
+				goto err_unlock_and_destroy_qp;
 			fi_setname(&ep->shm_ep->fid, shm_ep_name, shm_ep_name_len);
 
 			/* Bind srx to shm ep */
 			ret = fi_ep_bind(ep->shm_ep, &ep->peer_srx_ep->fid, 0);
 			if (ret)
-				goto out;
+				goto err_unlock_and_destroy_qp;
 
 			ret = fi_enable(ep->shm_ep);
 			if (ret)
-				goto out;
+				goto err_unlock_and_destroy_qp;
 		}
-out:
 		ofi_genlock_unlock(srx_ctx->lock);
 		break;
 	default:
@@ -1065,6 +1116,11 @@ out:
 		break;
 	}
 
+	return ret;
+
+err_unlock_and_destroy_qp:
+	ofi_genlock_unlock(srx_ctx->lock);
+	efa_base_ep_destruct_qp(&ep->base_ep);
 	return ret;
 }
 
@@ -1247,52 +1303,6 @@ static int efa_rdm_ep_set_use_device_rdma(struct efa_rdm_ep *ep, bool use_device
 }
 
 /**
- * @brief set sendrecv_in_order_aligned_128_bytes flag in efa_rdm_ep
- * called by efa_rdm_ep_setopt
- * @param[in,out]	ep					endpoint
- * @param[in]		sendrecv_in_order_aligned_128_bytes	whether to enable in_order send/recv
- *								for each 128 bytes aligned buffer
- * @return		0 on success, -FI_EOPNOTSUPP if the option cannot be supported
- * @related efa_rdm_ep
- */
-static
-int efa_rdm_ep_set_sendrecv_in_order_aligned_128_bytes(struct efa_rdm_ep *ep,
-						   bool sendrecv_in_order_aligned_128_bytes)
-{
-	/*
-	 * RDMA read is used to copy data from host bounce buffer to the
-	 * application buffer on device
-	 */
-	if (sendrecv_in_order_aligned_128_bytes &&
-	    !efa_base_ep_support_op_in_order_aligned_128_bytes(&ep->base_ep, IBV_WR_RDMA_READ))
-		return -FI_EOPNOTSUPP;
-
-	ep->sendrecv_in_order_aligned_128_bytes = sendrecv_in_order_aligned_128_bytes;
-	return 0;
-}
-
-/**
- * @brief set write_in_order_aligned_128_bytes flag in efa_rdm_ep
- * called by efa_rdm_ep_set_opt
- * @param[in,out]	ep					endpoint
- * @param[in]		write_in_order_aligned_128_bytes	whether to enable RDMA in order write
- *								for each 128 bytes aligned buffer.
- * @return		0 on success, -FI_EOPNOTSUPP if the option cannot be supported.
- * @related efa_rdm_ep
- */
-static
-int efa_rdm_ep_set_write_in_order_aligned_128_bytes(struct efa_rdm_ep *ep,
-						bool write_in_order_aligned_128_bytes)
-{
-	if (write_in_order_aligned_128_bytes &&
-	    !efa_base_ep_support_op_in_order_aligned_128_bytes(&ep->base_ep, IBV_WR_RDMA_WRITE))
-		return -FI_EOPNOTSUPP;
-
-	ep->write_in_order_aligned_128_bytes = write_in_order_aligned_128_bytes;
-	return 0;
-}
-
-/**
  * @brief implement the fi_setopt() API for EFA RDM endpoint
  * @param[in]	fid		fid to endpoint
  * @param[in]	level		level of the option
@@ -1384,16 +1394,12 @@ static int efa_rdm_ep_setopt(fid_t fid, int level, int optname,
 	case FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES:
 		if (optlen != sizeof(bool))
 			return -FI_EINVAL;
-		ret = efa_rdm_ep_set_sendrecv_in_order_aligned_128_bytes(efa_rdm_ep, *(bool *)optval);
-		if (ret)
-			return ret;
+		efa_rdm_ep->sendrecv_in_order_aligned_128_bytes = *(bool *)optval;
 		break;
 	case FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES:
 		if (optlen != sizeof(bool))
 			return -FI_EINVAL;
-		ret = efa_rdm_ep_set_write_in_order_aligned_128_bytes(efa_rdm_ep, *(bool *)optval);
-		if (ret)
-			return ret;
+		efa_rdm_ep->write_in_order_aligned_128_bytes = *(bool *)optval;
 		break;
 	default:
 		EFA_WARN(FI_LOG_EP_CTRL,

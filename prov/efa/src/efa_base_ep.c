@@ -34,7 +34,7 @@ int efa_base_ep_bind_av(struct efa_base_ep *base_ep, struct efa_av *av)
 	return 0;
 }
 
-static int efa_base_ep_destruct_qp(struct efa_base_ep *base_ep)
+int efa_base_ep_destruct_qp(struct efa_base_ep *base_ep)
 {
 	struct efa_domain *domain;
 	struct efa_qp *qp = base_ep->qp;
@@ -48,6 +48,7 @@ static int efa_base_ep_destruct_qp(struct efa_base_ep *base_ep)
 			EFA_INFO(FI_LOG_CORE, "destroy qp[%u] failed!\n", qp->qp_num);
 
 		free(qp);
+		base_ep->qp = NULL;
 	}
 
 	return 0;
