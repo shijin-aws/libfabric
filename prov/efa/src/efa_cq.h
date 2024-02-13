@@ -3,6 +3,11 @@
 
 #include "efa.h"
 
+enum ibv_cq_ex_type {
+	IBV_CQ,
+	EFADV_CQ
+};
+
 /**
  * @brief Create ibv_cq_ex by calling ibv_create_cq_ex
  *

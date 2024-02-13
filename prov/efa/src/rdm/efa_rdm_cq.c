@@ -32,6 +32,16 @@ int efa_rdm_cq_close(struct fid *fid)
 
 	cq = container_of(fid, struct efa_rdm_cq, util_cq.cq_fid.fid);
 
+	if (cq->ibv_cq_ex) {
+		ret = -ibv_destroy_cq(ibv_cq_ex_to_cq(cq->ibv_cq_ex));
+		if (ret) {
+			EFA_WARN(FI_LOG_CQ, "Unable to close ibv cq: %s\n",
+				fi_strerror(-ret));
+			return ret;
+		}
+		cq->ibv_cq_ex = NULL;
+	}
+
 	if (cq->shm_cq) {
 		ret = fi_close(&cq->shm_cq->fid);
 		if (ret) {
@@ -116,7 +126,7 @@ static struct fi_ops_cq efa_rdm_cq_ops = {
 int efa_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 		    struct fid_cq **cq_fid, void *context)
 {
-	int ret;
+	int ret, retv;
 	struct efa_rdm_cq *cq;
 	struct efa_domain *efa_domain;
 	struct fi_cq_attr shm_cq_attr = {0};
@@ -140,6 +150,13 @@ int efa_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 	if (ret)
 		goto free;
 
+	ret = efa_cq_ibv_cq_ex_open(attr, efa_domain->device->ibv_ctx, &cq->ibv_cq_ex, &cq->ibv_cq_ex_type);
+	if (ret) {
+		EFA_WARN(FI_LOG_CQ, "Unable to create extended CQ: %d\n", ret);
+		ret = -FI_EINVAL;
+		goto close_util_cq;
+	}
+
 	*cq_fid = &cq->util_cq.cq_fid;
 	(*cq_fid)->fid.ops = &efa_rdm_cq_fi_ops;
 	(*cq_fid)->ops = &efa_rdm_cq_ops;
@@ -155,11 +172,21 @@ int efa_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 				 &cq->shm_cq, &peer_cq_context);
 		if (ret) {
 			EFA_WARN(FI_LOG_CQ, "Unable to open shm cq: %s\n", fi_strerror(-ret));
-			goto free;
+			goto destroy_ibv_cq;
 		}
 	}
 
 	return 0;
+destroy_ibv_cq:
+	retv = -ibv_destroy_cq(ibv_cq_ex_to_cq(cq->ibv_cq_ex));
+	if (retv)
+		EFA_WARN(FI_LOG_CQ, "Unable to close ibv cq: %s\n",
+			 fi_strerror(-retv));
+close_util_cq:
+	retv = ofi_cq_cleanup(&cq->util_cq);
+	if (retv)
+		EFA_WARN(FI_LOG_CQ, "Unable to close util cq: %s\n",
+			 fi_strerror(-retv));
 free:
 	free(cq);
 	return ret;
