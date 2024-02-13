@@ -9,7 +9,6 @@
 #include <ofi_iov.h>
 #include "efa.h"
 #include "efa_av.h"
-#include "efa_cq.h"
 #include "efa_rdm_msg.h"
 #include "efa_rdm_rma.h"
 #include "efa_rdm_atomic.h"
@@ -698,9 +697,9 @@ size_t efa_rdm_ep_get_memory_alignment(struct efa_rdm_ep *ep, enum fi_hmem_iface
  * RDMA Core error codes (#EFA_IO_COMP_STATUSES) for the sake of more accurate
  * error reporting
  */
-int efa_rdm_ep_get_prov_errno(struct efa_rdm_ep *ep) {
-	uint32_t vendor_err = ibv_wc_read_vendor_err(ep->ibv_cq_ex);
-	struct efa_rdm_pke *pkt_entry = (void *) (uintptr_t) ep->ibv_cq_ex->wr_id;
+int efa_rdm_ep_get_prov_errno(struct efa_rdm_ep *ep, struct ibv_cq_ex *ibv_cq_ex) {
+	uint32_t vendor_err = ibv_wc_read_vendor_err(ibv_cq_ex);
+	struct efa_rdm_pke *pkt_entry = (void *) (uintptr_t) ibv_cq_ex->wr_id;
 	struct efa_rdm_peer *peer;
 
 	if (OFI_LIKELY(pkt_entry && pkt_entry->addr))

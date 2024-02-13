@@ -170,6 +170,10 @@ if HAVE_EFADV_QUERY_MR
 prov_efa_test_efa_unit_test_LDFLAGS += -Wl,--wrap=efadv_query_mr
 endif HAVE_EFADV_QUERY_MR
 
+if HAVE_EFA_DATA_IN_ORDER_ALIGNED_128_BYTES
+prov_efa_test_efa_unit_test_LDFLAGS += -Wl,--wrap=ibv_query_qp_data_in_order
+endif
+
 prov_efa_test_efa_unit_test_LIBS = $(efa_LIBS) $(linkback)
 
 endif ENABLE_EFA_UNIT_TEST
