@@ -5,6 +5,7 @@
 #include "ofi_util.h"
 #include "efa.h"
 #include "efa_cntr.h"
+#include "rdm/efa_rdm_cq.h"
 
 static int efa_cntr_wait(struct fid_cntr *cntr_fid, uint64_t threshold, int timeout)
 {
@@ -146,6 +147,28 @@ static struct fi_ops efa_cntr_fi_ops = {
 	.ops_open = fi_no_ops_open,
 };
 
+static void efa_rdm_cntr_progress(struct util_cntr *cntr)
+{
+	struct util_ep *ep;
+	struct fid_list_entry *fid_entry;
+	struct dlist_entry *item;
+	struct efa_cntr *efa_cntr;
+	struct efa_ibv_cq_poll_list_entry *poll_list_entry;
+
+	ofi_genlock_lock(&cntr->ep_list_lock);
+	efa_cntr = container_of(cntr, struct efa_cntr, util_cntr);
+	dlist_foreach(&efa_cntr->ibv_cq_poll_list, item) {
+		poll_list_entry = container_of(item, struct efa_ibv_cq_poll_list_entry, entry);
+		efa_rdm_cq_poll_ibv_cq(efa_env.efa_cq_read_size, poll_list_entry->cq);
+	}
+	dlist_foreach(&cntr->ep_list, item) {
+		fid_entry = container_of(item, struct fid_list_entry, entry);
+		ep = container_of(fid_entry->fid, struct util_ep, ep_fid.fid);
+		ep->progress(ep);
+	}
+	ofi_genlock_unlock(&cntr->ep_list_lock);
+}
+
 int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 		  struct fid_cntr **cntr_fid, void *context)
 {
@@ -159,11 +182,17 @@ int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 	if (!cntr)
 		return -FI_ENOMEM;
 
+	dlist_init(&cntr->ibv_cq_poll_list);
 	efa_domain = container_of(domain, struct efa_domain,
 				  util_domain.domain_fid);
 
-	ret = ofi_cntr_init(&efa_prov, domain, attr, &cntr->util_cntr,
-			    &ofi_cntr_progress, context);
+	if (efa_domain->info->ep_attr->type == FI_EP_RDM)
+		ret = ofi_cntr_init(&efa_prov, domain, attr, &cntr->util_cntr,
+				    &efa_rdm_cntr_progress, context);
+	else
+		ret = ofi_cntr_init(&efa_prov, domain, attr, &cntr->util_cntr,
+				    &ofi_cntr_progress, context);
+
 	if (ret)
 		goto free;
 

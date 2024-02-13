@@ -3,6 +3,83 @@
 
 #include "efa.h"
 
+enum ibv_cq_ex_type {
+	IBV_CQ,
+	EFADV_CQ
+};
+
+struct efa_ibv_cq {
+	struct ibv_cq_ex *ibv_cq_ex;
+	enum ibv_cq_ex_type ibv_cq_ex_type;
+	/* dlist entry inserted to cq/cntr's poll_list */
+	struct dlist_entry entry;
+};
+
+struct efa_ibv_cq_poll_list_entry {
+	struct dlist_entry	entry;
+	struct efa_ibv_cq	*cq;
+};
+
+void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq);
+
+static inline
+int efa_ibv_cq_poll_list_match(struct dlist_entry *entry, const void *cq)
+{
+	struct efa_ibv_cq_poll_list_entry *item;
+	item = container_of(entry, struct efa_ibv_cq_poll_list_entry, entry);
+	return (item->cq == cq);
+}
+
+/* Serialization must be provided by the caller. */
+static inline
+int efa_ibv_cq_poll_list_search(struct dlist_entry *poll_list, struct efa_ibv_cq *cq)
+{
+	struct dlist_entry *entry;
+	struct efa_ibv_cq_poll_list_entry *item;
+
+	entry = dlist_find_first_match(poll_list, efa_ibv_cq_poll_list_match, cq);
+	if (entry)
+		return -FI_EALREADY;
+
+	item = calloc(1, sizeof(*item));
+	if (!item)
+		return -FI_ENOMEM;
+
+	item->cq = cq;
+	dlist_insert_tail(&item->entry, poll_list);
+	//printf("efa_ibv_cq_poll_list_search: poll_list: %p, entry:%p, prev: %p, next: %p\n", (void *) poll_list, (void *) &cq->entry, (void *) &cq->entry.prev, (void *) &cq->entry.next);
+	return 0;
+}
+
+static inline
+int efa_ibv_cq_poll_list_insert(struct dlist_entry *poll_list, struct ofi_genlock *lock, struct efa_ibv_cq *cq)
+{
+	int ret = 0;
+
+	ofi_genlock_lock(lock);
+	ret = efa_ibv_cq_poll_list_search(poll_list, cq);
+	ofi_genlock_unlock(lock);
+
+	return (!ret || (ret == -FI_EALREADY)) ? 0 : ret;
+}
+
+static inline
+void efa_ibv_cq_poll_list_remove(struct dlist_entry *poll_list, struct ofi_genlock *lock,
+		      struct efa_ibv_cq *cq)
+{
+	struct efa_ibv_cq_poll_list_entry *item;
+	struct dlist_entry *entry;
+
+	ofi_genlock_lock(lock);
+	entry = dlist_remove_first_match(poll_list, efa_ibv_cq_poll_list_match, cq);
+	ofi_genlock_unlock(lock);
+
+	if (entry) {
+		item = container_of(entry, struct efa_ibv_cq_poll_list_entry, entry);
+		free(item);
+	}
+}
+
 /**
  * @brief Create ibv_cq_ex by calling ibv_create_cq_ex
  *
