@@ -32,11 +32,13 @@ int efa_rdm_cq_close(struct fid *fid)
 
 	cq = container_of(fid, struct efa_rdm_cq, util_cq.cq_fid.fid);
 
+	printf("efa_rdm_cq_close: close cq %p\n", (void *)cq);
+
 	if (cq->ibv_cq_ex) {
 		ret = -ibv_destroy_cq(ibv_cq_ex_to_cq(cq->ibv_cq_ex));
 		if (ret) {
-			EFA_WARN(FI_LOG_CQ, "Unable to close ibv cq: %s\n",
-				fi_strerror(-ret));
+			EFA_WARN(FI_LOG_CQ, "Unable to close ibv cq %p: %s\n",
+				(void *)cq, fi_strerror(-ret));
 			return ret;
 		}
 		cq->ibv_cq_ex = NULL;
@@ -48,6 +50,7 @@ int efa_rdm_cq_close(struct fid *fid)
 			EFA_WARN(FI_LOG_CQ, "Unable to close shm cq: %s\n", fi_strerror(-ret));
 			retv = ret;
 		}
+		cq->shm_cq = NULL;
 	}
 
 	ret = ofi_cq_cleanup(&cq->util_cq);
@@ -138,6 +141,8 @@ int efa_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 	cq = calloc(1, sizeof(*cq));
 	if (!cq)
 		return -FI_ENOMEM;
+
+	printf("efa_rdm_cq_open: open cq %p\n", (void *)cq);
 
 	efa_domain = container_of(domain, struct efa_domain,
 				  util_domain.domain_fid);
