@@ -199,6 +199,7 @@ void efa_rdm_pke_rtm_update_rxe(struct efa_rdm_pke *pkt_entry,
 	rxe->total_len = efa_rdm_pke_get_rtm_msg_length(pkt_entry);
 	rxe->tag = efa_rdm_pke_get_rtm_tag(pkt_entry);
 	rxe->cq_entry.tag = rxe->tag;
+	printf("efa_rdm_pke_rtm_update_rxe: ep %p, pkt_entry: %p, pkt_entry src addr: %lu, tag: %lx\n", (void *) rxe->ep, (void *)pkt_entry, pkt_entry->addr, efa_rdm_pke_get_rtm_tag(pkt_entry));
 }
 
 /**

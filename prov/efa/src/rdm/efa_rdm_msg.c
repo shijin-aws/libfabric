@@ -164,6 +164,8 @@ ssize_t efa_rdm_msg_generic_send(struct efa_rdm_ep *ep, struct efa_rdm_peer *pee
 		goto out;
 	}
 
+	printf("efa_rdm_msg_generic_send: ep: %p, tag: %lx, remote addr: %lu\n", ep, tag, msg->addr);
+
 	txe = efa_rdm_ep_alloc_txe(ep, peer, msg, op, tag, flags);
 	if (OFI_UNLIKELY(!txe)) {
 		err = -FI_EAGAIN;
@@ -943,6 +945,7 @@ ssize_t efa_rdm_msg_generic_recv(struct efa_rdm_ep *ep, const struct fi_msg *msg
 			efa_rdm_ep_progress_internal(ep);
 		ofi_genlock_unlock(srx_ctx->lock);
 	} else if (op == ofi_op_tagged) {
+		printf("efa_rdm_msg_generic_recv: ep: %p, tag: %lx\n", ep, tag);
 		ret = util_srx_generic_trecv(ep->peer_srx_ep, msg->msg_iov, msg->desc,
 					     msg->iov_count, msg->addr, msg->context,
 					     tag, ignore, flags);

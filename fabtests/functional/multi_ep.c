@@ -58,6 +58,7 @@ static struct fid_mr *data_mr = NULL;
 static void *data_desc = NULL;
 static fi_addr_t *remote_addr;
 int num_eps = 3;
+static uint64_t *tags;
 
 static void free_ep_res()
 {
@@ -98,6 +99,7 @@ static int alloc_multi_ep_res()
 	data_bufs = calloc(num_eps * 2, opts.transfer_size);
 	txcqs = calloc(num_eps, sizeof(*txcqs));
 	rxcqs = calloc(num_eps, sizeof(*rxcqs));
+	tags = calloc(num_eps, sizeof(*tags));
 
 	if (!eps || !remote_addr || !send_bufs || !recv_bufs ||
 	    !send_ctx || !recv_ctx || !data_bufs || !txcqs || !rxcqs)
@@ -107,6 +109,7 @@ static int alloc_multi_ep_res()
 	for (i = 0; i < num_eps; i++) {
 		send_bufs[i] = data_bufs + opts.transfer_size * i;
 		recv_bufs[i] = rx_buf_ptr + opts.transfer_size * i;
+		tags[i] = 0x123 + i;
 	}
 
 	ret = ft_reg_mr(fi, data_bufs, num_eps * 2 * opts.transfer_size,
@@ -125,8 +128,8 @@ static int ep_post_rx(int idx)
 	int ret;
 
 	do {
-		ret = fi_recv(eps[idx], recv_bufs[idx], opts.transfer_size,
-			      data_desc, FI_ADDR_UNSPEC, &recv_ctx[idx]);
+		ret = fi_trecv(eps[idx], recv_bufs[idx], opts.transfer_size,
+			      data_desc, FI_ADDR_UNSPEC, tags[idx], 0, &recv_ctx[idx]);
 		if (ret == -FI_EAGAIN)
 			(void) fi_cq_read(rxcqs[idx], NULL, 0);
 
@@ -143,8 +146,8 @@ static int ep_post_tx(int idx)
 		ft_fill_buf(send_bufs[idx], opts.transfer_size);
 
 	do {
-		ret = fi_send(eps[idx], send_bufs[idx], opts.transfer_size,
-			      data_desc, remote_addr[idx], &send_ctx[idx]);
+		ret = fi_tsend(eps[idx], send_bufs[idx], opts.transfer_size,
+			      data_desc, remote_addr[idx], tags[idx], &send_ctx[idx]);
 		if (ret == -FI_EAGAIN)
 			(void) fi_cq_read(txcqs[0], NULL, 0);
 
