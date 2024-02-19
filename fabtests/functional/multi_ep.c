@@ -146,7 +146,7 @@ static int ep_post_tx(int idx)
 		ret = fi_send(eps[idx], send_bufs[idx], opts.transfer_size,
 			      data_desc, remote_addr[idx], &send_ctx[idx]);
 		if (ret == -FI_EAGAIN)
-			(void) fi_cq_read(txcqs[idx], NULL, 0);
+			(void) fi_cq_read(txcqs[0], NULL, 0);
 
 	} while (ret == -FI_EAGAIN);
 
@@ -178,12 +178,12 @@ static int do_transfers(void)
 	printf("Wait for all messages from peer\n");
 	for (i = 0; i < num_eps; i++) {
 		cur = 0;
-		ret = ft_get_cq_comp(txcqs[i], &cur, 1, -1);
+		ret = ft_get_cq_comp(txcqs[0], &cur, 1, -1);
 		if (ret < 0)
 			return ret;
 
 		cur = 0;
-		ret = ft_get_cq_comp(rxcqs[i], &cur, 1, -1);
+		ret = ft_get_cq_comp(rxcqs[0], &cur, 1, -1);
 		if (ret < 0)
 			return ret;
 	}
@@ -299,7 +299,7 @@ static int enable_ep(int idx)
 {
 	int ret;
 
-	ret = ft_enable_ep(eps[idx], eq, av, txcqs[idx], rxcqs[idx],
+	ret = ft_enable_ep(eps[idx], eq, av, txcqs[0], rxcqs[0],
 			   NULL, NULL, NULL);
 	if (ret)
 		return ret;
