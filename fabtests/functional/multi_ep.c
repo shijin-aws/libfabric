@@ -54,6 +54,7 @@ static char **recv_bufs;
 static struct fi_context *recv_ctx;
 static struct fi_context *send_ctx;
 static struct fid_cq **txcqs, **rxcqs;
+static struct fid_av **avs;
 static struct fid_mr *data_mr = NULL;
 static void *data_desc = NULL;
 static fi_addr_t *remote_addr;
@@ -72,6 +73,7 @@ static void free_ep_res()
 	for (i = 0; i < num_eps; i++) {
 		FT_CLOSE_FID(txcqs[i]);
 		FT_CLOSE_FID(rxcqs[i]);
+		FT_CLOSE_FID(avs[i]);
 	}
 
 	free(txcqs);
@@ -83,6 +85,7 @@ static void free_ep_res()
 	free(recv_ctx);
 	free(remote_addr);
 	free(eps);
+	free(avs);
 }
 
 static int alloc_multi_ep_res()
@@ -100,6 +103,7 @@ static int alloc_multi_ep_res()
 	txcqs = calloc(num_eps, sizeof(*txcqs));
 	rxcqs = calloc(num_eps, sizeof(*rxcqs));
 	tags = calloc(num_eps, sizeof(*tags));
+	avs = calloc(num_eps, sizeof(*avs));
 
 	if (!eps || !remote_addr || !send_bufs || !recv_bufs ||
 	    !send_ctx || !recv_ctx || !data_bufs || !txcqs || !rxcqs)
@@ -131,7 +135,7 @@ static int ep_post_rx(int idx)
 		ret = fi_trecv(eps[idx], recv_bufs[idx], opts.transfer_size,
 			      data_desc, FI_ADDR_UNSPEC, tags[idx], 0, &recv_ctx[idx]);
 		if (ret == -FI_EAGAIN)
-			(void) fi_cq_read(rxcqs[idx], NULL, 0);
+			(void) fi_cq_read(rxcqs[0], NULL, 0);
 
 	} while (ret == -FI_EAGAIN);
 
@@ -218,7 +222,7 @@ static int setup_client_ep(int idx)
 		return ret;
 	}
 
-	ret = ft_alloc_ep_res(fi, &txcqs[idx], &rxcqs[idx], NULL, NULL, NULL);
+	ret = ft_alloc_ep_res(fi, &txcqs[idx], &rxcqs[idx], NULL, NULL, NULL, &avs[idx]);
 	if (ret)
 		return ret;
 
@@ -248,7 +252,7 @@ static int setup_server_ep(int idx)
 		goto failed_accept;
 	}
 
-	ret = ft_alloc_ep_res(fi, &txcqs[idx], &rxcqs[idx], NULL, NULL, NULL);
+	ret = ft_alloc_ep_res(fi, &txcqs[idx], &rxcqs[idx], NULL, NULL, NULL, &avs[idx]);
 	if (ret)
 		return ret;
 
@@ -291,7 +295,7 @@ static int setup_av_ep(int idx)
 		return ret;
 	}
 
-	ret = ft_alloc_ep_res(fi, &txcqs[idx], &rxcqs[idx], NULL, NULL, NULL);
+	ret = ft_alloc_ep_res(fi, &txcqs[idx], &rxcqs[idx], NULL, NULL, NULL, &avs[idx]);
 	if (ret)
 		return ret;
 
@@ -302,12 +306,12 @@ static int enable_ep(int idx)
 {
 	int ret;
 
-	ret = ft_enable_ep(eps[idx], eq, av, txcqs[0], rxcqs[0],
+	ret = ft_enable_ep(eps[idx], eq, avs[idx], txcqs[0], rxcqs[0],
 			   NULL, NULL, NULL);
 	if (ret)
 		return ret;
 
-	ret = ft_init_av_addr(av, eps[idx], &remote_addr[idx]);
+	ret = ft_init_av_addr(avs[idx], eps[idx], &remote_addr[idx]);
 	if (ret)
 		return ret;
 
