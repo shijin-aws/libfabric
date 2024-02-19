@@ -879,6 +879,7 @@ fi_addr_t efa_rdm_pke_determine_addr(struct efa_rdm_pke *pkt_entry)
 		void *raw_addr;
 		raw_addr = efa_rdm_pke_get_req_raw_addr(pkt_entry);
 		assert(raw_addr);
+		printf("efa_rdm_pke_determine_addr: inserting av for pkt entry: %p for ep %p\n", (void *)pkt_entry, (void *)pkt_entry->ep);
 		return efa_rdm_pke_insert_addr(pkt_entry, raw_addr);
 	}
 
@@ -907,6 +908,7 @@ void efa_rdm_pke_handle_recv_completion(struct efa_rdm_pke *pkt_entry)
 
 	base_hdr = efa_rdm_pke_get_base_hdr(pkt_entry);
 	pkt_type = base_hdr->type;
+	printf("efa_rdm_pke_handle_recv_completion: ep %p, pkt_entry: %p, pkt_entry src addr: %lu\n", (void *) ep, (void *)pkt_entry, pkt_entry->addr);
 	if (pkt_type >= EFA_RDM_EXTRA_REQ_PKT_END) {
 		EFA_WARN(FI_LOG_CQ,
 			"Peer %d is requesting feature %d, which this EP does not support.\n",
@@ -926,8 +928,9 @@ void efa_rdm_pke_handle_recv_completion(struct efa_rdm_pke *pkt_entry)
 	 */
 	if (pkt_entry->addr == FI_ADDR_NOTAVAIL) {
 		EFA_WARN(FI_LOG_CQ,
-			"Warning: ignoring a received packet from a removed address. packet type: %" PRIu8
+			"Warning: ignoring a received packet from a removed address. pkt_entry: %p, packet type: %" PRIu8
 			", packet flags: %x\n",
+			(void *)pkt_entry,
 			efa_rdm_pke_get_base_hdr(pkt_entry)->type,
 			efa_rdm_pke_get_base_hdr(pkt_entry)->flags);
 		efa_rdm_pke_release_rx(pkt_entry);
@@ -955,6 +958,7 @@ void efa_rdm_pke_handle_recv_completion(struct efa_rdm_pke *pkt_entry)
 		peer->is_local = 0;
 	}
 
+	printf("ep: %p, post handshake to peer %lu\n", (void *)ep, peer->efa_fiaddr);
 	efa_rdm_ep_post_handshake_or_queue(ep, peer);
 
 

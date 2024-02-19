@@ -470,10 +470,9 @@ static inline void efa_rdm_ep_poll_ibv_cq(struct efa_rdm_ep *ep, size_t cqe_to_p
 			efa_rdm_pke_handle_send_completion(pkt_entry);
 			break;
 		case IBV_WC_RECV:
+		printf("ep progress poll ibv cq: get completion, ep: %p, pkt_entry: %p, pkt_entry's ep: %p, ahn: %u, qpn: %u\n", (void *)ep, (void *)pkt_entry, (void *)pkt_entry->ep, ibv_wc_read_slid(efa_rdm_cq->ibv_cq_ex), ibv_wc_read_src_qp(efa_rdm_cq->ibv_cq_ex));
 			pkt_entry->addr = efa_av_reverse_lookup_rdm(efa_av, ibv_wc_read_slid(efa_rdm_cq->ibv_cq_ex),
 								ibv_wc_read_src_qp(efa_rdm_cq->ibv_cq_ex), pkt_entry);
-
-			printf("ep progress: ep %p, pkt_entry: %p, pkt_entry src addr: %lu\n", (void *) ep, (void *)pkt_entry, pkt_entry->addr);
 
 			if (pkt_entry->addr == FI_ADDR_NOTAVAIL) {
 				pkt_entry->addr = efa_rdm_ep_determine_addr_from_ibv_cq(ep, efa_rdm_cq->ibv_cq_ex, efa_rdm_cq->ibv_cq_ex_type);
