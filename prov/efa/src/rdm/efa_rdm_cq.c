@@ -4,6 +4,12 @@
 #include "efa.h"
 #include "efa_rdm_cq.h"
 #include "ofi_util.h"
+#include "efa_av.h"
+#include "efa_cntr.h"
+#include "efa_rdm_pke_cmd.h"
+#include "efa_rdm_pke_utils.h"
+#include "efa_rdm_pke_nonreq.h"
+#include "efa_rdm_tracepoint.h"
 
 static
 const char *efa_rdm_cq_strerror(struct fid_cq *cq_fid, int prov_errno,
@@ -50,6 +56,7 @@ int efa_rdm_cq_close(struct fid *fid)
 		}
 	}
 
+	ofi_genlock_destroy(&cq->poll_list_lock);
 	ret = ofi_cq_cleanup(&cq->util_cq);
 	if (ret)
 		return ret;
@@ -65,11 +72,333 @@ static struct fi_ops efa_rdm_cq_fi_ops = {
 	.ops_open = fi_no_ops_open,
 };
 
+/**
+ * @brief handle rdma-core CQ completion resulted from IBV_WRITE_WITH_IMM
+ *
+ * This function handles hardware-assisted RDMA writes with immediate data at
+ * remote endpoint.  These do not have a packet context, nor do they have a
+ * connid available.
+ *
+ * @param[in]		imm_data	Data provided in the IMMEDIATE value.
+ * @param[in]		len		Payload	length
+ * @param[in]		flags		flags (such as FI_REMOTE_CQ_DATA)
+ */
+static
+void efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
+						       uint64_t flags,
+						       struct efa_rdm_pke *pkt_entry,
+						       struct ibv_cq_ex *ibv_cq_ex)
+{
+	struct util_cq *target_cq;
+	int ret;
+	fi_addr_t src_addr;
+	struct efa_av *efa_av;
+	struct efa_rdm_ep *ep = pkt_entry->ep;
+	uint32_t imm_data = ibv_wc_read_imm_data(ibv_cq_ex);
+	uint32_t len = ibv_wc_read_byte_len(ibv_cq_ex);
+
+	assert(ep);
+
+	target_cq = ep->base_ep.util_ep.rx_cq;
+	efa_av = ep->base_ep.av;
+
+	if (ep->base_ep.util_ep.caps & FI_SOURCE) {
+		src_addr = efa_av_reverse_lookup_rdm(efa_av,
+						ibv_wc_read_slid(ibv_cq_ex),
+						ibv_wc_read_src_qp(ibv_cq_ex),
+						NULL);
+		ret = ofi_cq_write_src(target_cq, NULL, flags, len, NULL, imm_data, 0, src_addr);
+	} else {
+		ret = ofi_cq_write(target_cq, NULL, flags, len, NULL, imm_data, 0);
+	}
+
+	if (OFI_UNLIKELY(ret)) {
+		EFA_WARN(FI_LOG_CQ,
+			"Unable to write a cq entry for remote for RECV_RDMA operation: %s\n",
+			fi_strerror(-ret));
+		efa_base_ep_write_eq_error(&ep->base_ep, FI_EIO, FI_EFA_ERR_WRITE_SHM_CQ_ENTRY);
+	}
+
+	efa_cntr_report_rx_completion(&ep->base_ep.util_ep, flags);
+
+	/* Recv with immediate will consume a pkt_entry, but the pkt is not
+	   filled, so free the pkt_entry and record we have one less posted
+	   packet now. */
+	ep->efa_rx_pkts_posted--;
+	efa_rdm_pke_release_rx(pkt_entry);
+}
+
+#if HAVE_EFADV_CQ_EX
+/**
+ * @brief Read peer raw address from EFA device and look up the peer address in AV.
+ * This function should only be called if the peer AH is unknown.
+ * @return Peer address, or FI_ADDR_NOTAVAIL if unavailable.
+ */
+static inline
+fi_addr_t efa_rdm_cq_determine_peer_address_from_efadv(
+						       struct ibv_cq_ex *ibv_cqx,
+						       enum ibv_cq_ex_type ibv_cq_ex_type)
+{
+	struct efa_rdm_pke *pkt_entry;
+	struct efa_rdm_ep *ep;
+	struct efa_ep_addr efa_ep_addr = {0};
+	fi_addr_t addr;
+	union ibv_gid gid = {0};
+	uint32_t *connid = NULL;
+
+	if (ibv_cq_ex_type != EFADV_CQ) {
+		/* EFA DV CQ is not supported. This could be due to old EFA kernel module versions. */
+		return FI_ADDR_NOTAVAIL;
+	}
+
+	/* Attempt to read sgid from EFA firmware */
+	if (efadv_wc_read_sgid(efadv_cq_from_ibv_cq_ex(ibv_cqx), &gid) < 0) {
+		/* Return code is negative if the peer AH is known */
+		return FI_ADDR_NOTAVAIL;
+	}
+
+	pkt_entry = (void *)(uintptr_t)ibv_cqx->wr_id;
+	ep = pkt_entry->ep;
+	assert(ep);
+
+	connid = efa_rdm_pke_connid_ptr(pkt_entry);
+	if (!connid) {
+		return FI_ADDR_NOTAVAIL;
+	}
+
+	/*
+	 * Use raw:qpn:connid as the key to lookup AV for peer's fi_addr
+	 */
+	memcpy(efa_ep_addr.raw, gid.raw, sizeof(efa_ep_addr.raw));
+	efa_ep_addr.qpn = ibv_wc_read_src_qp(ibv_cqx);
+	efa_ep_addr.qkey = *connid;
+	addr = ofi_av_lookup_fi_addr(&ep->base_ep.av->util_av, &efa_ep_addr);
+	if (addr != FI_ADDR_NOTAVAIL) {
+		char gid_str_cdesc[INET6_ADDRSTRLEN];
+		inet_ntop(AF_INET6, gid.raw, gid_str_cdesc, INET6_ADDRSTRLEN);
+		EFA_WARN(FI_LOG_AV,
+				"Recovered peer fi_addr. [Raw]:[QPN]:[QKey] = [%s]:[%" PRIu16 "]:[%" PRIu32 "]\n",
+				gid_str_cdesc, efa_ep_addr.qpn, efa_ep_addr.qkey);
+	}
+
+	return addr;
+}
+
+/**
+ * @brief Determine peer address from ibv_cq_ex
+ * Attempt to inject or determine peer address if not available. This usually
+ * happens when the endpoint receives the first packet from a new peer.
+ * There is an edge case for EFA endpoint - the device might lose the address
+ * handle of a known peer due to a firmware bug and return FI_ADDR_NOTAVAIL.
+ * The provider needs to look up the address using Raw address:QPN:QKey.
+ * Note: This function introduces addtional overhead. It should only be called if
+ * efa_av_lookup_address_rdm fails to find the peer address.
+ * @param ep Pointer to RDM endpoint
+ * @param ibv_cqx Pointer to CQ
+ * @returns Peer address, or FI_ADDR_NOTAVAIL if unsuccessful.
+ */
+static inline fi_addr_t efa_rdm_cq_determine_addr_from_ibv_cq(struct ibv_cq_ex *ibv_cqx, enum ibv_cq_ex_type ibv_cq_ex_type)
+{
+	struct efa_rdm_pke *pkt_entry;
+	fi_addr_t addr = FI_ADDR_NOTAVAIL;
+
+	pkt_entry = (void *)(uintptr_t)ibv_cqx->wr_id;
+
+	addr = efa_rdm_pke_determine_addr(pkt_entry);
+
+	if (addr == FI_ADDR_NOTAVAIL) {
+		addr = efa_rdm_cq_determine_peer_address_from_efadv(ibv_cqx, ibv_cq_ex_type);
+	}
+
+	return addr;
+}
+#else
+/**
+ * @brief Determine peer address from ibv_cq_ex
+ * Attempt to inject peer address if not available. This usually
+ * happens when the endpoint receives the first packet from a new peer.
+ * Note: This function introduces addtional overhead. It should only be called if
+ * efa_av_lookup_address_rdm fails to find the peer address.
+ * @param ep Pointer to RDM endpoint
+ * @param ibv_cqx Pointer to CQ
+ * @returns Peer address, or FI_ADDR_NOTAVAIL if unsuccessful.
+ */
+static inline
+fi_addr_t efa_rdm_cq_determine_addr_from_ibv_cq(struct ibv_cq_ex *ibv_cqx, enum ibv_cq_ex_type ibv_cq_ex_type)
+{
+	struct efa_rdm_pke *pkt_entry;
+
+	pkt_entry = (void *)(uintptr_t)ibv_cqx->wr_id;
+
+	return efa_rdm_pke_determine_addr(pkt_entry);
+}
+#endif
+
+/**
+ * @brief Get the vendor error code for an endpoint's CQ
+ *
+ * This function is essentially a wrapper for `ibv_wc_read_vendor_err()`; making
+ * a best-effort attempt to promote the error code to a proprietary EFA
+ * provider error code.
+ *
+ * @param[in]	ibv_cq_ex	IBV CQ
+ * @return	EFA-specific error code
+ * @sa		#EFA_PROV_ERRNOS
+ *
+ * @todo Currently, this only checks for unresponsive receiver
+ * (#EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE) and attempts to promote it to
+ * #FI_EFA_ERR_ESTABLISHED_RECV_UNRESP. This should be expanded to handle other
+ * RDMA Core error codes (#EFA_IO_COMP_STATUSES) for the sake of more accurate
+ * error reporting
+ */
+static int efa_rdm_cq_get_prov_errno(struct ibv_cq_ex *ibv_cq_ex) {
+	uint32_t vendor_err = ibv_wc_read_vendor_err(ibv_cq_ex);
+	struct efa_rdm_pke *pkt_entry = (void *) (uintptr_t) ibv_cq_ex->wr_id;
+	struct efa_rdm_peer *peer;
+	struct efa_rdm_ep *ep = pkt_entry->ep;
+
+	if (OFI_LIKELY(pkt_entry && pkt_entry->addr))
+		peer = efa_rdm_ep_get_peer(ep, pkt_entry->addr);
+	else
+		return vendor_err;
+
+	switch (vendor_err) {
+	case EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE: {
+		if (peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED)
+			vendor_err = FI_EFA_ERR_ESTABLISHED_RECV_UNRESP;
+		break;
+	}
+	default:
+		break;
+	}
+
+	return vendor_err;
+}
+
+
+/**
+ * @brief poll rdma-core cq and process the cq entry
+ *
+ * @param[in]	ep_poll	the RDM endpoint that polls ibv cq. Note this polling endpoint can be different
+ * from the endpoint that the completed packet entry was posted from (pkt_entry->ep).
+ * @param[in]	cqe_to_process	Max number of cq entry to poll and process. A negative number means to poll until cq empty
+ */
+void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_rdm_cq *efa_rdm_cq)
+{
+	bool should_end_poll = false;
+	/* Initialize an empty ibv_poll_cq_attr struct for ibv_start_poll.
+	 * EFA expects .comp_mask = 0, or otherwise returns EINVAL.
+	 */
+	struct ibv_poll_cq_attr poll_cq_attr = {.comp_mask = 0};
+	struct efa_av *efa_av;
+	struct efa_rdm_pke *pkt_entry;
+	ssize_t err;
+	int opcode;
+	size_t i = 0;
+	int prov_errno;
+	struct efa_rdm_ep *ep = NULL;
+
+	/* Call ibv_start_poll only once */
+	err = ibv_start_poll(efa_rdm_cq->ibv_cq_ex, &poll_cq_attr);
+	should_end_poll = !err;
+
+	while (!err) {
+		pkt_entry = (void *)(uintptr_t)efa_rdm_cq->ibv_cq_ex->wr_id;
+		ep = pkt_entry->ep;
+		assert(ep);
+		efa_av = ep->base_ep.av;
+		efa_rdm_tracepoint(poll_cq, (size_t) efa_rdm_cq->ibv_cq_ex->wr_id);
+		opcode = ibv_wc_read_opcode(efa_rdm_cq->ibv_cq_ex);
+		if (efa_rdm_cq->ibv_cq_ex->status) {
+			prov_errno = efa_rdm_cq_get_prov_errno(efa_rdm_cq->ibv_cq_ex);
+			switch (opcode) {
+			case IBV_WC_SEND: /* fall through */
+			case IBV_WC_RDMA_WRITE: /* fall through */
+			case IBV_WC_RDMA_READ:
+				efa_rdm_pke_handle_tx_error(pkt_entry, FI_EIO, prov_errno);
+				break;
+			case IBV_WC_RECV: /* fall through */
+			case IBV_WC_RECV_RDMA_WITH_IMM:
+				efa_rdm_pke_handle_rx_error(pkt_entry, FI_EIO, prov_errno);
+				break;
+			default:
+				EFA_WARN(FI_LOG_EP_CTRL, "Unhandled op code %d\n", opcode);
+				assert(0 && "Unhandled op code");
+			}
+			break;
+		}
+		switch (opcode) {
+		case IBV_WC_SEND:
+#if ENABLE_DEBUG
+			ep->send_comps++;
+#endif
+			efa_rdm_pke_handle_send_completion(pkt_entry);
+			break;
+		case IBV_WC_RECV:
+			pkt_entry->addr = efa_av_reverse_lookup_rdm(efa_av, ibv_wc_read_slid(efa_rdm_cq->ibv_cq_ex),
+								ibv_wc_read_src_qp(efa_rdm_cq->ibv_cq_ex), pkt_entry);
+
+			if (pkt_entry->addr == FI_ADDR_NOTAVAIL) {
+				pkt_entry->addr = efa_rdm_cq_determine_addr_from_ibv_cq(efa_rdm_cq->ibv_cq_ex, efa_rdm_cq->ibv_cq_ex_type);
+			}
+
+			pkt_entry->pkt_size = ibv_wc_read_byte_len(efa_rdm_cq->ibv_cq_ex);
+			assert(pkt_entry->pkt_size > 0);
+			efa_rdm_pke_handle_recv_completion(pkt_entry);
+#if ENABLE_DEBUG
+			ep->recv_comps++;
+#endif
+			break;
+		case IBV_WC_RDMA_READ:
+		case IBV_WC_RDMA_WRITE:
+			efa_rdm_pke_handle_rma_completion(pkt_entry);
+			break;
+		case IBV_WC_RECV_RDMA_WITH_IMM:
+			efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
+				FI_REMOTE_CQ_DATA | FI_RMA | FI_REMOTE_WRITE,
+				pkt_entry, efa_rdm_cq->ibv_cq_ex);
+			break;
+		default:
+			EFA_WARN(FI_LOG_EP_CTRL,
+				"Unhandled cq type\n");
+			assert(0 && "Unhandled cq type");
+		}
+
+		i++;
+		if (i == cqe_to_process) {
+			break;
+		}
+
+		/*
+		 * ibv_next_poll MUST be call after the current WC is fully processed,
+		 * which prevents later calls on ibv_cq_ex from reading the wrong WC.
+		 */
+		err = ibv_next_poll(efa_rdm_cq->ibv_cq_ex);
+	}
+
+	if (err && err != ENOENT) {
+		err = err > 0 ? err : -err;
+		prov_errno = efa_rdm_cq_get_prov_errno(efa_rdm_cq->ibv_cq_ex);
+		if (ep) {
+			efa_base_ep_write_eq_error(&ep->base_ep, err, prov_errno);
+		} else {
+			fprintf(stderr, "Unexpected error when polling ibv cq, err: %s (%zd) prov_errno: %s (%d)\n", fi_strerror(err), err, efa_strerror(prov_errno), prov_errno);
+			efa_show_help(prov_errno);
+			abort();
+		}
+	}
+
+	if (should_end_poll)
+		ibv_end_poll(efa_rdm_cq->ibv_cq_ex);
+}
+
 static ssize_t efa_rdm_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count, fi_addr_t *src_addr)
 {
 	struct efa_rdm_cq *cq;
 	ssize_t ret;
 	struct util_srx_ctx *srx_ctx;
+	struct dlist_entry *tmp;
+	struct efa_rdm_cq_poll_list_entry *poll_list_entry;
 
 	cq = container_of(cq_fid, struct efa_rdm_cq, util_cq.cq_fid.fid);
 
@@ -90,6 +419,13 @@ static ssize_t efa_rdm_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t coun
 		if (ret > 0)
 			goto out;
 	}
+
+	ofi_genlock_lock(&cq->poll_list_lock);
+	dlist_foreach_container_safe(&cq->poll_list, struct efa_rdm_cq_poll_list_entry,
+		poll_list_entry, entry, tmp) {
+		efa_rdm_cq_poll_ibv_cq(efa_env.efa_cq_read_size, poll_list_entry->cq);
+	}
+	ofi_genlock_unlock(&cq->poll_list_lock);
 
 	ret = ofi_cq_readfrom(&cq->util_cq.cq_fid, buf, count, src_addr);
 
@@ -131,6 +467,7 @@ int efa_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 	struct efa_domain *efa_domain;
 	struct fi_cq_attr shm_cq_attr = {0};
 	struct fi_peer_cq_context peer_cq_context = {0};
+	enum ofi_lock_type lock_type;
 
 	if (attr->wait_obj != FI_WAIT_NONE)
 		return -FI_ENOSYS;
@@ -144,11 +481,22 @@ int efa_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 	/* Override user cq size if it's less than recommended cq size */
 	attr->size = MAX(efa_domain->rdm_cq_size, attr->size);
 
+	dlist_init(&cq->poll_list);
+	if (efa_domain->util_domain.threading == FI_THREAD_COMPLETION ||
+	    efa_domain->util_domain.threading == FI_THREAD_DOMAIN)
+		lock_type = OFI_LOCK_NOOP;
+	else
+		lock_type = efa_domain->util_domain.lock.lock_type;
+
+	ret = ofi_genlock_init(&cq->poll_list_lock, lock_type);
+	if (ret)
+		goto free;
+
 	ret = ofi_cq_init(&efa_prov, domain, attr, &cq->util_cq,
 			  &ofi_cq_progress, context);
 
 	if (ret)
-		goto free;
+		goto destroy_lock;
 
 	ret = efa_cq_ibv_cq_ex_open(attr, efa_domain->device->ibv_ctx, &cq->ibv_cq_ex, &cq->ibv_cq_ex_type);
 	if (ret) {
@@ -187,7 +535,64 @@ close_util_cq:
 	if (retv)
 		EFA_WARN(FI_LOG_CQ, "Unable to close util cq: %s\n",
 			 fi_strerror(-retv));
+destroy_lock:
+	ofi_genlock_destroy(&cq->poll_list_lock);
 free:
 	free(cq);
 	return ret;
+}
+
+static int
+efa_rdm_cq_poll_list_match(struct dlist_entry *entry, const void *cq)
+{
+	struct efa_rdm_cq_poll_list_entry *item;
+	item = container_of(entry, struct efa_rdm_cq_poll_list_entry, entry);
+	return (item->cq == cq);
+}
+
+/* Serialization must be provided by the caller. */
+static int
+efa_rdm_cq_poll_list_search(struct dlist_entry *poll_list, struct efa_rdm_cq *cq)
+{
+	struct dlist_entry *entry;
+	struct efa_rdm_cq_poll_list_entry *item;
+
+	entry = dlist_find_first_match(poll_list, efa_rdm_cq_poll_list_match, cq);
+	if (entry)
+		return -FI_EALREADY;
+
+	item = calloc(1, sizeof(*item));
+	if (!item)
+		return -FI_ENOMEM;
+
+	item->cq = cq;
+	dlist_insert_tail(&item->entry, poll_list);
+	return 0;
+}
+
+int efa_rdm_cq_poll_list_insert(struct dlist_entry *poll_list, struct ofi_genlock *lock, struct efa_rdm_cq *cq)
+{
+	int ret = 0;
+
+	ofi_genlock_lock(lock);
+	ret = efa_rdm_cq_poll_list_search(poll_list, cq);
+	ofi_genlock_unlock(lock);
+
+	return (!ret || (ret == -FI_EALREADY)) ? 0 : ret;
+}
+
+void efa_rdm_cq_poll_list_remove(struct dlist_entry *poll_list, struct ofi_genlock *lock,
+		      struct efa_rdm_cq *cq)
+{
+	struct efa_rdm_cq_poll_list_entry *item;
+	struct dlist_entry *entry;
+
+	ofi_genlock_lock(lock);
+	entry = dlist_remove_first_match(poll_list, efa_rdm_cq_poll_list_match, cq);
+	ofi_genlock_unlock(lock);
+
+	if (entry) {
+		item = container_of(entry, struct efa_rdm_cq_poll_list_entry, entry);
+		free(item);
+	}
 }
