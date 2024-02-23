@@ -275,8 +275,6 @@ ssize_t efa_rdm_ep_post_queued_pkts(struct efa_rdm_ep *ep,
 
 size_t efa_rdm_ep_get_memory_alignment(struct efa_rdm_ep *ep, enum fi_hmem_iface iface);
 
-int efa_rdm_ep_get_prov_errno(struct efa_rdm_ep *ep, struct ibv_cq_ex *ibv_cq_ex);
-
 static inline
 struct efa_domain *efa_rdm_ep_domain(struct efa_rdm_ep *ep)
 {

@@ -790,6 +790,11 @@ void efa_rdm_ep_wait_send(struct efa_rdm_ep *efa_rdm_ep)
 	ofi_genlock_lock(srx_ctx->lock);
 
 	while (efa_rdm_ep_has_unfinished_send(efa_rdm_ep)) {
+		/* poll cq until empty */
+		if (efa_rdm_ep->tx_cq)
+			efa_rdm_cq_poll_ibv_cq(-1, efa_rdm_ep->tx_cq);
+		if (efa_rdm_ep->rx_cq)
+			efa_rdm_cq_poll_ibv_cq(-1, efa_rdm_ep->rx_cq);
 		efa_rdm_ep_progress_internal(efa_rdm_ep);
 	}
 
@@ -804,11 +809,35 @@ static int efa_rdm_ep_close(struct fid *fid)
 {
 	int ret, retv = 0;
 	struct efa_rdm_ep *efa_rdm_ep;
+	struct efa_rdm_cq *tx_cq, *rx_cq;
 
 	efa_rdm_ep = container_of(fid, struct efa_rdm_ep, base_ep.util_ep.ep_fid.fid);
 
 	if (efa_rdm_ep->base_ep.efa_qp_enabled)
 		efa_rdm_ep_wait_send(efa_rdm_ep);
+
+	/* We need to free the util_ep first to avoid race conditions
+	 * with other threads progressing the cq. */
+	efa_base_ep_close_util_ep(&efa_rdm_ep->base_ep);
+
+	tx_cq = efa_rdm_ep->tx_cq;
+	rx_cq = efa_rdm_ep->rx_cq;
+
+	/* Remove the cross referencing of the CQs.
+	 * It must happen after ofi_endpoint_close
+	 * so we have cq's reference counters updated.
+	 */
+	if (tx_cq && !ofi_atomic_get32(&tx_cq->util_cq.ref)) {
+		efa_rdm_cq_poll_list_remove(&tx_cq->poll_list, &tx_cq->poll_list_lock, tx_cq);
+		if (rx_cq)
+			efa_rdm_cq_poll_list_remove(&rx_cq->poll_list, &rx_cq->poll_list_lock, tx_cq);
+	}
+
+	if (rx_cq && !ofi_atomic_get32(&rx_cq->util_cq.ref)) {
+		efa_rdm_cq_poll_list_remove(&rx_cq->poll_list, &rx_cq->poll_list_lock, rx_cq);
+		if (tx_cq)
+			efa_rdm_cq_poll_list_remove(&tx_cq->poll_list, &tx_cq->poll_list_lock, rx_cq);
+	}
 
 	ret = efa_base_ep_destruct(&efa_rdm_ep->base_ep);
 	if (ret) {
@@ -1039,6 +1068,7 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 	struct fi_rx_attr peer_srx_attr = {0};
 	struct fid_ep *peer_srx_ep = NULL;
 	struct util_srx_ctx *srx_ctx;
+	struct efa_rdm_cq *tx_cq, *rx_cq;
 
 	switch (command) {
 	case FI_ENABLE:
@@ -1066,6 +1096,30 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 		ret = efa_base_ep_enable(&ep->base_ep);
 		if (ret)
 			return ret;
+
+		/* cross referencing */
+		tx_cq = ep->tx_cq;
+		rx_cq = ep->rx_cq;
+
+		if (tx_cq) {
+			efa_rdm_cq_poll_list_insert(&tx_cq->poll_list, &tx_cq->poll_list_lock, tx_cq);
+			if (ret)
+				return ret;
+
+			if (rx_cq)
+				efa_rdm_cq_poll_list_insert(&tx_cq->poll_list, &tx_cq->poll_list_lock, rx_cq);
+		}
+
+		if (rx_cq) {
+			efa_rdm_cq_poll_list_insert(&rx_cq->poll_list, &rx_cq->poll_list_lock, rx_cq);
+			if (ret)
+				return ret;
+
+			if (tx_cq)
+				efa_rdm_cq_poll_list_insert(&rx_cq->poll_list, &rx_cq->poll_list_lock, tx_cq);
+			if (ret)
+				return ret;
+		}
 
 		assert(ep->peer_srx_ep);
 		srx_ctx = efa_rdm_ep_get_peer_srx_ctx(ep);

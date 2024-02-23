@@ -54,18 +54,25 @@ int efa_base_ep_destruct_qp(struct efa_base_ep *base_ep)
 	return 0;
 }
 
-int efa_base_ep_destruct(struct efa_base_ep *base_ep)
+void efa_base_ep_close_util_ep(struct efa_base_ep *base_ep)
 {
 	int err;
 
-	/* We need to free the util_ep first to avoid race conditions
-	 * with other threads progressing the cq. */
 	if (base_ep->util_ep_initialized) {
 		err = ofi_endpoint_close(&base_ep->util_ep);
 		if (err)
 			EFA_WARN(FI_LOG_EP_CTRL, "Unable to close util EP\n");
 		base_ep->util_ep_initialized = false;
 	}
+}
+
+int efa_base_ep_destruct(struct efa_base_ep *base_ep)
+{
+	int err;
+
+	/* We need to free the util_ep first to avoid race conditions
+	 * with other threads progressing the cq. */
+	efa_base_ep_close_util_ep(base_ep);
 
 	fi_freeinfo(base_ep->info);
 
