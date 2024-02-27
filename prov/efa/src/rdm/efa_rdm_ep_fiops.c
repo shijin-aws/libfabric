@@ -48,17 +48,17 @@ int efa_rdm_ep_create_base_ep_ibv_qp(struct efa_rdm_ep *ep)
 	if (ep->tx_cq) {
 		attr_ex.cap.max_send_wr = ep->base_ep.domain->device->rdm_info->tx_attr->size;
 		attr_ex.cap.max_send_sge = ep->base_ep.domain->device->rdm_info->tx_attr->iov_limit;
-		attr_ex.send_cq = ibv_cq_ex_to_cq(ep->tx_cq->ibv_cq_ex);
+		attr_ex.send_cq = ibv_cq_ex_to_cq(ep->tx_cq->ibv_cq.ibv_cq_ex);
 	} else {
-		attr_ex.send_cq = ibv_cq_ex_to_cq(ep->rx_cq->ibv_cq_ex);
+		attr_ex.send_cq = ibv_cq_ex_to_cq(ep->rx_cq->ibv_cq.ibv_cq_ex);
 	}
 
 	if (ep->rx_cq) {
 		attr_ex.cap.max_recv_wr = ep->base_ep.domain->device->rdm_info->rx_attr->size;
 		attr_ex.cap.max_recv_sge = ep->base_ep.domain->device->rdm_info->rx_attr->iov_limit;
-		attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->rx_cq->ibv_cq_ex);
+		attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->rx_cq->ibv_cq.ibv_cq_ex);
 	} else {
-		attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->tx_cq->ibv_cq_ex);
+		attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->tx_cq->ibv_cq.ibv_cq_ex);
 	}
 
 	attr_ex.cap.max_inline_data = ep->base_ep.domain->device->efa_attr.inline_buf_size;
@@ -792,9 +792,9 @@ void efa_rdm_ep_wait_send(struct efa_rdm_ep *efa_rdm_ep)
 	while (efa_rdm_ep_has_unfinished_send(efa_rdm_ep)) {
 		/* poll cq until empty */
 		if (efa_rdm_ep->tx_cq)
-			efa_rdm_cq_poll_ibv_cq(-1, efa_rdm_ep->tx_cq);
+			efa_rdm_cq_poll_ibv_cq(-1, &efa_rdm_ep->tx_cq->ibv_cq);
 		if (efa_rdm_ep->rx_cq)
-			efa_rdm_cq_poll_ibv_cq(-1, efa_rdm_ep->rx_cq);
+			efa_rdm_cq_poll_ibv_cq(-1, &efa_rdm_ep->rx_cq->ibv_cq);
 		efa_rdm_ep_progress_internal(efa_rdm_ep);
 	}
 
@@ -828,15 +828,15 @@ static int efa_rdm_ep_close(struct fid *fid)
 	 * so we have cq's reference counters updated.
 	 */
 	if (tx_cq && !ofi_atomic_get32(&tx_cq->util_cq.ref)) {
-		efa_rdm_cq_poll_list_remove(&tx_cq->poll_list, &tx_cq->poll_list_lock, tx_cq);
+		efa_ibv_cq_poll_list_remove(&tx_cq->ibv_cq_poll_list, &tx_cq->util_cq.ep_list_lock, &tx_cq->ibv_cq);
 		if (rx_cq)
-			efa_rdm_cq_poll_list_remove(&rx_cq->poll_list, &rx_cq->poll_list_lock, tx_cq);
+			efa_ibv_cq_poll_list_remove(&rx_cq->ibv_cq_poll_list, &rx_cq->util_cq.ep_list_lock, &tx_cq->ibv_cq);
 	}
 
 	if (rx_cq && !ofi_atomic_get32(&rx_cq->util_cq.ref)) {
-		efa_rdm_cq_poll_list_remove(&rx_cq->poll_list, &rx_cq->poll_list_lock, rx_cq);
+		efa_ibv_cq_poll_list_remove(&rx_cq->ibv_cq_poll_list, &rx_cq->util_cq.ep_list_lock, &rx_cq->ibv_cq);
 		if (tx_cq)
-			efa_rdm_cq_poll_list_remove(&tx_cq->poll_list, &tx_cq->poll_list_lock, rx_cq);
+			efa_ibv_cq_poll_list_remove(&tx_cq->ibv_cq_poll_list, &tx_cq->util_cq.ep_list_lock, &rx_cq->ibv_cq);
 	}
 
 	ret = efa_base_ep_destruct(&efa_rdm_ep->base_ep);
@@ -1101,24 +1101,31 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 		tx_cq = ep->tx_cq;
 		rx_cq = ep->rx_cq;
 
+		if (!tx_cq && !rx_cq)
+			return -FI_ENOCQ;
+
 		if (tx_cq) {
-			efa_rdm_cq_poll_list_insert(&tx_cq->poll_list, &tx_cq->poll_list_lock, tx_cq);
+			ret = efa_ibv_cq_poll_list_insert(&tx_cq->ibv_cq_poll_list, &tx_cq->util_cq.ep_list_lock, &tx_cq->ibv_cq);
 			if (ret)
 				return ret;
 
-			if (rx_cq)
-				efa_rdm_cq_poll_list_insert(&tx_cq->poll_list, &tx_cq->poll_list_lock, rx_cq);
+			if (rx_cq) {
+				ret = efa_ibv_cq_poll_list_insert(&tx_cq->ibv_cq_poll_list, &tx_cq->util_cq.ep_list_lock, &rx_cq->ibv_cq);
+				if (ret)
+					return ret;
+			}
 		}
 
 		if (rx_cq) {
-			efa_rdm_cq_poll_list_insert(&rx_cq->poll_list, &rx_cq->poll_list_lock, rx_cq);
+			ret = efa_ibv_cq_poll_list_insert(&rx_cq->ibv_cq_poll_list, &rx_cq->util_cq.ep_list_lock, &rx_cq->ibv_cq);
 			if (ret)
 				return ret;
 
-			if (tx_cq)
-				efa_rdm_cq_poll_list_insert(&rx_cq->poll_list, &rx_cq->poll_list_lock, tx_cq);
-			if (ret)
-				return ret;
+			if (tx_cq) {
+				ret = efa_ibv_cq_poll_list_insert(&rx_cq->ibv_cq_poll_list, &rx_cq->util_cq.ep_list_lock, &tx_cq->ibv_cq);
+				if (ret)
+					return ret;
+			}
 		}
 
 		assert(ep->peer_srx_ep);
