@@ -801,27 +801,37 @@ void efa_rdm_ep_wait_send(struct efa_rdm_ep *efa_rdm_ep)
 	ofi_genlock_unlock(srx_ctx->lock);
 }
 
-/**
- * @brief implement the fi_close() API for the EFA RDM endpoint
- * @param[in,out]	fid		Endpoint to close
- */
-static int efa_rdm_ep_close(struct fid *fid)
+static inline
+void efa_rdm_ep_remove_cntr_ibv_cq_poll_list(struct efa_rdm_ep *ep)
 {
-	int ret, retv = 0;
-	struct efa_rdm_ep *efa_rdm_ep;
+	int i;
+	struct efa_cntr *efa_cntr;
+	struct util_cntr *util_cntr;
 	struct efa_rdm_cq *tx_cq, *rx_cq;
 
-	efa_rdm_ep = container_of(fid, struct efa_rdm_ep, base_ep.util_ep.ep_fid.fid);
+	tx_cq = ep->tx_cq;
+	rx_cq = ep->rx_cq;
 
-	if (efa_rdm_ep->base_ep.efa_qp_enabled)
-		efa_rdm_ep_wait_send(efa_rdm_ep);
+	for (i=0; i<CNTR_CNT; i++) {
+		util_cntr = ep->base_ep.util_ep.cntrs[i];
+		if (util_cntr) {
+			efa_cntr = container_of(util_cntr, struct efa_cntr, util_cntr);
+			if (tx_cq && !ofi_atomic_get32(&tx_cq->util_cq.ref))
+				efa_ibv_cq_poll_list_remove(&efa_cntr->ibv_cq_poll_list, &efa_cntr->util_cntr.ep_list_lock, &tx_cq->ibv_cq);
 
-	/* We need to free the util_ep first to avoid race conditions
-	 * with other threads progressing the cq. */
-	efa_base_ep_close_util_ep(&efa_rdm_ep->base_ep);
+			if (rx_cq && !ofi_atomic_get32(&rx_cq->util_cq.ref))
+				efa_ibv_cq_poll_list_remove(&efa_cntr->ibv_cq_poll_list, &efa_cntr->util_cntr.ep_list_lock, &rx_cq->ibv_cq);
+		}
+	}
+}
 
-	tx_cq = efa_rdm_ep->tx_cq;
-	rx_cq = efa_rdm_ep->rx_cq;
+static inline
+void efa_rdm_ep_remove_cq_ibv_cq_poll_list(struct efa_rdm_ep *ep)
+{
+	struct efa_rdm_cq *tx_cq, *rx_cq;
+
+	tx_cq = ep->tx_cq;
+	rx_cq = ep->rx_cq;
 
 	/* Remove the cross referencing of the CQs.
 	 * It must happen after ofi_endpoint_close
@@ -838,6 +848,29 @@ static int efa_rdm_ep_close(struct fid *fid)
 		if (tx_cq)
 			efa_ibv_cq_poll_list_remove(&tx_cq->ibv_cq_poll_list, &tx_cq->util_cq.ep_list_lock, &rx_cq->ibv_cq);
 	}
+}
+
+/**
+ * @brief implement the fi_close() API for the EFA RDM endpoint
+ * @param[in,out]	fid		Endpoint to close
+ */
+static int efa_rdm_ep_close(struct fid *fid)
+{
+	int ret, retv = 0;
+	struct efa_rdm_ep *efa_rdm_ep;
+
+	efa_rdm_ep = container_of(fid, struct efa_rdm_ep, base_ep.util_ep.ep_fid.fid);
+
+	if (efa_rdm_ep->base_ep.efa_qp_enabled)
+		efa_rdm_ep_wait_send(efa_rdm_ep);
+
+	/* We need to free the util_ep first to avoid race conditions
+	 * with other threads progressing the cq. */
+	efa_base_ep_close_util_ep(&efa_rdm_ep->base_ep);
+
+	efa_rdm_ep_remove_cntr_ibv_cq_poll_list(efa_rdm_ep);
+
+	efa_rdm_ep_remove_cq_ibv_cq_poll_list(efa_rdm_ep);
 
 	ret = efa_base_ep_destruct(&efa_rdm_ep->base_ep);
 	if (ret) {
@@ -1052,6 +1085,72 @@ int efa_rdm_ep_check_qp_support_in_order_aligned_128_bytes(struct efa_rdm_ep *ep
 	return 0;
 }
 
+static inline
+int efa_rdm_ep_insert_cntr_ibv_cq_poll_list(struct efa_rdm_ep *ep)
+{
+	int i, ret;
+	struct efa_cntr *efa_cntr;
+	struct util_cntr *util_cntr;
+	struct efa_rdm_cq *tx_cq, *rx_cq;
+	tx_cq = ep->tx_cq;
+	rx_cq = ep->rx_cq;
+
+	for (i=0; i<CNTR_CNT; i++) {
+		util_cntr = ep->base_ep.util_ep.cntrs[i];
+		if (util_cntr) {
+			efa_cntr = container_of(util_cntr, struct efa_cntr, util_cntr);
+			if (tx_cq) {
+				ret = efa_ibv_cq_poll_list_insert(&efa_cntr->ibv_cq_poll_list, &efa_cntr->util_cntr.ep_list_lock, &tx_cq->ibv_cq);
+				if (ret)
+					return ret;
+			}
+			if (rx_cq) {
+				ret = efa_ibv_cq_poll_list_insert(&efa_cntr->ibv_cq_poll_list, &efa_cntr->util_cntr.ep_list_lock, &rx_cq->ibv_cq);
+				if (ret)
+					return ret;
+			}
+		}
+	}
+
+	return FI_SUCCESS;
+}
+
+static inline
+int efa_rdm_ep_insert_cq_ibv_cq_poll_list(struct efa_rdm_ep *ep)
+{
+	int ret;
+	struct efa_rdm_cq *tx_cq, *rx_cq;
+	/* cross referencing */
+	tx_cq = ep->tx_cq;
+	rx_cq = ep->rx_cq;
+
+	if (tx_cq) {
+		ret = efa_ibv_cq_poll_list_insert(&tx_cq->ibv_cq_poll_list, &tx_cq->util_cq.ep_list_lock, &tx_cq->ibv_cq);
+		if (ret)
+			return ret;
+
+		if (rx_cq) {
+			ret = efa_ibv_cq_poll_list_insert(&tx_cq->ibv_cq_poll_list, &tx_cq->util_cq.ep_list_lock, &rx_cq->ibv_cq);
+			if (ret)
+				return ret;
+		}
+	}
+
+	if (rx_cq) {
+		ret = efa_ibv_cq_poll_list_insert(&rx_cq->ibv_cq_poll_list, &rx_cq->util_cq.ep_list_lock, &rx_cq->ibv_cq);
+		if (ret)
+			return ret;
+
+		if (tx_cq) {
+			ret = efa_ibv_cq_poll_list_insert(&rx_cq->ibv_cq_poll_list, &rx_cq->util_cq.ep_list_lock, &tx_cq->ibv_cq);
+			if (ret)
+				return ret;
+		}
+	}
+
+	return FI_SUCCESS;
+}
+
 /**
  * @brief implement the fi_enable() API for EFA RDM endpoint
  * @param[in,out]	fid	Endpoint to enable
@@ -1068,7 +1167,6 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 	struct fi_rx_attr peer_srx_attr = {0};
 	struct fid_ep *peer_srx_ep = NULL;
 	struct util_srx_ctx *srx_ctx;
-	struct efa_rdm_cq *tx_cq, *rx_cq;
 
 	switch (command) {
 	case FI_ENABLE:
@@ -1097,36 +1195,18 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 		if (ret)
 			return ret;
 
-		/* cross referencing */
-		tx_cq = ep->tx_cq;
-		rx_cq = ep->rx_cq;
-
-		if (!tx_cq && !rx_cq)
+		if (!ep->tx_cq && !ep->rx_cq) {
+			EFA_WARN(FI_LOG_EP_CTRL, "No Tx/Rx CQ is bound to EP. \n");
 			return -FI_ENOCQ;
-
-		if (tx_cq) {
-			ret = efa_ibv_cq_poll_list_insert(&tx_cq->ibv_cq_poll_list, &tx_cq->util_cq.ep_list_lock, &tx_cq->ibv_cq);
-			if (ret)
-				return ret;
-
-			if (rx_cq) {
-				ret = efa_ibv_cq_poll_list_insert(&tx_cq->ibv_cq_poll_list, &tx_cq->util_cq.ep_list_lock, &rx_cq->ibv_cq);
-				if (ret)
-					return ret;
-			}
 		}
 
-		if (rx_cq) {
-			ret = efa_ibv_cq_poll_list_insert(&rx_cq->ibv_cq_poll_list, &rx_cq->util_cq.ep_list_lock, &rx_cq->ibv_cq);
-			if (ret)
-				return ret;
+		ret = efa_rdm_ep_insert_cq_ibv_cq_poll_list(ep);
+		if (ret)
+			return ret;
 
-			if (tx_cq) {
-				ret = efa_ibv_cq_poll_list_insert(&rx_cq->ibv_cq_poll_list, &rx_cq->util_cq.ep_list_lock, &tx_cq->ibv_cq);
-				if (ret)
-					return ret;
-			}
-		}
+		ret = efa_rdm_ep_insert_cntr_ibv_cq_poll_list(ep);
+		if (ret)
+			return ret;
 
 		assert(ep->peer_srx_ep);
 		srx_ctx = efa_rdm_ep_get_peer_srx_ctx(ep);
