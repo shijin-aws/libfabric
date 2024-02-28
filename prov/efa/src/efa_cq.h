@@ -47,7 +47,7 @@ int efa_ibv_cq_poll_list_search(struct dlist_entry *poll_list, struct efa_ibv_cq
 
 	item->cq = cq;
 	dlist_insert_tail(&item->entry, poll_list);
-	//printf("efa_ibv_cq_poll_list_search: poll_list: %p, entry:%p, prev: %p, next: %p\n", (void *) poll_list, (void *) &cq->entry, (void *) &cq->entry.prev, (void *) &cq->entry.next);
+	printf("efa_ibv_cq_poll_list_search: poll_list: %p, cq:%p\n", (void *) poll_list, (void *) cq);
 	return 0;
 }
 

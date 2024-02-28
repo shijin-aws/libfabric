@@ -545,8 +545,11 @@ void efa_rdm_pke_handle_send_completion(struct efa_rdm_pke *pkt_entry)
 		return;
 	}
 
+	printf("efa_rdm_pke_handle_send_completion: before the switch\n");
 	switch (efa_rdm_pke_get_base_hdr(pkt_entry)->type) {
 	case EFA_RDM_HANDSHAKE_PKT:
+		printf("efa_rdm_pke_handle_send_completion: progressing EFA_RDM_HANDSHAKE_PKT\n");
+		assert(pkt_entry->ope);
 		efa_rdm_txe_release(pkt_entry->ope);
 		break;
 	case EFA_RDM_CTS_PKT:
@@ -644,7 +647,7 @@ void efa_rdm_pke_handle_send_completion(struct efa_rdm_pke *pkt_entry)
 		efa_base_ep_write_eq_error(&ep->base_ep, FI_EIO, FI_EFA_ERR_INVALID_PKT_TYPE);
 		return;
 	}
-
+	printf("efa_rdm_pke_handle_send_completion: recording tx op completed\n");
 	efa_rdm_ep_record_tx_op_completed(ep, pkt_entry);
 	efa_rdm_pke_release_tx(pkt_entry);
 }
@@ -662,6 +665,7 @@ void efa_rdm_pke_handle_rx_error(struct efa_rdm_pke *pkt_entry, int err, int pro
 {
 	struct efa_rdm_ep *ep;
 
+	printf("efa_rdm_pke_handle_rx_error: begins\n");
 	ep = pkt_entry->ep;
 	/*
 	 * we should still decrement the efa_rx_pkts_posted
