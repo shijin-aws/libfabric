@@ -172,16 +172,16 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	expect_function_call(efa_mock_ibv_wr_send_verify_handshake_pkt_local_host_id_and_save_wr);
 
 	/* Setup CQ */
-	efa_rdm_cq->ibv_cq_ex->end_poll = &efa_mock_ibv_end_poll_check_mock;
-	efa_rdm_cq->ibv_cq_ex->next_poll = &efa_mock_ibv_next_poll_check_function_called_and_return_mock;
-	efa_rdm_cq->ibv_cq_ex->read_byte_len = &efa_mock_ibv_read_byte_len_return_mock;
-	efa_rdm_cq->ibv_cq_ex->read_opcode = &efa_mock_ibv_read_opcode_return_mock;
-	efa_rdm_cq->ibv_cq_ex->read_slid = &efa_mock_ibv_read_slid_return_mock;
-	efa_rdm_cq->ibv_cq_ex->read_src_qp = &efa_mock_ibv_read_src_qp_return_mock;
-	efa_rdm_cq->ibv_cq_ex->read_vendor_err = &efa_mock_ibv_read_vendor_err_return_mock;
-	efa_rdm_cq->ibv_cq_ex->start_poll = &efa_mock_ibv_start_poll_return_mock;
-	efa_rdm_cq->ibv_cq_ex->status = IBV_WC_SUCCESS;
-	efa_rdm_cq->ibv_cq_ex->wr_id = (uintptr_t)pkt_entry;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->end_poll = &efa_mock_ibv_end_poll_check_mock;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->next_poll = &efa_mock_ibv_next_poll_check_function_called_and_return_mock;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->read_byte_len = &efa_mock_ibv_read_byte_len_return_mock;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->read_opcode = &efa_mock_ibv_read_opcode_return_mock;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->read_slid = &efa_mock_ibv_read_slid_return_mock;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->read_src_qp = &efa_mock_ibv_read_src_qp_return_mock;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->read_vendor_err = &efa_mock_ibv_read_vendor_err_return_mock;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->start_poll = &efa_mock_ibv_start_poll_return_mock;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->status = IBV_WC_SUCCESS;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->wr_id = (uintptr_t)pkt_entry;
 	expect_function_call(efa_mock_ibv_next_poll_check_function_called_and_return_mock);
 
 	/* Receive handshake packet */
@@ -211,8 +211,8 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	 * We need to poll the CQ twice explicitly to point the CQE
 	 * to the saved send wr in handshake
 	 */
-	efa_rdm_cq->ibv_cq_ex->status = IBV_WC_GENERAL_ERR;
-	efa_rdm_cq->ibv_cq_ex->wr_id = (uintptr_t)g_ibv_submitted_wr_id_vec[0];
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->status = IBV_WC_GENERAL_ERR;
+	efa_rdm_cq->ibv_cq.ibv_cq_ex->wr_id = (uintptr_t)g_ibv_submitted_wr_id_vec[0];
 
 	/* Progress the send wr to clean up outstanding tx ops */
 	cq_read_send_ret = fi_cq_read(resource->cq, &cq_entry, 1);
