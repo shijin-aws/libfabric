@@ -254,12 +254,14 @@ static int efa_rdm_cq_get_prov_errno(struct ibv_cq_ex *ibv_cq_ex) {
 	uint32_t vendor_err = ibv_wc_read_vendor_err(ibv_cq_ex);
 	struct efa_rdm_pke *pkt_entry = (void *) (uintptr_t) ibv_cq_ex->wr_id;
 	struct efa_rdm_peer *peer;
-	struct efa_rdm_ep *ep = pkt_entry->ep;
+	struct efa_rdm_ep *ep;
 
-	if (OFI_LIKELY(pkt_entry && pkt_entry->addr))
+	if (OFI_LIKELY(pkt_entry && pkt_entry->addr)) {
+		ep = pkt_entry->ep;
 		peer = efa_rdm_ep_get_peer(ep, pkt_entry->addr);
-	else
+	} else {
 		return vendor_err;
+	}
 
 	switch (vendor_err) {
 	case EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE: {
