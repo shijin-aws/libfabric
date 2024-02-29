@@ -300,6 +300,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	/* Call ibv_start_poll only once */
 	err = ibv_start_poll(ibv_cq->ibv_cq_ex, &poll_cq_attr);
 	should_end_poll = !err;
+	//printf("efa_rdm_cq_poll_ibv_cq: err: %d\n", err);
 
 	while (!err) {
 		pkt_entry = (void *)(uintptr_t)ibv_cq->ibv_cq_ex->wr_id;
@@ -308,12 +309,14 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		efa_av = ep->base_ep.av;
 		efa_rdm_tracepoint(poll_cq, (size_t) ibv_cq->ibv_cq_ex->wr_id);
 		opcode = ibv_wc_read_opcode(ibv_cq->ibv_cq_ex);
+		printf("efa_rdm_cq_poll_ibv_cq: get completion with op code %d\n", opcode);
 		if (ibv_cq->ibv_cq_ex->status) {
 			prov_errno = efa_rdm_cq_get_prov_errno(ibv_cq->ibv_cq_ex);
 			switch (opcode) {
 			case IBV_WC_SEND: /* fall through */
 			case IBV_WC_RDMA_WRITE: /* fall through */
 			case IBV_WC_RDMA_READ:
+				
 				efa_rdm_pke_handle_tx_error(pkt_entry, FI_EIO, prov_errno);
 				break;
 			case IBV_WC_RECV: /* fall through */

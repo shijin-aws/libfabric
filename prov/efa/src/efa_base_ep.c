@@ -128,6 +128,7 @@ static int efa_base_ep_modify_qp_state(struct efa_base_ep *base_ep,
 	if (attr_mask & IBV_QP_RNR_RETRY)
 		attr.rnr_retry = base_ep->rnr_retry;
 
+	printf("base_ep: rnr_retry is %u\n", attr.rnr_retry);
 	return -ibv_modify_qp(qp->ibv_qp, &attr, attr_mask);
 }
 

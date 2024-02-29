@@ -449,6 +449,7 @@ void efa_rdm_pke_handle_tx_error(struct efa_rdm_pke *pkt_entry, int err, int pro
 
 		if (prov_errno == EFA_IO_COMP_STATUS_REMOTE_ERROR_RNR) {
 			if (ep->handle_resource_management == FI_RM_DISABLED) {
+				printf("efa_rdm_pke_handle_tx_error: got rnr and rm is disabled\n");
 				/*
 				 * Write an error to the application for RNR when resource
 				 * management is disabled.

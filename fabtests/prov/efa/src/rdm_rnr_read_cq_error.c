@@ -57,6 +57,8 @@ static int rnr_read_cq_error(void)
 	 */
 	total_send = fi->rx_attr->size + expected_rnr_error;
 
+	printf("rnr_read_cq_error: before fi_send\n");
+
 	for (i = 0; i < total_send; i++) {
 		do {
 			ret = fi_send(ep, tx_buf, 32, mr_desc, remote_fi_addr, &tx_ctx);
@@ -65,6 +67,7 @@ static int rnr_read_cq_error(void)
 				return ret;
 			}
 		} while (ret == -FI_EAGAIN);
+		printf("rnr_read_cq_error: done fi_send %d\n", i);
 	}
 
 	cnt = total_send;
