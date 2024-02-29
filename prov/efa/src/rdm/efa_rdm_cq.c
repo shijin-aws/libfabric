@@ -297,13 +297,11 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	int prov_errno;
 	struct efa_rdm_ep *ep = NULL;
 
-	printf("efa_rdm_cq_poll_ibv_cq: begins, cq: %p\n", ibv_cq->ibv_cq_ex);
 	/* Call ibv_start_poll only once */
 	err = ibv_start_poll(ibv_cq->ibv_cq_ex, &poll_cq_attr);
 	should_end_poll = !err;
 
 	while (!err) {
-		printf("efa_rdm_cq_poll_ibv_cq: while loop, err: %d\n", err);
 		pkt_entry = (void *)(uintptr_t)ibv_cq->ibv_cq_ex->wr_id;
 		ep = pkt_entry->ep;
 		assert(ep);
@@ -311,7 +309,6 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		efa_rdm_tracepoint(poll_cq, (size_t) ibv_cq->ibv_cq_ex->wr_id);
 		opcode = ibv_wc_read_opcode(ibv_cq->ibv_cq_ex);
 		if (ibv_cq->ibv_cq_ex->status) {
-			printf("ibv cq has error completion\n");
 			prov_errno = efa_rdm_cq_get_prov_errno(ibv_cq->ibv_cq_ex);
 			switch (opcode) {
 			case IBV_WC_SEND: /* fall through */
@@ -329,17 +326,14 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 			}
 			break;
 		}
-		printf("ibv cq has good completion\n");
 		switch (opcode) {
 		case IBV_WC_SEND:
 #if ENABLE_DEBUG
 			ep->send_comps++;
 #endif
-			printf("efa_rdm_cq_poll_ibv_cq: get good completion for IBV_WC_SEND\n");
 			efa_rdm_pke_handle_send_completion(pkt_entry);
 			break;
 		case IBV_WC_RECV:
-			printf("efa_rdm_cq_poll_ibv_cq: get good completion for IBV_WC_RECV\n");
 			pkt_entry->addr = efa_av_reverse_lookup_rdm(efa_av, ibv_wc_read_slid(ibv_cq->ibv_cq_ex),
 								ibv_wc_read_src_qp(ibv_cq->ibv_cq_ex), pkt_entry);
 
@@ -380,7 +374,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		 */
 		err = ibv_next_poll(ibv_cq->ibv_cq_ex);
 	}
-	printf("efa_rdm_cq_poll_ibv_cq: finished polling ibv cq, err: %d\n", err);
+
 	if (err && err != ENOENT) {
 		err = err > 0 ? err : -err;
 		prov_errno = efa_rdm_cq_get_prov_errno(ibv_cq->ibv_cq_ex);
@@ -389,13 +383,12 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		} else {
 			fprintf(stderr, "Unexpected error when polling ibv cq, err: %s (%zd) prov_errno: %s (%d)\n", fi_strerror(err), err, efa_strerror(prov_errno), prov_errno);
 			efa_show_help(prov_errno);
-			//abort();
+			abort();
 		}
 	}
 
 	if (should_end_poll)
 		ibv_end_poll(ibv_cq->ibv_cq_ex);
-	printf("efa_rdm_cq_poll_ibv_cq: after calling ibv_end_poll\n");
 }
 
 static ssize_t efa_rdm_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count, fi_addr_t *src_addr)
@@ -450,22 +443,15 @@ static void efa_rdm_cq_progress(struct util_cq *cq)
 	struct dlist_entry *item;
 	struct efa_rdm_cq *efa_rdm_cq;
 	struct efa_ibv_cq_poll_list_entry *poll_list_entry;
-	int i;
 
 	ofi_genlock_lock(&cq->ep_list_lock);
 	efa_rdm_cq = container_of(cq, struct efa_rdm_cq, util_cq);
 
-	printf("efa_rdm_cq_progress: begins\n");
-	i = 0;
 	dlist_foreach(&efa_rdm_cq->ibv_cq_poll_list, item) {
 		poll_list_entry = container_of(item, struct efa_ibv_cq_poll_list_entry, entry);
-		printf("efa_rdm_cq_progress: before polling ibv cq, i= %d, cq: %p\n", i, (void *)poll_list_entry->cq);
 		efa_rdm_cq_poll_ibv_cq(efa_env.efa_cq_read_size, poll_list_entry->cq);
-		printf("efa_rdm_cq_progress: after polling ibv cq\n");
-		i++;
 	}
 
-	printf("efa_rdm_cq_progress: ends\n");
 	dlist_foreach(&cq->ep_list, item) {
 		fid_entry = container_of(item, struct fid_list_entry, entry);
 		ep = container_of(fid_entry->fid, struct util_ep, ep_fid.fid);

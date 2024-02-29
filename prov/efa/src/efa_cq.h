@@ -25,9 +25,9 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq);
 static inline
 int efa_ibv_cq_poll_list_match(struct dlist_entry *entry, const void *cq)
 {
-	struct efa_ibv_cq_poll_list_entry *item;
-	item = container_of(entry, struct efa_ibv_cq_poll_list_entry, entry);
-	return (item->cq == cq);
+	struct efa_ibv_cq *item;
+	item = container_of(entry, struct efa_ibv_cq, entry);
+	return (item == cq);
 }
 
 /* Serialization must be provided by the caller. */
@@ -47,7 +47,7 @@ int efa_ibv_cq_poll_list_search(struct dlist_entry *poll_list, struct efa_ibv_cq
 
 	item->cq = cq;
 	dlist_insert_tail(&item->entry, poll_list);
-	printf("efa_ibv_cq_poll_list_search: poll_list: %p, cq:%p\n", (void *) poll_list, (void *) cq);
+	//printf("efa_ibv_cq_poll_list_search: poll_list: %p, entry:%p, prev: %p, next: %p\n", (void *) poll_list, (void *) &cq->entry, (void *) &cq->entry.prev, (void *) &cq->entry.next);
 	return 0;
 }
 

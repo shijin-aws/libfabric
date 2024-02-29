@@ -160,8 +160,7 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	pkt_attr.host_id = g_efa_unit_test_mocks.peer_host_id;
 	pkt_attr.device_version = 0xefa0;
 	efa_unit_test_handshake_pkt_construct(pkt_entry, &pkt_attr);
-	printf("OK after efa_unit_test_handshake_pkt_construct\n");
-	
+
 	ibv_qp = efa_rdm_ep->base_ep.qp->ibv_qp_ex;
 	ibv_qp->wr_start = &efa_mock_ibv_wr_start_no_op;
 	/* this mock will save the send work request (wr) in a global array */
@@ -204,10 +203,7 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	will_return(efa_mock_ibv_start_poll_return_mock, IBV_WC_SUCCESS);
 
 	/* Progress the recv wr first to process the received handshake packet. */
-	printf("OK before 1st fi_cq_read\n");
 	cq_read_recv_ret = fi_cq_read(resource->cq, &cq_entry, 1);
-	printf("OK after 1st fi_cq_read\n");
-	fflush(stdout);
 
 	actual_peer_host_id = peer->host_id;
 
@@ -218,12 +214,9 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	efa_rdm_cq->ibv_cq.ibv_cq_ex->status = IBV_WC_GENERAL_ERR;
 	efa_rdm_cq->ibv_cq.ibv_cq_ex->wr_id = (uintptr_t)g_ibv_submitted_wr_id_vec[0];
 
-	printf("OK before 2nd fi_cq_read\n");
-
 	/* Progress the send wr to clean up outstanding tx ops */
 	cq_read_send_ret = fi_cq_read(resource->cq, &cq_entry, 1);
 
-	printf("OK after 2nd fi_cq_read\n");
 	/* HANDSHAKE packet does not generate completion entry */
 	assert_int_equal(cq_read_recv_ret, -FI_EAGAIN);
 	assert_int_equal(cq_read_send_ret, -FI_EAGAIN);
@@ -233,7 +226,6 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 
 	/* Device version should be stored after handshake */
         assert_int_equal(peer->device_version, 0xefa0);
-	printf("OK after device version check\n");
 }
 #else
 void test_efa_rdm_ep_handshake_exchange_host_id() {
