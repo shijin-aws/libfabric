@@ -340,7 +340,7 @@ void test_ibv_cq_ex_read_failed_poll(struct efa_resource **state)
 {
 	struct efa_resource *resource = *state;
 	struct fi_cq_data_entry cq_entry;
-	struct fi_eq_err_entry eq_err_entry;
+	struct fi_cq_err_entry cq_err_entry;
 	int ret;
 	struct efa_rdm_cq *efa_rdm_cq;
 
@@ -355,16 +355,12 @@ void test_ibv_cq_ex_read_failed_poll(struct efa_resource **state)
 	will_return(efa_mock_ibv_read_vendor_err_return_mock, EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE);
 
 	ret = fi_cq_read(resource->cq, &cq_entry, 1);
-	/* TODO:
-	 * Our current behavior is to return -FI_EAGAIN, but it is not right.
-	 * We need to fix the behaivor in the provider and update the test case.
-	 */
-	assert_int_equal(ret, -FI_EAGAIN);
+	assert_int_equal(ret, -FI_EAVAIL);
 
-	ret = fi_eq_readerr(resource->eq, &eq_err_entry, 0);
-	assert_int_equal(ret, sizeof(eq_err_entry));
-	assert_int_not_equal(eq_err_entry.err, FI_ENOENT);
-	assert_int_equal(eq_err_entry.prov_errno, EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE);
+	ret = fi_cq_readerr(resource->cq, &cq_err_entry, 0);
+	assert_int_equal(ret, 1);
+	assert_int_not_equal(cq_err_entry.err, FI_ENOENT);
+	assert_int_equal(cq_err_entry.prov_errno, EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE);
 }
 
 /**
