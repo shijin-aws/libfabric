@@ -531,6 +531,7 @@ static void test_impl_ibv_cq_ex_read_unknow_peer_ah(struct efa_resource *resourc
 		assert_int_equal(ret, 0);
 	}
 
+	printf("test_impl_ibv_cq_ex_read_unknow_peer_ah: before fi_cq_read\n");
 	ret = fi_cq_read(resource->cq, &cq_entry, 1);
 
 	if (remove_peer || !support_efadv_cq) {
@@ -542,6 +543,7 @@ static void test_impl_ibv_cq_ex_read_unknow_peer_ah(struct efa_resource *resourc
 		assert_int_equal(ret, 1);
 	}
 
+	printf("test_impl_ibv_cq_ex_read_unknow_peer_ah: after fi_cq_read\n");
 	efa_unit_test_buff_destruct(&recv_buff);
 }
 

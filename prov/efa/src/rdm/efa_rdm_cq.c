@@ -204,6 +204,7 @@ static inline fi_addr_t efa_rdm_cq_determine_addr_from_ibv_cq(struct ibv_cq_ex *
 	pkt_entry = (void *)(uintptr_t)ibv_cqx->wr_id;
 
 	addr = efa_rdm_pke_determine_addr(pkt_entry);
+	printf("efa_rdm_cq_determine_addr_from_ibv_cq: efa_rdm_pke_determine_addr returns %d\n", addr);
 
 	if (addr == FI_ADDR_NOTAVAIL) {
 		addr = efa_rdm_cq_determine_peer_address_from_efadv(ibv_cqx, ibv_cq_ex_type);
@@ -254,12 +255,14 @@ static int efa_rdm_cq_get_prov_errno(struct ibv_cq_ex *ibv_cq_ex) {
 	uint32_t vendor_err = ibv_wc_read_vendor_err(ibv_cq_ex);
 	struct efa_rdm_pke *pkt_entry = (void *) (uintptr_t) ibv_cq_ex->wr_id;
 	struct efa_rdm_peer *peer;
-	struct efa_rdm_ep *ep = pkt_entry->ep;
+	struct efa_rdm_ep *ep;
 
-	if (OFI_LIKELY(pkt_entry && pkt_entry->addr))
+	if (OFI_LIKELY(pkt_entry && pkt_entry->addr)) {
+		ep = pkt_entry->ep;
 		peer = efa_rdm_ep_get_peer(ep, pkt_entry->addr);
-	else
+	} else {
 		return vendor_err;
+	}
 
 	switch (vendor_err) {
 	case EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE: {
@@ -296,11 +299,13 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	size_t i = 0;
 	int prov_errno;
 	struct efa_rdm_ep *ep = NULL;
+	struct fi_cq_err_entry err_entry = {0};
+	struct efa_rdm_cq *efa_rdm_cq;
 
 	/* Call ibv_start_poll only once */
 	err = ibv_start_poll(ibv_cq->ibv_cq_ex, &poll_cq_attr);
 	should_end_poll = !err;
-	//printf("efa_rdm_cq_poll_ibv_cq: err: %d\n", err);
+	printf("efa_rdm_cq_poll_ibv_cq: ibv_start_poll returns err: %d\n", err);
 
 	while (!err) {
 		pkt_entry = (void *)(uintptr_t)ibv_cq->ibv_cq_ex->wr_id;
@@ -342,6 +347,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 
 			if (pkt_entry->addr == FI_ADDR_NOTAVAIL) {
 				pkt_entry->addr = efa_rdm_cq_determine_addr_from_ibv_cq(ibv_cq->ibv_cq_ex, ibv_cq->ibv_cq_ex_type);
+				printf("addr not avail from reserve look up, efa_rdm_cq_determine_addr_from_ibv_cq returns %d\n", pkt_entry->addr);
 			}
 
 			pkt_entry->pkt_size = ibv_wc_read_byte_len(ibv_cq->ibv_cq_ex);
@@ -380,16 +386,17 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 
 	if (err && err != ENOENT) {
 		err = err > 0 ? err : -err;
-		prov_errno = efa_rdm_cq_get_prov_errno(ibv_cq->ibv_cq_ex);
-		if (ep) {
-			efa_base_ep_write_eq_error(&ep->base_ep, err, prov_errno);
-		} else {
-			fprintf(stderr, "Unexpected error when polling ibv cq, err: %s (%zd) prov_errno: %s (%d)\n", fi_strerror(err), err, efa_strerror(prov_errno), prov_errno);
-			efa_show_help(prov_errno);
-			abort();
-		}
+		prov_errno = ibv_wc_read_vendor_err(ibv_cq->ibv_cq_ex);
+		EFA_WARN(FI_LOG_CQ,
+			"Unexpected error when polling ibv cq: err: %s (%zd), prov_errorno: %s (%d)\n",
+			fi_strerror(err), err, efa_strerror(prov_errno), prov_errno);
+		err_entry.err = err;
+		err_entry.prov_errno = prov_errno;
+		efa_rdm_cq = container_of(ibv_cq, struct efa_rdm_cq, ibv_cq);
+		ofi_cq_write_error(&efa_rdm_cq->util_cq, &err_entry);
 	}
 
+	printf("poll ibv cq: before end poll\n");
 	if (should_end_poll)
 		ibv_end_poll(ibv_cq->ibv_cq_ex);
 }
@@ -450,9 +457,12 @@ static void efa_rdm_cq_progress(struct util_cq *cq)
 	ofi_genlock_lock(&cq->ep_list_lock);
 	efa_rdm_cq = container_of(cq, struct efa_rdm_cq, util_cq);
 
+	
 	dlist_foreach(&efa_rdm_cq->ibv_cq_poll_list, item) {
+		printf("efa_rdm_cq_progress: before ibv cq poll, item: %p\n", item);
 		poll_list_entry = container_of(item, struct efa_ibv_cq_poll_list_entry, entry);
 		efa_rdm_cq_poll_ibv_cq(efa_env.efa_cq_read_size, poll_list_entry->cq);
+		printf("efa_rdm_cq_progress: after ibv cq poll\n");
 	}
 
 	dlist_foreach(&cq->ep_list, item) {
@@ -460,6 +470,7 @@ static void efa_rdm_cq_progress(struct util_cq *cq)
 		ep = container_of(fid_entry->fid, struct util_ep, ep_fid.fid);
 		ep->progress(ep);
 	}
+	printf("efa_rdm_cq_progress: after ep progress\n");
 	ofi_genlock_unlock(&cq->ep_list_lock);
 }
 
