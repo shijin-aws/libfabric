@@ -432,7 +432,7 @@ void test_efa_rdm_ep_rma_without_caps(struct efa_resource **state)
 	resource->hints->caps |= FI_MSG | FI_TAGGED;
 	resource->hints->caps &= ~FI_RMA;
 	resource->hints->domain_attr->mr_mode = FI_MR_BASIC;
-	efa_unit_test_resource_construct_with_hints(resource, FI_EP_RDM, resource->hints, true);
+	efa_unit_test_resource_construct_with_hints(resource, FI_EP_RDM, resource->hints, true, true);
 
 	/* ensure we don't have RMA capability. */
 	efa_rdm_ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);
@@ -482,7 +482,7 @@ void test_efa_rdm_ep_atomic_without_caps(struct efa_resource **state)
 	resource->hints->caps |= FI_MSG | FI_TAGGED;
 	resource->hints->caps &= ~FI_ATOMIC;
 	resource->hints->domain_attr->mr_mode = FI_MR_BASIC;
-	efa_unit_test_resource_construct_with_hints(resource, FI_EP_RDM, resource->hints, true);
+	efa_unit_test_resource_construct_with_hints(resource, FI_EP_RDM, resource->hints, true, true);
 
 	/* ensure we don't have ATOMIC capability. */
 	efa_rdm_ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);

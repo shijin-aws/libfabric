@@ -35,10 +35,12 @@ struct fi_info *efa_unit_test_alloc_hints(enum fi_ep_type ep_type);
 void efa_unit_test_resource_construct(struct efa_resource *resource, enum fi_ep_type ep_type);
 void efa_unit_test_resource_construct_ep_not_enabled(
 	struct efa_resource *resource, enum fi_ep_type ep_type);
+void efa_unit_test_resource_construct_no_cq_and_ep_not_enabled(
+	struct efa_resource *resource, enum fi_ep_type ep_type);
 void efa_unit_test_resource_construct_with_hints(struct efa_resource *resource,
 						 enum fi_ep_type ep_type,
 						 struct fi_info *hints,
-						 bool enable_ep);
+						 bool enable_ep, bool open_cq);
 
 void efa_unit_test_resource_destruct(struct efa_resource *resource);
 
@@ -161,5 +163,6 @@ void test_efa_rdm_peer_select_readbase_rtm_no_runt();
 void test_efa_rdm_peer_select_readbase_rtm_do_runt();
 void test_efa_domain_open_ops_wrong_name();
 void test_efa_domain_open_ops_mr_query();
-
+void test_efa_rdm_cq_ibv_cq_poll_list_same_tx_rx_cq_single_ep();
+void test_efa_rdm_cq_ibv_cq_poll_list_separate_tx_rx_cq_single_ep();
 #endif

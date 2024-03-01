@@ -412,6 +412,77 @@ void test_rdm_cq_create_error_handling(struct efa_resource **state)
 	resource->cq = NULL;
 }
 
+/**
+ * @brief get the length of the ibv_cq_poll_list for a given efa_rdm_cq
+ *
+ * @param cq_fid cq fid
+ * @return int the length of the ibv_cq_poll_list
+ */
+static
+int test_efa_rdm_cq_get_ibv_cq_poll_list_length(struct fid_cq *cq_fid)
+{
+	int i = 0;
+	struct dlist_entry *item;
+	struct efa_rdm_cq *cq;
+
+	cq = container_of(cq_fid, struct efa_rdm_cq, util_cq.cq_fid.fid);
+	dlist_foreach(&cq->ibv_cq_poll_list, item) {
+		i++;
+	}
+
+	return i;
+}
+
+/**
+ * @brief Check the length of ibv_cq_poll_list when 1 cq is bind to 1 ep
+ * as both tx/rx cq.
+ *
+ * @param state struct efa_resource that is managed by the framework
+ */
+void test_efa_rdm_cq_ibv_cq_poll_list_same_tx_rx_cq_single_ep(struct efa_resource **state)
+{
+	struct efa_resource *resource = *state;
+
+	efa_unit_test_resource_construct(resource, FI_EP_RDM);
+
+	/* efa_unit_test_resource_construct binds single OFI CQ as both tx/rx cq of ep */
+	assert_int_equal(test_efa_rdm_cq_get_ibv_cq_poll_list_length(resource->cq), 1);
+}
+
+/**
+ * @brief Check the length of ibv_cq_poll_list when separate tx/rx cq is bind to 1 ep.
+ *
+ * @param state struct efa_resource that is managed by the framework
+ */
+void test_efa_rdm_cq_ibv_cq_poll_list_separate_tx_rx_cq_single_ep(struct efa_resource **state)
+{
+	struct efa_resource *resource = *state;
+	struct fid_cq *txcq, *rxcq;
+	struct fi_cq_attr cq_attr = {0};
+
+	efa_unit_test_resource_construct_no_cq_and_ep_not_enabled(resource, FI_EP_RDM);
+
+	assert_int_equal(fi_cq_open(resource->domain, &cq_attr, &txcq, NULL), 0);
+
+	assert_int_equal(fi_ep_bind(resource->ep, &txcq->fid, FI_SEND), 0);
+
+	assert_int_equal(fi_cq_open(resource->domain, &cq_attr, &rxcq, NULL), 0);
+
+	assert_int_equal(fi_ep_bind(resource->ep, &rxcq->fid, FI_RECV), 0);
+
+	assert_int_equal(fi_enable(resource->ep), 0);
+
+	assert_int_equal(test_efa_rdm_cq_get_ibv_cq_poll_list_length(txcq), 2);
+
+	assert_int_equal(test_efa_rdm_cq_get_ibv_cq_poll_list_length(rxcq), 2);
+
+	/* ep must be closed before cq/av/eq... */
+	fi_close(&resource->ep->fid);
+	resource->ep = NULL;
+	fi_close(&txcq->fid);
+	fi_close(&rxcq->fid);
+}
+
 #if HAVE_EFADV_CQ_EX
 /**
  * @brief Construct an RDM endpoint and receive an eager MSG RTM packet.
