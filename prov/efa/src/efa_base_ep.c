@@ -157,34 +157,52 @@ static int efa_base_ep_modify_qp_rst2rts(struct efa_base_ep *base_ep,
 					   IBV_QP_STATE | IBV_QP_SQ_PSN);
 }
 
-int efa_base_ep_create_qp(struct efa_base_ep *base_ep,
-			  struct ibv_qp_init_attr_ex *init_attr_ex)
+/**
+ * @brief Create a efa_qp
+ *
+ * @param qp double pointer of struct efa_qp
+ * @param init_attr_ex ibv_qp_init_attr_ex
+ * @return int 0 on success, negative integer on failure
+ */
+int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex)
 {
-	struct efa_qp *qp;
 	struct efadv_qp_init_attr efa_attr = { 0 };
 
-	qp = calloc(1, sizeof(*qp));
-	if (!qp)
+	*qp = calloc(1, sizeof(struct efa_qp));
+	if (!*qp)
 		return -FI_ENOMEM;
 
 	if (init_attr_ex->qp_type == IBV_QPT_UD) {
-		qp->ibv_qp = ibv_create_qp_ex(init_attr_ex->pd->context,
+		(*qp)->ibv_qp = ibv_create_qp_ex(init_attr_ex->pd->context,
 					      init_attr_ex);
 	} else {
 		assert(init_attr_ex->qp_type == IBV_QPT_DRIVER);
 		efa_attr.driver_qp_type = EFADV_QP_DRIVER_TYPE_SRD;
-		qp->ibv_qp = efadv_create_qp_ex(
+		(*qp)->ibv_qp = efadv_create_qp_ex(
 			init_attr_ex->pd->context, init_attr_ex, &efa_attr,
 			sizeof(struct efadv_qp_init_attr));
 	}
 
-	if (!qp->ibv_qp) {
+	if (!(*qp)->ibv_qp) {
 		EFA_WARN(FI_LOG_EP_CTRL, "ibv_create_qp failed. errno: %d\n", errno);
-		free(qp);
+		free(*qp);
 		return -errno;
 	}
 
-	qp->ibv_qp_ex = ibv_qp_to_qp_ex(qp->ibv_qp);
+	(*qp)->ibv_qp_ex = ibv_qp_to_qp_ex((*qp)->ibv_qp);
+	return FI_SUCCESS;
+}
+
+int efa_base_ep_create_qp(struct efa_base_ep *base_ep,
+			  struct ibv_qp_init_attr_ex *init_attr_ex)
+{
+	struct efa_qp *qp;
+	int ret;
+
+	ret = efa_qp_create(&qp, init_attr_ex);
+	if (ret)
+		return ret;
+
 	base_ep->qp = qp;
 	qp->base_ep = base_ep;
 	return 0;
@@ -341,17 +359,17 @@ int efa_base_ep_getname(fid_t fid, void *addr, size_t *addrlen)
  * 		in-order operation.
  */
 #if HAVE_EFA_DATA_IN_ORDER_ALIGNED_128_BYTES
-bool efa_base_ep_support_op_in_order_aligned_128_bytes(struct efa_base_ep *base_ep, enum ibv_wr_opcode op)
+bool efa_qp_support_op_in_order_aligned_128_bytes(struct efa_qp *qp, enum ibv_wr_opcode op)
 {
 	int caps;
 
-	caps = ibv_query_qp_data_in_order(base_ep->qp->ibv_qp, op,
+	caps = ibv_query_qp_data_in_order(qp->ibv_qp, op,
 					  IBV_QUERY_QP_DATA_IN_ORDER_RETURN_CAPS);
 
 	return !!(caps & IBV_QUERY_QP_DATA_IN_ORDER_ALIGNED_128_BYTES);
 }
 #else
-bool efa_base_ep_support_op_in_order_aligned_128_bytes(struct efa_base_ep *base_ep, enum ibv_wr_opcode op)
+bool efa_qp_support_op_in_order_aligned_128_bytes(struct efa_qp *qp, enum ibv_wr_opcode op)
 {
 	return false;
 }

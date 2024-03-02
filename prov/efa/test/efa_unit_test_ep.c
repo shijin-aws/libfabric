@@ -593,9 +593,7 @@ void test_efa_rdm_ep_enable_qp_in_order_aligned_128_bytes_common(struct efa_reso
 	/* fi_setopt should always succeed */
 	assert_int_equal(fi_setopt(&resource->ep->fid, FI_OPT_ENDPOINT,
 				   FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES, &optval,
-				   sizeof(optval)), 0);
-
-	assert_int_equal(fi_enable(resource->ep), expected_status);
+				   sizeof(optval)), expected_status);
 }
 
 #if HAVE_EFA_DATA_IN_ORDER_ALIGNED_128_BYTES

@@ -14,6 +14,33 @@
 #include "efa_rdm_pke_req.h"
 #include "efa_cntr.h"
 
+static
+void efa_rdm_ep_construct_ibv_qp_init_attr_ex(struct efa_rdm_ep *ep,
+					struct ibv_qp_init_attr_ex *attr_ex,
+					struct ibv_cq_ex *tx_cq,
+					struct ibv_cq_ex *rx_cq)
+{
+	attr_ex->cap.max_send_wr = ep->base_ep.domain->device->rdm_info->tx_attr->size;
+	attr_ex->cap.max_send_sge = ep->base_ep.domain->device->rdm_info->tx_attr->iov_limit;
+	attr_ex->cap.max_recv_wr = ep->base_ep.domain->device->rdm_info->rx_attr->size;
+	attr_ex->cap.max_recv_sge = ep->base_ep.domain->device->rdm_info->rx_attr->iov_limit;
+	attr_ex->cap.max_inline_data = ep->base_ep.domain->device->efa_attr.inline_buf_size;
+	attr_ex->qp_type = IBV_QPT_DRIVER;
+	attr_ex->comp_mask = IBV_QP_INIT_ATTR_PD | IBV_QP_INIT_ATTR_SEND_OPS_FLAGS;
+	attr_ex->send_ops_flags = IBV_QP_EX_WITH_SEND;
+	if (efa_device_support_rdma_read())
+		attr_ex->send_ops_flags |= IBV_QP_EX_WITH_RDMA_READ;
+	if (efa_device_support_rdma_write()) {
+		attr_ex->send_ops_flags |= IBV_QP_EX_WITH_RDMA_WRITE;
+		attr_ex->send_ops_flags |= IBV_QP_EX_WITH_RDMA_WRITE_WITH_IMM;
+	}
+	attr_ex->pd = efa_rdm_ep_domain(ep)->ibv_pd;
+	attr_ex->qp_context = ep;
+	attr_ex->sq_sig_all = 1;
+
+	attr_ex->send_cq = ibv_cq_ex_to_cq(tx_cq);
+	attr_ex->recv_cq = ibv_cq_ex_to_cq(rx_cq);
+}
 /**
  * @brief set the "efa_qp" field in the efa_rdm_ep->efa_base_ep
  * called by efa_rdm_ep_open()
@@ -26,6 +53,7 @@ static
 int efa_rdm_ep_create_base_ep_ibv_qp(struct efa_rdm_ep *ep)
 {
 	struct ibv_qp_init_attr_ex attr_ex = { 0 };
+	struct ibv_cq_ex *tx_cq, *rx_cq;
 
 	if (!ep->tx_cq && !ep->rx_cq) {
 		EFA_WARN(FI_LOG_EP_CTRL,
@@ -45,37 +73,10 @@ int efa_rdm_ep_create_base_ep_ibv_qp(struct efa_rdm_ep *ep)
 		return -FI_ENOCQ;
 	}
 
-	if (ep->tx_cq) {
-		attr_ex.cap.max_send_wr = ep->base_ep.domain->device->rdm_info->tx_attr->size;
-		attr_ex.cap.max_send_sge = ep->base_ep.domain->device->rdm_info->tx_attr->iov_limit;
-		attr_ex.send_cq = ibv_cq_ex_to_cq(ep->tx_cq->ibv_cq.ibv_cq_ex);
-	} else {
-		attr_ex.send_cq = ibv_cq_ex_to_cq(ep->rx_cq->ibv_cq.ibv_cq_ex);
-	}
+	tx_cq = ep->tx_cq ? ep->tx_cq->ibv_cq.ibv_cq_ex : ep->rx_cq->ibv_cq.ibv_cq_ex;
+	rx_cq = ep->rx_cq ? ep->rx_cq->ibv_cq.ibv_cq_ex : ep->tx_cq->ibv_cq.ibv_cq_ex;
 
-	if (ep->rx_cq) {
-		attr_ex.cap.max_recv_wr = ep->base_ep.domain->device->rdm_info->rx_attr->size;
-		attr_ex.cap.max_recv_sge = ep->base_ep.domain->device->rdm_info->rx_attr->iov_limit;
-		attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->rx_cq->ibv_cq.ibv_cq_ex);
-	} else {
-		attr_ex.recv_cq = ibv_cq_ex_to_cq(ep->tx_cq->ibv_cq.ibv_cq_ex);
-	}
-
-	attr_ex.cap.max_inline_data = ep->base_ep.domain->device->efa_attr.inline_buf_size;
-
-	attr_ex.qp_type = IBV_QPT_DRIVER;
-	attr_ex.comp_mask = IBV_QP_INIT_ATTR_PD | IBV_QP_INIT_ATTR_SEND_OPS_FLAGS;
-	attr_ex.send_ops_flags = IBV_QP_EX_WITH_SEND;
-	if (efa_device_support_rdma_read())
-		attr_ex.send_ops_flags |= IBV_QP_EX_WITH_RDMA_READ;
-	if (efa_device_support_rdma_write()) {
-		attr_ex.send_ops_flags |= IBV_QP_EX_WITH_RDMA_WRITE;
-		attr_ex.send_ops_flags |= IBV_QP_EX_WITH_RDMA_WRITE_WITH_IMM;
-	}
-	attr_ex.pd = efa_rdm_ep_domain(ep)->ibv_pd;
-
-	attr_ex.qp_context = ep;
-	attr_ex.sq_sig_all = 1;
+	efa_rdm_ep_construct_ibv_qp_init_attr_ex(ep, &attr_ex, tx_cq, rx_cq);
 
 	return efa_base_ep_create_qp(&ep->base_ep, &attr_ex);
 }
@@ -1055,36 +1056,6 @@ void efa_rdm_ep_update_shm(struct efa_rdm_ep *ep)
 		efa_rdm_ep_close_shm_resources(ep);
 }
 
-/**
- * @brief If user requests in-order aligned 128 bytes capability,
- * check if the qp supports it.
- * @param ep efa_rdm_ep
- * @return int 0 on success, -FI_EOPNOTSUPP when qp doesn't support the request.
- */
-static
-int efa_rdm_ep_check_qp_support_in_order_aligned_128_bytes(struct efa_rdm_ep *ep)
-{
-	if (ep->write_in_order_aligned_128_bytes &&
-	    !efa_base_ep_support_op_in_order_aligned_128_bytes(&ep->base_ep, IBV_WR_RDMA_WRITE)) {
-		EFA_WARN(FI_LOG_EP_CTRL,
-			"FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES is set to true but the QP doesn't support it\n");
-		return -FI_EOPNOTSUPP;
-	}
-
-	/*
-	 * RDMA read is used to copy data from host bounce buffer to the
-	 * application buffer on device
-	 */
-	if (ep->sendrecv_in_order_aligned_128_bytes &&
-	    !efa_base_ep_support_op_in_order_aligned_128_bytes(&ep->base_ep, IBV_WR_RDMA_READ)) {
-		EFA_WARN(FI_LOG_EP_CTRL,
-			"FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES is set to true but the QP doesn't support it\n");
-		return -FI_EOPNOTSUPP;
-	}
-
-	return 0;
-}
-
 static inline
 int efa_rdm_ep_insert_cntr_ibv_cq_poll_list(struct efa_rdm_ep *ep)
 {
@@ -1183,12 +1154,6 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 		ret = efa_rdm_ep_create_base_ep_ibv_qp(ep);
 		if (ret)
 			return ret;
-
-		ret = efa_rdm_ep_check_qp_support_in_order_aligned_128_bytes(ep);
-		if (ret) {
-			efa_base_ep_destruct_qp(&ep->base_ep);
-			return ret;
-		}
 
 		/* efa_base_ep_enable destroys qp in the error path */
 		ret = efa_base_ep_enable(&ep->base_ep);
@@ -1444,6 +1409,60 @@ static int efa_rdm_ep_set_use_device_rdma(struct efa_rdm_ep *ep, bool use_device
 }
 
 /**
+ * @brief check the in order aligned 128 bytes support for a given ibv_wr_op code
+ *
+ * @param ep efa_rdm_ep
+ * @param op_code ibv wr op code
+ * @return int 0 if in order aligned 128 bytes is supported, -FI_EOPNOTSUPP if
+ * it is not supported. Other negative integer for other errors.
+ */
+static
+int efa_rdm_ep_check_qp_in_order_aligned_128_bytes(struct efa_rdm_ep *ep,
+						   enum ibv_wr_opcode op_code)
+{
+	struct efa_qp *qp = NULL;
+	struct ibv_qp_init_attr_ex attr_ex = {0};
+	int ret, retv;
+	struct ibv_cq_ex *ibv_cq_ex = NULL;
+	enum ibv_cq_ex_type ibv_cq_ex_type;
+	struct fi_cq_attr cq_attr = {0};
+
+	ret = efa_cq_ibv_cq_ex_open(&cq_attr, efa_rdm_ep_domain(ep)->device->ibv_ctx, &ibv_cq_ex, &ibv_cq_ex_type);
+	if (ret) {
+		EFA_WARN(FI_LOG_CQ, "Unable to create extended CQ: %d\n", ret);
+		ret = -FI_EINVAL;
+		goto out;
+	}
+
+	/* Create a dummy qp for query only */
+	efa_rdm_ep_construct_ibv_qp_init_attr_ex(ep, &attr_ex, ibv_cq_ex, ibv_cq_ex);
+
+	ret = efa_qp_create(&qp, &attr_ex);
+	if (ret)
+		goto out;
+
+	if (!efa_qp_support_op_in_order_aligned_128_bytes(qp, op_code))
+		ret = -FI_EOPNOTSUPP;
+
+out:
+	if (qp) {
+		retv = ibv_destroy_qp(qp->ibv_qp);
+		if (retv)
+			EFA_WARN(FI_LOG_EP_CTRL, "destroy ibv qp failed! err: %s\n",
+				fi_strerror(-retv));
+		free(qp);
+	}
+
+	if (ibv_cq_ex) {
+		retv = -ibv_destroy_cq(ibv_cq_ex_to_cq(ibv_cq_ex));
+		if (retv)
+			EFA_WARN(FI_LOG_EP_CTRL, "Unable to close ibv cq: %s\n",
+				fi_strerror(-retv));
+	}
+	return ret;
+}
+
+/**
  * @brief implement the fi_setopt() API for EFA RDM endpoint
  * @param[in]	fid		fid to endpoint
  * @param[in]	level		level of the option
@@ -1535,11 +1554,25 @@ static int efa_rdm_ep_setopt(fid_t fid, int level, int optname,
 	case FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES:
 		if (optlen != sizeof(bool))
 			return -FI_EINVAL;
+		/*
+         * RDMA read is used to copy data from host bounce buffer to the
+         * application buffer on device
+         */
+		if (*(bool *)optval) {
+			ret = efa_rdm_ep_check_qp_in_order_aligned_128_bytes(efa_rdm_ep, IBV_WR_RDMA_READ);
+			if (ret)
+				return ret;
+		}
 		efa_rdm_ep->sendrecv_in_order_aligned_128_bytes = *(bool *)optval;
 		break;
 	case FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES:
 		if (optlen != sizeof(bool))
 			return -FI_EINVAL;
+		if (*(bool *)optval) {
+			ret = efa_rdm_ep_check_qp_in_order_aligned_128_bytes(efa_rdm_ep, IBV_WR_RDMA_WRITE);
+			if (ret)
+				return ret;
+		}
 		efa_rdm_ep->write_in_order_aligned_128_bytes = *(bool *)optval;
 		break;
 	default:
