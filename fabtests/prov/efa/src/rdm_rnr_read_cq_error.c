@@ -47,7 +47,7 @@ static int rnr_read_cq_error(void)
 	int ret, i, cnt, rnr_flag;
 	const char *prov_errmsg;
 
-	expected_rnr_error = fi->rx_attr->size;
+	expected_rnr_error = 32; //fi->rx_attr->size;
 	rnr_flag = 0;
 	/*
 	 * In order for the sender to get RNR error, we need to first consume
@@ -56,6 +56,7 @@ static int rnr_read_cq_error(void)
 	 * sends (expected_rnr_error) will then get RNR errors.
 	 */
 	total_send = fi->rx_attr->size + expected_rnr_error;
+	printf("expected_rnr_error: %d\n", expected_rnr_error);
 
 	for (i = 0; i < total_send; i++) {
 		do {

@@ -663,7 +663,9 @@ static void efa_rdm_ep_destroy_buffer_pools(struct efa_rdm_ep *efa_rdm_ep)
 #if ENABLE_DEBUG
 	struct efa_rdm_pke *pkt_entry;
 #endif
+int i;
 
+	fprintf(stderr, "efa_rdm_ep_destroy_buffer_pools: begins\n");
 	dlist_foreach_safe(&efa_rdm_ep->ope_queued_rnr_list, entry, tmp) {
 		txe = container_of(entry, struct efa_rdm_ope,
 					queued_rnr_entry);
@@ -742,8 +744,12 @@ static void efa_rdm_ep_destroy_buffer_pools(struct efa_rdm_ep *efa_rdm_ep)
 		ofi_bufpool_destroy(efa_rdm_ep->rx_readcopy_pkt_pool);
 	}
 
+	fprintf(stderr, "before destroying ooo pkt pool\n");
+	for (i=0; i<efa_rdm_ep->rx_ooo_pkt_pool->region_cnt; i++)
+		printf("ofi_bufpool_destroy: index: %d, use_cnt: %u\n", i, ofi_atomic_get32(&efa_rdm_ep->rx_ooo_pkt_pool->region_table[i]->use_cnt));
 	if (efa_rdm_ep->rx_ooo_pkt_pool)
 		ofi_bufpool_destroy(efa_rdm_ep->rx_ooo_pkt_pool);
+	fprintf(stderr, "after destroying ooo pkt pool\n");
 
 	if (efa_rdm_ep->rx_unexp_pkt_pool)
 		ofi_bufpool_destroy(efa_rdm_ep->rx_unexp_pkt_pool);

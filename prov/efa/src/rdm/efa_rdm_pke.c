@@ -86,6 +86,8 @@ void efa_rdm_pke_release(struct efa_rdm_pke *pkt_entry)
 	efa_rdm_poison_mem_region(pkt_entry, sizeof(struct efa_rdm_pke) + pkt_entry->ep->mtu_size);
 #endif
 	pkt_entry->flags = 0;
+	//if (pkt_entry->alloc_type == EFA_RDM_PKE_FROM_OOO_POOL)
+	//	printf("releasing ooo pkt entry %p\n", pkt_entry);
 	ofi_buf_free(pkt_entry);
 }
 

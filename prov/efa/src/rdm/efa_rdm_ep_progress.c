@@ -98,6 +98,7 @@ int efa_rdm_ep_grow_rx_pools(struct efa_rdm_ep *ep)
 	}
 
 	if (ep->rx_ooo_pkt_pool) {
+		printf("growing ooo okt pool\n");
 		assert(ep->rx_ooo_pkt_pool);
 		err = ofi_bufpool_grow(ep->rx_ooo_pkt_pool);
 		if (err) {

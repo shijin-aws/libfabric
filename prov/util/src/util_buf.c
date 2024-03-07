@@ -252,7 +252,6 @@ void ofi_bufpool_destroy(struct ofi_bufpool *pool)
 
 	for (i = 0; i < pool->region_cnt; i++) {
 		buf_region = pool->region_table[i];
-
 		assert((pool->attr.flags & OFI_BUFPOOL_NO_TRACK) ||
 			!ofi_atomic_get32(&buf_region->use_cnt));
 		if (pool->attr.free_fn)
