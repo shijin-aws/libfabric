@@ -4,6 +4,7 @@
 #include "efa.h"
 #include "efa_av.h"
 #include "efa_rdm_ep.h"
+#include "efa_rdm_cq.h"
 
 #include "efa_rdm_tracepoint.h"
 #include "efa_cntr.h"
@@ -320,8 +321,11 @@ void efa_rdm_ep_progress_internal(struct efa_rdm_ep *ep)
 	struct efa_rdm_peer *peer;
 	struct dlist_entry *tmp;
 	ssize_t ret;
+	struct efa_rdm_cq *efa_rdm_cq = container_of(ep->base_ep.util_ep.tx_cq, struct efa_rdm_cq, util_cq);
 
 	assert(ofi_genlock_held(efa_rdm_ep_get_peer_srx_ctx(ep)->lock));
+
+	efa_rdm_cq_poll_ibv_cq(ep, efa_env.efa_cq_read_size, &efa_rdm_cq->ibv_cq);
 
 	efa_rdm_ep_progress_post_internal_rx_pkts(ep);
 

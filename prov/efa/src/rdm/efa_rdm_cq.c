@@ -284,7 +284,7 @@ static int efa_rdm_cq_get_prov_errno(struct ibv_cq_ex *ibv_cq_ex) {
  * from the endpoint that the completed packet entry was posted from (pkt_entry->ep).
  * @param[in]	cqe_to_process	Max number of cq entry to poll and process. A negative number means to poll until cq empty
  */
-void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
+void efa_rdm_cq_poll_ibv_cq(struct efa_rdm_ep *ep, ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 {
 	bool should_end_poll = false;
 	/* Initialize an empty ibv_poll_cq_attr struct for ibv_start_poll.
@@ -297,23 +297,28 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	int opcode;
 	size_t i = 0;
 	int prov_errno;
-	struct efa_rdm_ep *ep = NULL;
+	//struct efa_rdm_ep *ep = NULL;
 	struct fi_cq_err_entry err_entry = {0};
 	struct efa_rdm_cq *efa_rdm_cq;
+	struct ibv_cq_ex *ibv_cq_ex = ibv_cq->ibv_cq_ex;
+	int ibv_cq_ex_type = ibv_cq->ibv_cq_ex_type;
 
 	/* Call ibv_start_poll only once */
-	err = ibv_start_poll(ibv_cq->ibv_cq_ex, &poll_cq_attr);
+	err = ibv_start_poll(ibv_cq_ex, &poll_cq_attr);
 	should_end_poll = !err;
 
+	efa_av = ep->base_ep.av;
+
 	while (!err) {
-		pkt_entry = (void *)(uintptr_t)ibv_cq->ibv_cq_ex->wr_id;
-		ep = pkt_entry->ep;
-		assert(ep);
-		efa_av = ep->base_ep.av;
-		efa_rdm_tracepoint(poll_cq, (size_t) ibv_cq->ibv_cq_ex->wr_id);
-		opcode = ibv_wc_read_opcode(ibv_cq->ibv_cq_ex);
-		if (ibv_cq->ibv_cq_ex->status) {
-			prov_errno = efa_rdm_cq_get_prov_errno(ibv_cq->ibv_cq_ex);
+		pkt_entry = (void *)(uintptr_t)ibv_cq_ex->wr_id;
+		if (pkt_entry->ep != ep)
+			printf("progressing completion for different ep!\n");
+		//assert(ep);
+		
+		efa_rdm_tracepoint(poll_cq, (size_t) ibv_cq_ex->wr_id);
+		opcode = ibv_wc_read_opcode(ibv_cq_ex);
+		if (ibv_cq_ex->status) {
+			prov_errno = efa_rdm_cq_get_prov_errno(ibv_cq_ex);
 			switch (opcode) {
 			case IBV_WC_SEND: /* fall through */
 			case IBV_WC_RDMA_WRITE: /* fall through */
@@ -338,14 +343,14 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 			efa_rdm_pke_handle_send_completion(pkt_entry);
 			break;
 		case IBV_WC_RECV:
-			pkt_entry->addr = efa_av_reverse_lookup_rdm(efa_av, ibv_wc_read_slid(ibv_cq->ibv_cq_ex),
-								ibv_wc_read_src_qp(ibv_cq->ibv_cq_ex), pkt_entry);
+			pkt_entry->addr = efa_av_reverse_lookup_rdm(efa_av, ibv_wc_read_slid(ibv_cq_ex),
+								ibv_wc_read_src_qp(ibv_cq_ex), pkt_entry);
 
 			if (pkt_entry->addr == FI_ADDR_NOTAVAIL) {
-				pkt_entry->addr = efa_rdm_cq_determine_addr_from_ibv_cq(ibv_cq->ibv_cq_ex, ibv_cq->ibv_cq_ex_type);
+				pkt_entry->addr = efa_rdm_cq_determine_addr_from_ibv_cq(ibv_cq_ex, ibv_cq_ex_type);
 			}
 
-			pkt_entry->pkt_size = ibv_wc_read_byte_len(ibv_cq->ibv_cq_ex);
+			pkt_entry->pkt_size = ibv_wc_read_byte_len(ibv_cq_ex);
 			assert(pkt_entry->pkt_size > 0);
 			efa_rdm_pke_handle_recv_completion(pkt_entry);
 #if ENABLE_DEBUG
@@ -359,7 +364,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		case IBV_WC_RECV_RDMA_WITH_IMM:
 			efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
 				FI_REMOTE_CQ_DATA | FI_RMA | FI_REMOTE_WRITE,
-				pkt_entry, ibv_cq->ibv_cq_ex);
+				pkt_entry, ibv_cq_ex);
 			break;
 		default:
 			EFA_WARN(FI_LOG_EP_CTRL,
@@ -369,6 +374,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 
 		i++;
 		if (i == cqe_to_process) {
+			//printf("efa_rdm_cq_poll_ibv_cq: break poll due to limit\n");
 			break;
 		}
 
@@ -376,12 +382,12 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		 * ibv_next_poll MUST be call after the current WC is fully processed,
 		 * which prevents later calls on ibv_cq_ex from reading the wrong WC.
 		 */
-		err = ibv_next_poll(ibv_cq->ibv_cq_ex);
+		err = ibv_next_poll(ibv_cq_ex);
 	}
 
 	if (err && err != ENOENT) {
 		err = err > 0 ? err : -err;
-		prov_errno = efa_rdm_cq_get_prov_errno(ibv_cq->ibv_cq_ex);
+		prov_errno = efa_rdm_cq_get_prov_errno(ibv_cq_ex);
 		EFA_WARN(FI_LOG_CQ, "Unexpected error when polling ibv cq, err: %s (%zd) prov_errno: %s (%d)\n", fi_strerror(err), err, efa_strerror(prov_errno), prov_errno);
 		efa_show_help(prov_errno);
 		err_entry.err = err;
@@ -392,7 +398,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	}
 
 	if (should_end_poll)
-		ibv_end_poll(ibv_cq->ibv_cq_ex);
+		ibv_end_poll(ibv_cq_ex);
 }
 
 static ssize_t efa_rdm_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count, fi_addr_t *src_addr)
@@ -449,12 +455,14 @@ static void efa_rdm_cq_progress(struct util_cq *cq)
 	struct efa_ibv_cq_poll_list_entry *poll_list_entry;
 
 	ofi_genlock_lock(&cq->ep_list_lock);
-	efa_rdm_cq = container_of(cq, struct efa_rdm_cq, util_cq);
+	//efa_rdm_cq = container_of(cq, struct efa_rdm_cq, util_cq);
 
-	dlist_foreach(&efa_rdm_cq->ibv_cq_poll_list, item) {
-		poll_list_entry = container_of(item, struct efa_ibv_cq_poll_list_entry, entry);
-		efa_rdm_cq_poll_ibv_cq(efa_env.efa_cq_read_size, poll_list_entry->cq);
-	}
+	//dlist_foreach(&efa_rdm_cq->ibv_cq_poll_list, item) {
+	//	poll_list_entry = container_of(item, struct efa_ibv_cq_poll_list_entry, entry);
+	//	efa_rdm_cq_poll_ibv_cq(efa_env.efa_cq_read_size, poll_list_entry->cq);
+	//}
+
+	//efa_rdm_cq_poll_ibv_cq(efa_env.efa_cq_read_size, &efa_rdm_cq->ibv_cq);
 
 	dlist_foreach(&cq->ep_list, item) {
 		fid_entry = container_of(item, struct fid_list_entry, entry);
@@ -500,11 +508,12 @@ int efa_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 
 	dlist_init(&cq->ibv_cq_poll_list);
 	ret = ofi_cq_init(&efa_prov, domain, attr, &cq->util_cq,
-			  &efa_rdm_cq_progress, context);
+			  &ofi_cq_progress, context);
 
 	if (ret)
 		goto free;
 
+	//printf("efa_rdm_cq_open: cq size: %lu\n", attr->size);
 	ret = efa_cq_ibv_cq_ex_open(attr, efa_domain->device->ibv_ctx, &cq->ibv_cq.ibv_cq_ex, &cq->ibv_cq.ibv_cq_ex_type);
 	if (ret) {
 		EFA_WARN(FI_LOG_CQ, "Unable to create extended CQ: %s\n", fi_strerror(ret));

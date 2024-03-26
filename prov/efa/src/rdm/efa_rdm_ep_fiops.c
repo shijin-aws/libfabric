@@ -804,10 +804,10 @@ void efa_rdm_ep_wait_send(struct efa_rdm_ep *efa_rdm_ep)
 
 	while (efa_rdm_ep_has_unfinished_send(efa_rdm_ep)) {
 		/* poll cq until empty */
-		if (tx_cq)
-			efa_rdm_cq_poll_ibv_cq(-1, &tx_cq->ibv_cq);
-		if (rx_cq)
-			efa_rdm_cq_poll_ibv_cq(-1, &rx_cq->ibv_cq);
+		//if (tx_cq)
+		//	efa_rdm_cq_poll_ibv_cq(-1, &tx_cq->ibv_cq);
+		//if (rx_cq)
+		//	efa_rdm_cq_poll_ibv_cq(-1, &rx_cq->ibv_cq);
 		efa_rdm_ep_progress_internal(efa_rdm_ep);
 	}
 
@@ -1184,6 +1184,7 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 		if (ret)
 			return ret;
 
+		//printf("ep: %p, tx_cq: %p, rx_cq: %p\n", ep, efa_rdm_ep_get_tx_rdm_cq(ep), efa_rdm_ep_get_rx_rdm_cq(ep));
 		assert(ep->peer_srx_ep);
 		srx_ctx = efa_rdm_ep_get_peer_srx_ctx(ep);
 		ofi_genlock_lock(srx_ctx->lock);
