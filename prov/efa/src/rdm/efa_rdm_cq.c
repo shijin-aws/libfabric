@@ -300,8 +300,8 @@ void efa_rdm_cq_poll_ibv_cq(struct efa_rdm_ep *ep, ssize_t cqe_to_process, struc
 	//struct efa_rdm_ep *ep = NULL;
 	struct fi_cq_err_entry err_entry = {0};
 	struct efa_rdm_cq *efa_rdm_cq;
-	struct ibv_cq_ex *ibv_cq_ex = ibv_cq->ibv_cq_ex;
-	int ibv_cq_ex_type = ibv_cq->ibv_cq_ex_type;
+	struct ibv_cq_ex *ibv_cq_ex = ibv_cq->ibv_cq_ex; //ep->ibv_cq_ex;
+	int ibv_cq_ex_type = ibv_cq->ibv_cq_ex_type; //ep->ibv_cq_ex_type;
 
 	/* Call ibv_start_poll only once */
 	err = ibv_start_poll(ibv_cq_ex, &poll_cq_attr);
@@ -393,8 +393,8 @@ void efa_rdm_cq_poll_ibv_cq(struct efa_rdm_ep *ep, ssize_t cqe_to_process, struc
 		err_entry.err = err;
 		err_entry.prov_errno = prov_errno;
 		err_entry.op_context = NULL;
-		efa_rdm_cq = container_of(ibv_cq, struct efa_rdm_cq, ibv_cq);
-		ofi_cq_write_error(&efa_rdm_cq->util_cq, &err_entry);
+		//efa_rdm_cq = container_of(ibv_cq, struct efa_rdm_cq, ibv_cq);
+		//ofi_cq_write_error(&efa_rdm_cq->util_cq, &err_entry);
 	}
 
 	if (should_end_poll)

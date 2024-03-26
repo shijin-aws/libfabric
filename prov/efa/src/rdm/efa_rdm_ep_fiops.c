@@ -69,6 +69,7 @@ int efa_rdm_ep_create_base_ep_ibv_qp(struct efa_rdm_ep *ep)
 	struct efa_rdm_cq *tx_rdm_cq, *rx_rdm_cq;
 	struct ibv_cq_ex *tx_ibv_cq, *rx_ibv_cq;
 
+	/*
 	tx_rdm_cq = efa_rdm_ep_get_tx_rdm_cq(ep);
 	rx_rdm_cq = efa_rdm_ep_get_rx_rdm_cq(ep);
 
@@ -89,9 +90,11 @@ int efa_rdm_ep_create_base_ep_ibv_qp(struct efa_rdm_ep *ep)
 			"Endpoint is not bound to a receive completion queue when it has receive capabilities enabled. (FI_RECV)\n");
 		return -FI_ENOCQ;
 	}
+	*/
 
-	tx_ibv_cq = tx_rdm_cq ? tx_rdm_cq->ibv_cq.ibv_cq_ex : rx_rdm_cq->ibv_cq.ibv_cq_ex;
-	rx_ibv_cq = rx_rdm_cq ? rx_rdm_cq->ibv_cq.ibv_cq_ex : tx_rdm_cq->ibv_cq.ibv_cq_ex;
+	//ep->ibv_cq_ex = efa_rdm_ep_get_tx_rdm_cq(ep)->ibv_cq.ibv_cq_ex;
+	tx_ibv_cq = efa_rdm_ep_get_tx_rdm_cq(ep)->ibv_cq.ibv_cq_ex;; //tx_rdm_cq ? tx_rdm_cq->ibv_cq.ibv_cq_ex : rx_rdm_cq->ibv_cq.ibv_cq_ex;
+	rx_ibv_cq = efa_rdm_ep_get_rx_rdm_cq(ep)->ibv_cq.ibv_cq_ex;; //rx_rdm_cq ? rx_rdm_cq->ibv_cq.ibv_cq_ex : tx_rdm_cq->ibv_cq.ibv_cq_ex;
 
 	efa_rdm_ep_construct_ibv_qp_init_attr_ex(ep, &attr_ex, tx_ibv_cq, rx_ibv_cq);
 
@@ -478,6 +481,12 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 
 	cq_attr.size = MAX(efa_rdm_ep->rx_size + efa_rdm_ep->tx_size,
 			   efa_env.cq_size);
+
+	ret = efa_cq_ibv_cq_ex_open(&cq_attr, efa_domain->device->ibv_ctx, &efa_rdm_ep->ibv_cq_ex, &efa_rdm_ep->ibv_cq_ex_type);
+	if (ret) {
+		EFA_WARN(FI_LOG_CQ, "Unable to create extended CQ: %s\n", fi_strerror(ret));
+		return ret;
+	}
 
 	assert(info->tx_attr->msg_order == info->rx_attr->msg_order);
 	efa_rdm_ep->msg_order = info->rx_attr->msg_order;
@@ -874,8 +883,8 @@ static int efa_rdm_ep_close(struct fid *fid)
 
 	efa_rdm_ep = container_of(fid, struct efa_rdm_ep, base_ep.util_ep.ep_fid.fid);
 
-	if (efa_rdm_ep->base_ep.efa_qp_enabled)
-		efa_rdm_ep_wait_send(efa_rdm_ep);
+	//if (efa_rdm_ep->base_ep.efa_qp_enabled)
+	//	efa_rdm_ep_wait_send(efa_rdm_ep);
 
 	/*
 	 * util_srx_close will clean all efa_rdm_rxes that are

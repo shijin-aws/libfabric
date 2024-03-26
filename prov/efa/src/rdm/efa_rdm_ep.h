@@ -45,6 +45,10 @@ struct efa_rdm_ep {
 	/* per-version extra feature/request flag */
 	uint64_t extra_info[EFA_RDM_MAX_NUM_EXINFO];
 
+	struct ibv_cq_ex *ibv_cq_ex;
+
+	int ibv_cq_ex_type;
+
 	/* shm provider fid */
 	struct fid_ep *shm_ep;
 
