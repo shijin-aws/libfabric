@@ -28,7 +28,7 @@ void efa_rdm_pke_handle_send_completion(struct efa_rdm_pke *pkt_entry);
 void efa_rdm_pke_handle_rx_error(struct efa_rdm_pke *pkt_entry,
 				   int err, int prov_errno);
 
-void efa_rdm_pke_handle_recv_completion(struct efa_rdm_pke *pkt_entry);
+void efa_rdm_pke_handle_recv_completion(struct efa_rdm_pke *pkt_entry, struct ibv_cq_ex *ibv_cq_ex, int ibv_cq_ex_type);
 
 #if ENABLE_DEBUG
 void efa_rdm_pke_print(struct efa_rdm_pke *pkt_entry, char *prefix);
