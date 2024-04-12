@@ -38,8 +38,6 @@ int efa_rdm_cq_close(struct fid *fid)
 
 	cq = container_of(fid, struct efa_rdm_cq, util_cq.cq_fid.fid);
 
-	EFA_WARN(FI_LOG_CQ, "start closing efa rdm cq %p\n", cq);
-
 	if (cq->ibv_cq.ibv_cq_ex) {
 		ret = -ibv_destroy_cq(ibv_cq_ex_to_cq(cq->ibv_cq.ibv_cq_ex));
 		if (ret) {
@@ -49,8 +47,6 @@ int efa_rdm_cq_close(struct fid *fid)
 		}
 		cq->ibv_cq.ibv_cq_ex = NULL;
 	}
-
-	EFA_WARN(FI_LOG_CQ, "ok after closing ibv_cq for efa rdm cq %p\n", cq);
 
 	if (cq->shm_cq) {
 		ret = fi_close(&cq->shm_cq->fid);
