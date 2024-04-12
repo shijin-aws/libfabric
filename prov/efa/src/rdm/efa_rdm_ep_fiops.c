@@ -867,9 +867,11 @@ static int efa_rdm_ep_close(struct fid *fid)
 
 	efa_rdm_ep = container_of(fid, struct efa_rdm_ep, base_ep.util_ep.ep_fid.fid);
 
+	EFA_WARN(FI_LOG_EP_CTRL, "start closing efa rdm ep %p\n", efa_rdm_ep);
 	if (efa_rdm_ep->base_ep.efa_qp_enabled)
 		efa_rdm_ep_wait_send(efa_rdm_ep);
 
+	EFA_WARN(FI_LOG_EP_CTRL, "ok after waiting send for efa rdm ep %p\n", efa_rdm_ep);
 	/*
 	 * util_srx_close will clean all efa_rdm_rxes that are
 	 * associated with peer_rx_entries in unexp msg/tag lists.
@@ -886,15 +888,23 @@ static int efa_rdm_ep_close(struct fid *fid)
 	 * with other threads progressing the cq. */
 	efa_base_ep_close_util_ep(&efa_rdm_ep->base_ep);
 
+	EFA_WARN(FI_LOG_EP_CTRL, "ok after closing util ep for efa rdm ep %p\n", efa_rdm_ep);
+
 	efa_rdm_ep_remove_cntr_ibv_cq_poll_list(efa_rdm_ep);
 
+	EFA_WARN(FI_LOG_EP_CTRL, "ok after removing cntr_ibv_cq_poll_list for efa rdm ep %p\n", efa_rdm_ep);
+
 	efa_rdm_ep_remove_cq_ibv_cq_poll_list(efa_rdm_ep);
+
+	EFA_WARN(FI_LOG_EP_CTRL, "ok after removing cq_ibv_cq_poll_list for efa rdm ep %p\n", efa_rdm_ep);
 
 	ret = efa_base_ep_destruct(&efa_rdm_ep->base_ep);
 	if (ret) {
 		EFA_WARN(FI_LOG_EP_CTRL, "Unable to close base endpoint\n");
 		retv = ret;
 	}
+
+	EFA_WARN(FI_LOG_EP_CTRL, "ok after destroying QP for efa rdm ep %p\n", efa_rdm_ep);
 
 	if (efa_rdm_ep->shm_ep) {
 		ret = fi_close(&efa_rdm_ep->shm_ep->fid);
