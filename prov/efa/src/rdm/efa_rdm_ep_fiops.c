@@ -878,6 +878,7 @@ static int efa_rdm_ep_close(struct fid *fid)
 	 * relies on the correct ref count of tx/rx cq.
 	 */
 	if (efa_rdm_ep->peer_srx_ep) {
+		EFA_WARN(FI_LOG_EP_CTRL, "closing util_srx %p\n", &efa_rdm_ep->peer_srx_ep->fid);
 		util_srx_close(&efa_rdm_ep->peer_srx_ep->fid);
 		efa_rdm_ep->peer_srx_ep = NULL;
 	}

@@ -402,11 +402,24 @@ static ssize_t efa_rdm_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t coun
 	struct efa_rdm_cq *cq;
 	ssize_t ret;
 	struct util_srx_ctx *srx_ctx;
+	struct efa_domain *domain;
+	struct util_ep *util_ep;
+	struct dlist_entry *item;
+	struct fid_list_entry *fid_entry;
+	struct efa_rdm_ep *ep;
 
 	cq = container_of(cq_fid, struct efa_rdm_cq, util_cq.cq_fid.fid);
 
 	srx_ctx = cq->util_cq.domain->srx->ep_fid.fid.context;
 
+	item = (&cq->util_cq.ep_list)->next;
+	fid_entry = container_of(item, struct fid_list_entry, entry);
+	util_ep = container_of(fid_entry->fid, struct util_ep, ep_fid.fid);
+	ep = container_of(util_ep, struct efa_rdm_ep, base_ep.util_ep);
+	domain = container_of(cq->util_cq.domain, struct efa_domain, util_domain);
+
+	assert(ep->peer_srx_ep);
+	assert(domain);
 	ofi_genlock_lock(srx_ctx->lock);
 
 	if (cq->shm_cq) {
