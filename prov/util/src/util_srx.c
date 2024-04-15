@@ -989,6 +989,7 @@ int util_srx_close(struct fid *fid)
 	ofi_atomic_dec32(&srx->cq->ref);
 	ofi_bufpool_destroy(srx->rx_pool);
 
+	srx->enabled = false;
 	ofi_genlock_unlock(srx->lock);
 	free(srx);
 
@@ -1136,6 +1137,7 @@ int util_ep_srx_context(struct util_domain *domain, size_t rx_size,
 	if (!srx)
 		return -FI_ENOMEM;
 
+	srx->enabled = true;
 	ofi_array_init(&srx->src_unexp_peers, sizeof(struct util_unexp_peer),
 		       util_srx_init_unexp_peer);
 	dlist_init(&srx->unspec_unexp_msg_queue);
