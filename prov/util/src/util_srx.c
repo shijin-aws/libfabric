@@ -919,12 +919,11 @@ int util_srx_close(struct fid *fid)
 	struct util_unexp_peer *unexp_peer;
 	struct util_rx_entry *rx_entry;
 	struct slist_entry *entry;
-	
+
 	srx = container_of(fid, struct util_srx_ctx, peer_srx.ep_fid.fid);
 	if (!srx)
 		return -FI_EINVAL;
 
-	FI_WARN(&core_prov, FI_LOG_EP_CTRL, "srx %p is closed\n", &srx->peer_srx);
 	ofi_genlock_lock(srx->lock);
 	(void)ofi_array_iter(&srx->src_recv_queues, srx, util_cleanup_queues);
 	(void)ofi_array_iter(&srx->src_trecv_queues, srx, util_cleanup_queues);
@@ -1186,7 +1185,5 @@ int util_ep_srx_context(struct util_domain *domain, size_t rx_size,
 	*rx_ep = &srx->peer_srx.ep_fid;
 
 	domain->srx = &srx->peer_srx;
-	FI_WARN(&core_prov, FI_LOG_EP_CTRL,
-					"domain %p is assigned srx %p\n", domain, domain->srx);
 	return FI_SUCCESS;
 }
