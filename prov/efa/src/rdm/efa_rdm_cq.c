@@ -65,11 +65,6 @@ static ssize_t efa_rdm_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t coun
 
 	srx_ctx = cq->util_cq.domain->srx->ep_fid.fid.context;
 
-	if (! srx_ctx->enabled) {
-		EFA_WARN(FI_LOG_CQ, "Error! Accessing a closed srx_ctx %p\n", srx_ctx);
-		assert(0);
-	}
-
 	ofi_genlock_lock(srx_ctx->lock);
 
 	if (cq->shm_cq) {
