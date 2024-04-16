@@ -55,9 +55,12 @@ static int smr_domain_close(fid_t fid)
 	struct smr_domain *domain;
 
 	domain = container_of(fid, struct smr_domain, util_domain.domain_fid.fid);
+	FI_WARN(&smr_prov, FI_LOG_DOMAIN, "calling smr_domain_close for domain %p\n", domain);
 
-	if (domain->ipc_cache)
-		ofi_ipc_cache_destroy(domain->ipc_cache);
+	//if (domain->ipc_cache) {
+	//	FI_WARN(&smr_prov, FI_LOG_DOMAIN, "call ofi_ipc_cache_destroy in smr_domain_close for cache %p\n", domain->ipc_cache);
+	//	ofi_ipc_cache_destroy(domain->ipc_cache);
+	//}
 
 	ret = ofi_domain_close(&domain->util_domain);
 	if (ret)
@@ -97,6 +100,7 @@ int smr_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	if (!smr_domain)
 		return -FI_ENOMEM;
 
+	FI_WARN(&smr_prov, FI_LOG_DOMAIN, "calling smr_domain_open for domain %p\n", smr_domain);
 	ret = ofi_domain_init(fabric, info, &smr_domain->util_domain, context,
 			      OFI_LOCK_SPINLOCK);
 	if (ret) {
@@ -110,7 +114,8 @@ int smr_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 						    info->tx_attr->msg_order);
 	ofi_mutex_unlock(&smr_fabric->util_fabric.lock);
 
-	ret = ofi_ipc_cache_open(&smr_domain->ipc_cache, &smr_domain->util_domain);
+	//ret = ofi_ipc_cache_open(&smr_domain->ipc_cache, &smr_domain->util_domain);
+	//FI_WARN(&smr_prov, FI_LOG_DOMAIN, "call ofi_ipc_cache_open in smr_domain_open for cache %p\n", smr_domain->ipc_cache);
 	if (ret) {
 		free(smr_domain);
 		return ret;

@@ -150,6 +150,7 @@ static int efa_domain_init_rdm(struct efa_domain *efa_domain, struct fi_info *in
 	if (efa_domain->fabric->shm_fabric) {
 		err = fi_domain(efa_domain->fabric->shm_fabric, efa_domain->shm_info,
 				&efa_domain->shm_domain, NULL);
+		EFA_WARN(FI_LOG_DOMAIN, "efa_domain_open calling smr_domain_open\n");
 		if (err)
 			return err;
 	}
@@ -181,6 +182,7 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	struct efa_domain *efa_domain;
 	int ret = 0, err;
 
+	EFA_WARN(FI_LOG_DOMAIN, "efa_domain_open begins\n");
 	efa_domain = calloc(1, sizeof(struct efa_domain));
 	if (!efa_domain)
 		return -FI_ENOMEM;
@@ -257,6 +259,7 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	 */
 	if (!efa_domain->mr_local && efa_mr_cache_enable) {
 		err = efa_mr_cache_open(&efa_domain->cache, efa_domain);
+		EFA_WARN(FI_LOG_MR, "open domain %p and open cache %p\n", efa_domain, efa_domain->cache);
 		if (err) {
 			ret = err;
 			goto err_free;
@@ -319,11 +322,13 @@ static int efa_domain_close(fid_t fid)
 	struct efa_domain *efa_domain;
 	int ret;
 
+	EFA_WARN(FI_LOG_DOMAIN, "efa_domain_close begins\n");
 	efa_domain = container_of(fid, struct efa_domain,
 				  util_domain.domain_fid.fid);
 
 	dlist_remove(&efa_domain->list_entry);
 
+	EFA_WARN(FI_LOG_MR, "close domain %p and delete cache %p\n", efa_domain, efa_domain->cache);
 	if (efa_domain->cache) {
 		ofi_mr_cache_cleanup(efa_domain->cache);
 		free(efa_domain->cache);
@@ -340,6 +345,7 @@ static int efa_domain_close(fid_t fid)
 
 	if (efa_domain->shm_domain) {
 		ret = fi_close(&efa_domain->shm_domain->fid);
+		EFA_WARN(FI_LOG_DOMAIN, "efa_domain_close calling smr_domain_close\n");
 		if (ret)
 			return ret;
 	}

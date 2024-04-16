@@ -109,6 +109,7 @@ int ofi_ipc_cache_open(struct ofi_mr_cache **cache,
 	(*cache)->delete_region = ipc_cache_delete_region;
 	ret = ofi_mr_cache_init(domain, memory_monitors,
 				*cache);
+	FI_WARN(&core_prov, FI_LOG_CORE, "open ipc cache %p\n", cache);
 	if (ret)
 		goto cleanup;
 
@@ -132,6 +133,7 @@ out:
 void ofi_ipc_cache_destroy(struct ofi_mr_cache *cache)
 {
 	ofi_mr_cache_cleanup(cache);
+	FI_WARN(&core_prov, FI_LOG_CORE, "close ipc cache %p\n", cache);
 	free(cache);
 }
 

@@ -169,7 +169,9 @@ void ofi_monitor_init(struct ofi_mem_monitor *monitor)
 
 void ofi_monitor_cleanup(struct ofi_mem_monitor *monitor)
 {
-	assert(dlist_empty(&monitor->list));
+	if (!dlist_empty(&monitor->list)) {
+		FI_WARN(&core_prov, FI_LOG_CORE, "monitor list %p is not empty!\n", &monitor->list);
+	}
 	assert(monitor->state == FI_MM_STATE_IDLE);
 }
 
@@ -393,6 +395,8 @@ int ofi_monitors_add_cache(struct ofi_mem_monitor **monitors,
 
 		success_count++;
 		cache->monitors[iface] = monitor;
+		FI_WARN(&core_prov, FI_LOG_CORE, "inserted monitor of iface %d cache %p to list %p\n",
+			iface, cache, &monitor->list);
 		dlist_insert_tail(&cache->notify_entries[iface],
 				  &monitor->list);
 	}
@@ -434,6 +438,9 @@ void ofi_monitors_del_cache(struct ofi_mr_cache *cache)
 			continue;
 
 		dlist_remove(&cache->notify_entries[iface]);
+
+		FI_WARN(&core_prov, FI_LOG_CORE, "removed monitor of iface %d cache %p from list %p\n",
+			iface, cache, &monitor->list);
 
 		if (dlist_empty(&monitor->list)) {
 			pthread_mutex_lock(&mm_state_lock);
