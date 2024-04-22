@@ -236,7 +236,7 @@ int efa_rdm_ep_post_user_recv_buf(struct efa_rdm_ep *ep, struct efa_rdm_ope *rxe
 	 * construct pkt_entry. The actual receiving buffer
 	 * posted to device starts from pkt_entry->wiredata.
 	 */
-	pkt_entry->pkt_size = rxe->total_len - sizeof *pkt_entry;
+	pkt_entry->pkt_size = ofi_total_iov_len(rxe->iov, rxe->iov_count) - sizeof *pkt_entry;
 	pkt_entry->ope = rxe;
 	rxe->state = EFA_RDM_RXE_MATCHED;
 
@@ -244,8 +244,7 @@ int efa_rdm_ep_post_user_recv_buf(struct efa_rdm_ep *ep, struct efa_rdm_ope *rxe
 		ofi_consume_iov_desc(rxe->iov, rxe->desc, &rxe->iov_count, ep->msg_prefix_size);
 		pkt_entry->payload = rxe->iov[0].iov_base;
 		pkt_entry->payload_mr = rxe->desc[0];
-		rxe->total_len = ofi_total_iov_len(rxe->iov, rxe->iov_count);
-		pkt_entry->payload_size = rxe->total_len;
+		pkt_entry->payload_size = ofi_total_iov_len(rxe->iov, rxe->iov_count);
 	}
 
 	assert(rxe->iov_count == 1);
