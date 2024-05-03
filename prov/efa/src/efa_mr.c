@@ -398,6 +398,12 @@ static int efa_mr_dereg_impl(struct efa_mr *efa_mr)
 	int ret = 0;
 	int err;
 
+	efa_mr->domain->mr_reg_ct--;
+	efa_mr->domain->mr_reg_sz -= efa_mr->ibv_mr->length;
+
+	EFA_INFO(FI_LOG_MR, "efa_mr_dereg_impl: deregistered memory of size %lu, total mr reg size %lu, mr reg count %lu, internal mr reg count %lu, internal mr reg size %lu\n",
+			efa_mr->ibv_mr->length, efa_mr->domain->mr_reg_sz, efa_mr->domain->mr_reg_ct, efa_mr->domain->mr_reg_ct_internal, efa_mr->domain->mr_reg_sz_internal);
+
 	efa_domain = efa_mr->domain;
 	if (efa_mr->ibv_mr) {
 		err = -ibv_dereg_mr(efa_mr->ibv_mr);
@@ -845,8 +851,8 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 	} else {
 		efa_mr->ibv_mr = efa_mr_reg_ibv_mr(efa_mr, &mr_attr, fi_ibv_access, flags);
 		if (!efa_mr->ibv_mr) {
-			EFA_WARN(FI_LOG_MR, "Unable to register MR: %s\n",
-					fi_strerror(-errno));
+			EFA_WARN(FI_LOG_MR, "Unable to register MR: %s total mr reg size %lu, mr reg count %lu, internal mr reg count %lu, internal mr reg size %lu\n",
+				fi_strerror(-errno), efa_mr->domain->mr_reg_sz, efa_mr->domain->mr_reg_ct, efa_mr->domain->mr_reg_ct_internal, efa_mr->domain->mr_reg_sz_internal);
 			if (efa_mr->peer.iface == FI_HMEM_CUDA &&
 			    (efa_mr->peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE)) {
 					assert(efa_mr->peer.hmem_data);
@@ -855,6 +861,12 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 
 			return -errno;
 		}
+		efa_mr->domain->mr_reg_sz += ofi_total_iov_len(mr_attr.mr_iov, mr_attr.iov_count);
+		efa_mr->domain->mr_reg_ct++;
+		efa_mr->domain->mr_reg_sz_max = MAX(efa_mr->domain->mr_reg_sz, efa_mr->domain->mr_reg_sz_max);
+		efa_mr->domain->mr_reg_ct_max = MAX(efa_mr->domain->mr_reg_ct, efa_mr->domain->mr_reg_ct_max);
+		EFA_INFO(FI_LOG_MR, "efa_mr_reg_impl: registered memory of size %lu, total mr reg size %lu, mr reg count %lu, internal mr reg count %lu, internal mr reg size %lu\n",
+			efa_mr->ibv_mr->length, efa_mr->domain->mr_reg_sz, efa_mr->domain->mr_reg_ct, efa_mr->domain->mr_reg_ct_internal, efa_mr->domain->mr_reg_sz_internal);
 		efa_mr->mr_fid.key = efa_mr->ibv_mr->rkey;
 	}
 	efa_mr->mr_fid.mem_desc = efa_mr;

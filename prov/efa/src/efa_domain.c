@@ -185,6 +185,13 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	if (!efa_domain)
 		return -FI_ENOMEM;
 
+	efa_domain->mr_reg_ct = 0;
+	efa_domain->mr_reg_ct_internal = 0;
+	efa_domain->mr_reg_ct_max = 0;
+	efa_domain->mr_reg_sz = 0;
+	efa_domain->mr_reg_sz_internal = 0;
+	efa_domain->mr_reg_sz_max = 0;
+
 	dlist_init(&efa_domain->list_entry);
 	efa_domain->fabric = container_of(fabric_fid, struct efa_fabric,
 					  util_fabric.fabric_fid);
@@ -350,6 +357,8 @@ static int efa_domain_close(fid_t fid)
 	if (efa_domain->info)
 		fi_freeinfo(efa_domain->info);
 
+	EFA_WARN(FI_LOG_MR, "Total mr reg size %lu, mr reg count %lu, internal mr reg count %lu, internal mr reg size %lu, max mr reg size %lu, max mr reg cnt %lu\n",
+		efa_domain->mr_reg_sz, efa_domain->mr_reg_ct, efa_domain->mr_reg_ct_internal, efa_domain->mr_reg_sz_internal, efa_domain->mr_reg_sz_max, efa_domain->mr_reg_ct_max);
 	ofi_genlock_destroy(&efa_domain->srx_lock);
 	free(efa_domain->qp_table);
 	free(efa_domain);

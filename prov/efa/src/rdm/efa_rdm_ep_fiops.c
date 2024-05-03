@@ -105,6 +105,9 @@ int efa_rdm_pke_pool_mr_reg_handler(struct ofi_bufpool_region *region)
 	struct fid_mr *mr;
 	struct efa_domain *domain = region->pool->attr.context;
 
+	domain->mr_reg_ct_internal++;
+	domain->mr_reg_sz_internal += region->pool->alloc_size;
+
 	ret = fi_mr_reg(&domain->util_domain.domain_fid, region->alloc_region,
 			region->pool->alloc_size, FI_SEND | FI_RECV, 0, 0, 0,
 			&mr, NULL);
@@ -117,6 +120,10 @@ static
 void efa_rdm_pke_pool_mr_dereg_handler(struct ofi_bufpool_region *region)
 {
 	ssize_t ret;
+	struct efa_domain *domain = region->pool->attr.context;
+
+	domain->mr_reg_ct_internal--;
+	domain->mr_reg_sz_internal -= region->pool->alloc_size;
 
 	ret = fi_close((struct fid *)region->context);
 	if (ret)
