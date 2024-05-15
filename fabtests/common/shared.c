@@ -2186,7 +2186,7 @@ ssize_t ft_tx_rma(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote,
 			return ret;
 	}
 
-	ret = ft_post_rma(rma_op, tx_buf, size, remote, ctx);
+	ret = ft_post_rma(rma_op, tx_buf, size, remote, ctx, 0);
 	if (ret)
 		return ret;
 
@@ -2269,8 +2269,11 @@ static size_t ft_remote_read_offset(const char *buf)
 }
 
 ssize_t ft_post_rma(enum ft_rma_opcodes op, char *buf, size_t size,
-		struct fi_rma_iov *remote, void *context)
+		struct fi_rma_iov *remote, void *context, uint64_t flags)
 {
+	struct fi_msg_rma msg;
+	struct iovec msg_iov;
+
 	switch (op) {
 	case FT_RMA_WRITE:
 		FT_POST(fi_write, ft_progress, txcq, tx_seq, &tx_cq_cntr,
@@ -2290,6 +2293,23 @@ ssize_t ft_post_rma(enum ft_rma_opcodes op, char *buf, size_t size,
 			"fi_read", ep, buf, size, mr_desc,
 			remote_fi_addr, remote->addr + ft_remote_read_offset(buf),
 			remote->key, context);
+		break;
+	case FT_RMA_WRITEMSG:
+		msg_iov.iov_base = buf;
+		msg_iov.iov_len = size;
+		msg.msg_iov = &msg_iov;
+		msg.desc = &mr_desc;
+		msg.iov_count = 1;
+		msg.rma_iov = remote;
+		msg.rma_iov_count = 1;
+		msg.addr = remote_fi_addr;
+		msg.data = flags & FI_REMOTE_CQ_DATA ? remote_cq_data : NO_CQ_DATA;
+		msg.context = context;
+
+		FT_POST(fi_writemsg, ft_progress, txcq, tx_seq,
+			&tx_cq_cntr, "writemsg", ep, &msg,
+			flags);
+
 		break;
 	default:
 		FT_ERR("Unknown RMA op type\n");

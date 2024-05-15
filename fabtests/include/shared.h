@@ -144,6 +144,7 @@ enum ft_rma_opcodes {
 	FT_RMA_READ = 1,
 	FT_RMA_WRITE,
 	FT_RMA_WRITEDATA,
+	FT_RMA_WRITEMSG,
 };
 
 /* for CQ data test, */
@@ -573,7 +574,7 @@ ssize_t ft_inject(struct fid_ep *ep, fi_addr_t fi_addr, size_t size);
 ssize_t ft_inject_rma(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote,
 		      struct fid_ep *ep, fi_addr_t fi_addr, size_t size);
 ssize_t ft_post_rma(enum ft_rma_opcodes op, char *buf, size_t size,
-		struct fi_rma_iov *remote, void *context);
+		struct fi_rma_iov *remote, void *context, uint64_t flags);
 ssize_t ft_post_rma_inject(enum ft_rma_opcodes op, char *buf, size_t size,
 		struct fi_rma_iov *remote);
 int ft_rma_poll_buf(void *buf, int iter, size_t size);
@@ -600,6 +601,8 @@ int ft_recvmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 		size_t size, void *ctx, int flags);
 int ft_sendmsg(struct fid_ep *ep, fi_addr_t fi_addr,
 		void *buf, size_t size, void *ctx, int flags);
+int ft_writemsg(struct fid_ep *ep, fi_addr_t fi_addr,
+		void *buf, size_t size, void *ctx, struct fi_rma_iov *remote, int flags);
 int ft_tx_msg(struct fid_ep *ep, fi_addr_t fi_addr,
 	      void *buf, size_t size, void *ctx, uint64_t flags);
 int ft_cq_read_verify(struct fid_cq *cq, void *op_context);

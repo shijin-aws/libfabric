@@ -194,7 +194,7 @@ static int mr_key_test()
 						(unsigned long)fi_mr_key(mr_res_array[i].mr));
 
 			ft_post_rma(FT_RMA_WRITE, tx_buf, opts.transfer_size,
-					mr_res_array[i].remote, &rma_ctx);
+					mr_res_array[i].remote, &rma_ctx, 0);
 
 			if (verbose)
 				printf("sent successfully\n");
@@ -243,7 +243,7 @@ static int mr_key_test()
 						(unsigned long)fi_mr_key(mr_res_array[i].mr));
 
 			ft_post_rma(FT_RMA_WRITE, tx_buf, opts.transfer_size,
-					mr_res_array[i].remote, &rma_ctx);
+					mr_res_array[i].remote, &rma_ctx, 0);
 
 			if (verbose)
 					printf("sent successfully\n");
