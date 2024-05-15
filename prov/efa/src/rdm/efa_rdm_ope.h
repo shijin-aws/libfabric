@@ -175,7 +175,6 @@ struct efa_rdm_ope {
 
 	/* counters for rma writes */
 	uint64_t bytes_write_completed;
-	uint64_t bytes_write_submitted;
 	uint64_t bytes_write_total_len;
 
 	/* used by peer SRX ops */

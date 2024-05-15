@@ -140,10 +140,11 @@ struct efa_rdm_pke {
 
 	/**
 	 * @brief link multiple MEDIUM/RUNTREAD RTM with same
-	 * message ID together
+	 * message ID together, or link multiple packets that
+	 * are held before ringing the doorbell, due to FI_MORE.
 	 *
 	 * @details
-	 * used on receiver side only
+	 * used on both receiver side and sender side.
 	 */
 	struct efa_rdm_pke *next;
 
@@ -226,8 +227,7 @@ struct efa_rdm_pke *efa_rdm_pke_clone(struct efa_rdm_pke *src,
 
 struct efa_rdm_pke *efa_rdm_pke_get_unexp(struct efa_rdm_pke **pkt_entry_ptr);
 
-ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
-			  int pkt_entry_cnt);
+ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke *pke_send_more_head);
 
 int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 		     void *local_buf, size_t len, void *desc,

@@ -436,6 +436,9 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	efa_domain = container_of(domain, struct efa_domain,
 				  util_domain.domain_fid);
 
+	efa_rdm_ep->pke_send_more_head = efa_rdm_ep->pke_send_more_tail = NULL;
+	efa_rdm_ep->pke_write_more_head = efa_rdm_ep->pke_write_more_tail = NULL;
+
 	ret = efa_base_ep_construct(&efa_rdm_ep->base_ep, domain, info,
 				    efa_rdm_ep_progress, context);
 	if (ret)

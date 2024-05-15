@@ -1260,7 +1260,6 @@ void efa_rdm_ope_prepare_to_post_write(struct efa_rdm_ope *ope)
 #endif
 
 	ope->bytes_write_total_len = local_iov_len;
-	ope->bytes_write_submitted = 0;
 	ope->bytes_write_completed = 0;
 }
 
@@ -1415,9 +1414,7 @@ int efa_rdm_ope_post_read(struct efa_rdm_ope *ope)
  * Depending on ope->bytes_write_total_len and max write size of device,
  * this function might issue multiple write requests.
  *
- * @param[in,out]	ope	ope that has information of the read request.
- * 					If write request is successfully submitted,
- * 					ope->bytes_write_submitted will be updated.
+ * @param[in,out]	ope	ope that has information of the write request.
  * @return	On success, return 0
  * 		On failure, return a negative error code.
  */
@@ -1427,9 +1424,10 @@ int efa_rdm_ope_post_remote_write(struct efa_rdm_ope *ope)
 	int iov_idx = 0, rma_iov_idx = 0;
 	ssize_t copied;
 	size_t iov_offset = 0, rma_iov_offset = 0;
+	size_t bytes_write_submitted = 0;
 	size_t write_once_len, max_write_once_len;
 	struct efa_rdm_ep *ep;
-	struct efa_rdm_pke *pkt_entry;
+	struct efa_rdm_pke *prev = NULL, *curr = NULL, *tmp, *pkt_entry;
 
 	ep = ope->ep;
 
@@ -1465,36 +1463,22 @@ int efa_rdm_ope_post_remote_write(struct efa_rdm_ope *ope)
 	if (!(ope->fi_flags & FI_INJECT))
 		efa_rdm_ope_try_fill_desc(ope, 0, FI_WRITE);
 
-	assert(ope->bytes_write_submitted < ope->bytes_write_total_len);
 	max_write_once_len = MIN(efa_env.efa_write_segment_size, efa_rdm_ep_domain(ep)->device->max_rdma_size);
 
 	assert(max_write_once_len > 0);
 
-	err = ofi_iov_locate(ope->iov, ope->iov_count,
-				 ope->bytes_write_submitted,
-				 &iov_idx, &iov_offset);
-	if (OFI_UNLIKELY(err)) {
-		EFA_WARN(FI_LOG_CQ, "ofi_iov_locate failed! err: %d\n", err);
-		return err;
-	}
-
-	err = ofi_rma_iov_locate(ope->rma_iov, ope->rma_iov_count,
-				 ope->bytes_write_submitted,
-				 &rma_iov_idx, &rma_iov_offset);
-	if (OFI_UNLIKELY(err)) {
-		EFA_WARN(FI_LOG_CQ, "ofi_rma_iov_locate failed! err: %d\n", err);
-		return err;
-	}
-
-	while (ope->bytes_write_submitted < ope->bytes_write_total_len) {
+	prev = ep->pke_write_more_tail ? ep->pke_write_more_tail : NULL;
+	while (bytes_write_submitted < ope->bytes_write_total_len) {
 
 		assert(iov_idx < ope->iov_count);
 		assert(iov_offset < ope->iov[iov_idx].iov_len);
 		assert(rma_iov_idx < ope->rma_iov_count);
 		assert(rma_iov_offset < ope->rma_iov[rma_iov_idx].len);
 
-		if (ep->efa_outstanding_tx_ops == ep->efa_max_outstanding_tx_ops)
-			return -FI_EAGAIN;
+		if (ep->efa_outstanding_tx_ops == ep->efa_max_outstanding_tx_ops) {
+			err = -FI_EAGAIN;
+			goto handle_err;
+		}
 
 		if (!ope->desc[iov_idx] && !(ope->fi_flags & FI_INJECT)) {
 			/* efa_rdm_ope_try_fill_desc() did not fill the desc,
@@ -1503,22 +1487,31 @@ int efa_rdm_ope_post_remote_write(struct efa_rdm_ope *ope)
 			 * engine, which will cause some memory registration
 			 * in MR cache to be released.
 			 */
-			return -FI_EAGAIN;
+			err = -FI_EAGAIN;
+			goto handle_err;
 		}
-		pkt_entry = efa_rdm_pke_alloc(ep, ep->efa_tx_pkt_pool, EFA_RDM_PKE_FROM_EFA_TX_POOL);
+		curr = efa_rdm_pke_alloc(ep, ep->efa_tx_pkt_pool, EFA_RDM_PKE_FROM_EFA_TX_POOL);
 
-		if (OFI_UNLIKELY(!pkt_entry))
-			return -FI_EAGAIN;
+		if (OFI_UNLIKELY(!curr)) {
+			err = -FI_EAGAIN;
+			goto handle_err;
+		}
+
+		if (prev)
+			prev->next = curr;
+		else
+			ep->pke_write_more_head = curr;
+		prev = curr;
 
 		if (ope->fi_flags & FI_INJECT) {
 			assert(ope->iov_count == 1);
 			assert(ope->total_len <= ep->user_info->tx_attr->inject_size);
-			copied = ofi_copy_from_hmem_iov(pkt_entry->wiredata + sizeof(struct efa_rdm_rma_context_pkt),
+			copied = ofi_copy_from_hmem_iov(curr->wiredata + sizeof(struct efa_rdm_rma_context_pkt),
 				ope->total_len, FI_HMEM_SYSTEM, 0, ope->iov, ope->iov_count, 0);
 			assert(copied == ope->total_len);
 			(void) copied; /* suppress compiler warning for non-debug build */
-			ope->desc[0] = fi_mr_desc(pkt_entry->mr);
-			ope->iov[0].iov_base = pkt_entry->wiredata + sizeof(struct efa_rdm_rma_context_pkt);
+			ope->desc[0] = fi_mr_desc(curr->mr);
+			ope->iov[0].iov_base = curr->wiredata + sizeof(struct efa_rdm_rma_context_pkt);
 		}
 
 		write_once_len = MIN(ope->iov[iov_idx].iov_len - iov_offset,
@@ -1526,19 +1519,13 @@ int efa_rdm_ope_post_remote_write(struct efa_rdm_ope *ope)
 		write_once_len = MIN(write_once_len, max_write_once_len);
 
 		efa_rdm_pke_init_write_context(
-			pkt_entry, ope,
+			curr, ope,
 			(char *) ope->iov[iov_idx].iov_base + iov_offset,
 			write_once_len, ope->desc[iov_idx],
 			ope->rma_iov[rma_iov_idx].addr + rma_iov_offset,
 			ope->rma_iov[rma_iov_idx].key);
-		err = efa_rdm_pke_write(pkt_entry);
-		if (err) {
-			EFA_WARN(FI_LOG_CQ, "efa_rdm_pke_write failed! err: %d\n", err);
-			efa_rdm_pke_release_tx(pkt_entry);
-			return err;
-		}
 
-		ope->bytes_write_submitted += write_once_len;
+		bytes_write_submitted += write_once_len;
 
 		iov_offset += write_once_len;
 		assert(iov_offset <= ope->iov[iov_idx].iov_len);
@@ -1555,7 +1542,47 @@ int efa_rdm_ope_post_remote_write(struct efa_rdm_ope *ope)
 		}
 	}
 
-	return 0;
+	if (ope->fi_flags & FI_MORE) {
+		/* Only record the tail for the happy path */
+		ep->pke_write_more_tail = curr;
+		return FI_SUCCESS;
+	}
+
+	err = efa_rdm_pke_write(ep->pke_write_more_head);
+	if (err) {
+		EFA_WARN(FI_LOG_CQ, "efa_rdm_pke_write failed! err: %d\n", err);
+		goto handle_err;
+	}
+
+	curr = ep->pke_write_more_head;
+	while (curr) {
+		tmp = curr->next;
+		/**
+		 * At this point, the pkt_entry been been posted. Reset
+		 * its ->next = NULL to avoid posting
+		 * more packets if it is queued for repost.
+		 */
+		curr->next = NULL;
+		curr = tmp;
+	}
+	ep->pke_write_more_head = ep->pke_write_more_tail = NULL;
+	return FI_SUCCESS;
+
+handle_err:
+	/* For error path, we only clean up the pkes associated with this ope */
+	curr = ep->pke_write_more_tail ? ep->pke_write_more_tail->next : ep->pke_write_more_head;
+
+	while (curr) {
+		tmp = curr->next;
+		efa_rdm_pke_release_tx(curr);
+		curr = tmp;
+	}
+
+	/* It means all pkes in the list are already cleaned */
+	if (!ep->pke_write_more_tail)
+		ep->pke_write_more_head = NULL;
+
+	return err;
 }
 
 int efa_rdm_ope_post_remote_read_or_queue(struct efa_rdm_ope *ope)
@@ -1686,10 +1713,10 @@ int efa_rdm_rxe_post_local_read_or_queue(struct efa_rdm_ope *rxe,
 ssize_t efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type)
 {
 	struct efa_rdm_ep *ep;
-	struct efa_rdm_pke *pkt_entry_vec[EFA_RDM_EP_MAX_WR_PER_IBV_POST_SEND];
+	struct efa_rdm_pke *prev = NULL, *curr = NULL, *tmp;
 	ssize_t err;
 	size_t segment_offset;
-	int pkt_entry_cnt, pkt_entry_cnt_allocated = 0, pkt_entry_data_size_vec[EFA_RDM_EP_MAX_WR_PER_IBV_POST_SEND];
+	int pkt_entry_cnt, pkt_entry_data_size_vec[EFA_RDM_EP_MAX_WR_PER_IBV_POST_SEND];
 	int i;
 
 	err = efa_rdm_ope_prepare_to_post_send(ope, pkt_type, &pkt_entry_cnt, pkt_entry_data_size_vec);
@@ -1700,17 +1727,22 @@ ssize_t efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type)
 	ep = ope->ep;
 	assert(ep);
 	segment_offset = efa_rdm_pkt_type_contains_data(pkt_type) ? ope->bytes_sent : -1;
+	prev = ep->pke_send_more_tail ? ep->pke_send_more_tail : NULL;
 	for (i = 0; i < pkt_entry_cnt; ++i) {
-		pkt_entry_vec[i] = efa_rdm_pke_alloc(ep, ep->efa_tx_pkt_pool, EFA_RDM_PKE_FROM_EFA_TX_POOL);
+		curr = efa_rdm_pke_alloc(ep, ep->efa_tx_pkt_pool, EFA_RDM_PKE_FROM_EFA_TX_POOL);
 
-		if (OFI_UNLIKELY(!pkt_entry_vec[i])) {
+		if (OFI_UNLIKELY(!curr)) {
 			err = -FI_EAGAIN;
 			goto handle_err;
 		}
 
-		pkt_entry_cnt_allocated++;
+		if (prev)
+			prev->next = curr;
+		else
+			ep->pke_send_more_head = curr;
+		prev = curr;
 
-		err = efa_rdm_pke_fill_data(pkt_entry_vec[i],
+		err = efa_rdm_pke_fill_data(curr,
 					    pkt_type,
 					    ope,
 					    segment_offset,
@@ -1724,21 +1756,59 @@ ssize_t efa_rdm_ope_post_send(struct efa_rdm_ope *ope, int pkt_type)
 		}
 	}
 
-	assert(pkt_entry_cnt == pkt_entry_cnt_allocated);
+	/**
+	 * We currently respect FI_MORE only for eager pkt type because
+	 * 1. For some non-REQ pkts like CTSDATA, its current implementation
+	 * relies on the logic that efa_rdm_ope_post_send always rings the doorbell,
+	 * because the ep progress call will keep calling this function until
+	 * ope->window is 0, but ope->window will only be decremented after
+	 * the CTSDATA pkts are actually posted to rdma-core.
+	 * 2. For non-eager REQ packets, we already send multiple pkts that contain
+	 * data and make the firmware saturated, there is no meaning to queue
+	 * pkts in this case.
+	 */
+	if (ope->fi_flags & FI_MORE && efa_rdm_pkt_type_is_eager(pkt_type)) {
+		/* Only record the tail for the happy path */
+		ep->pke_send_more_tail = curr;
+		EFA_WARN(FI_LOG_EP_DATA, "returning due to FI_MORE, size: %lu\n", ope->total_len);
+		return FI_SUCCESS;
+	}
 
-	err = efa_rdm_pke_sendv(pkt_entry_vec, pkt_entry_cnt);
+	err = efa_rdm_pke_sendv(ep->pke_send_more_head);
 	if (err)
 		goto handle_err;
 
-	ope->peer->flags |= EFA_RDM_PEER_REQ_SENT;
-	for (i = 0; i < pkt_entry_cnt; ++i)
-		efa_rdm_pke_handle_sent(pkt_entry_vec[i]);
+	curr = ep->pke_send_more_head;
+	while (curr) {
+		tmp = curr->next;
+		curr->ope->peer->flags |= EFA_RDM_PEER_REQ_SENT;
+		efa_rdm_pke_handle_sent(curr);
+		/**
+		 * At this point, the pkt_entry been been posted. Reset
+		 * its ->next = NULL to avoid posting
+		 * more packets if it is queued for repost.
+		 */
+		curr->next = NULL;
+		curr = tmp;
+	}
 
+	ep->pke_send_more_head = ep->pke_send_more_tail = NULL;
 	return FI_SUCCESS;
 
+
 handle_err:
-	for (i = 0; i < pkt_entry_cnt_allocated; ++i)
-		efa_rdm_pke_release_tx(pkt_entry_vec[i]);
+	/* For error path, we only clean up the pkes associated with this ope */
+	curr = ep->pke_send_more_tail ? ep->pke_send_more_tail->next : ep->pke_send_more_head;
+
+	while (curr) {
+		tmp = curr->next;
+		efa_rdm_pke_release_tx(curr);
+		curr = tmp;
+	}
+
+	/* It means all pkes in the list are already cleaned */
+	if (!ep->pke_send_more_tail)
+		ep->pke_send_more_head = NULL;
 
 	return efa_rdm_ope_post_send_fallback(ope, pkt_type, err);
 }
