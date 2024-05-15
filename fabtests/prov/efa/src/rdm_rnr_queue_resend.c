@@ -154,11 +154,11 @@ static int trigger_rnr_queue_resend(enum fi_op atomic_op, void *result, void *co
 			case FT_RMA_WRITE:
 			case FT_RMA_WRITEDATA:
 				ret = ft_post_rma(opts.rma_op, tx_buf, opts.transfer_size,
-						&remote, &tx_ctx_arr[fi->rx_attr->size].context);
+						&remote, &tx_ctx_arr[fi->rx_attr->size].context, 0);
 				break;
 			case FT_RMA_READ:
 				ret = ft_post_rma(FT_RMA_READ, rx_buf, opts.transfer_size,
-						&remote, &tx_ctx_arr[fi->rx_attr->size].context);
+						&remote, &tx_ctx_arr[fi->rx_attr->size].context, 0);
 				break;
 			default:
 				FT_ERR("Unknown RMA op type\n");
