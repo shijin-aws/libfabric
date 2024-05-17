@@ -196,6 +196,7 @@ struct efa_rdm_ep {
 	bool write_in_order_aligned_128_bytes; /**< whether to support in order write of each aligned 128 bytes memory region */
 	char err_msg[EFA_RDM_ERROR_MSG_BUFFER_LENGTH]; /* A large enough buffer to store CQ/EQ error data used by e.g. fi_cq_readerr */
 	struct efa_rdm_pke **pke_vec;
+	struct dlist_entry entry;
 };
 
 int efa_rdm_ep_flush_queued_blocking_copy_to_hmem(struct efa_rdm_ep *ep);
@@ -273,6 +274,8 @@ struct efa_domain *efa_rdm_ep_domain(struct efa_rdm_ep *ep)
 {
 	return container_of(ep->base_ep.util_ep.domain, struct efa_domain, util_domain);
 }
+
+void efa_rdm_ep_progress_post_internal_rx_pkts(struct efa_rdm_ep *ep);
 
 /**
  * @brief return whether this endpoint should write error cq entry for RNR.

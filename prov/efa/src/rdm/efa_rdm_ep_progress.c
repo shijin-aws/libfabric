@@ -157,7 +157,6 @@ int efa_rdm_ep_grow_rx_pools(struct efa_rdm_ep *ep)
  *
  * param[in]	ep	endpoint
  */
-static inline
 void efa_rdm_ep_progress_post_internal_rx_pkts(struct efa_rdm_ep *ep)
 {
 	int err;
