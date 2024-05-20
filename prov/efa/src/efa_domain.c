@@ -114,7 +114,22 @@ static int efa_domain_init_qp_table(struct efa_domain *efa_domain)
 static int efa_domain_init_rdm(struct efa_domain *efa_domain, struct fi_info *info)
 {
 	int err;
-	bool enable_shm = efa_env.enable_shm_transfer;
+	bool enable_shm;
+
+	efa_domain->rdm = calloc(1, sizeof(*efa_domain->rdm));
+	if (!efa_domain->rdm) {
+		EFA_WARN(FI_LOG_DOMAIN, "Failed to allocate rdm domain.\n");
+		return -FI_ENOMEM;
+	}
+
+	err = ofi_genlock_init(&efa_domain->rdm->srx_lock, efa_domain->util_domain.threading != FI_THREAD_SAFE ?
+			       OFI_LOCK_NOOP : OFI_LOCK_MUTEX);
+	if (err) {
+		EFA_WARN(FI_LOG_DOMAIN, "srx lock init failed! err: %d\n", err);
+		goto err_free;
+	}
+
+	enable_shm = efa_env.enable_shm_transfer;
 
 	/* App provided hints supercede environmental variables.
 	 *
@@ -131,14 +146,14 @@ static int efa_domain_init_rdm(struct efa_domain *efa_domain, struct fi_info *in
 		enable_shm = false;
 	}
 
-	efa_domain->shm_info = NULL;
+	efa_domain->rdm->shm_info = NULL;
 	if (enable_shm)
-		efa_shm_info_create(info, &efa_domain->shm_info);
+		efa_shm_info_create(info, &efa_domain->rdm->shm_info);
 	else
 		EFA_INFO(FI_LOG_CORE, "EFA will not use SHM for intranode communication because FI_EFA_ENABLE_SHM_TRANSFER=0\n");
 
-	if (efa_domain->shm_info) {
-		err = fi_fabric(efa_domain->shm_info->fabric_attr,
+	if (efa_domain->rdm->shm_info) {
+		err = fi_fabric(efa_domain->rdm->shm_info->fabric_attr,
 				&efa_domain->fabric->shm_fabric,
 				efa_domain->fabric->util_fabric.fabric_fid.fid.context);
 		if (err)
@@ -148,19 +163,25 @@ static int efa_domain_init_rdm(struct efa_domain *efa_domain, struct fi_info *in
 	}
 
 	if (efa_domain->fabric->shm_fabric) {
-		err = fi_domain(efa_domain->fabric->shm_fabric, efa_domain->shm_info,
-				&efa_domain->shm_domain, NULL);
+		err = fi_domain(efa_domain->fabric->shm_fabric, efa_domain->rdm->shm_info,
+				&efa_domain->rdm->shm_domain, NULL);
 		if (err)
 			return err;
 	}
 
-	efa_domain->rdm_mode = info->mode;
-	efa_domain->mtu_size = efa_domain->device->ibv_port_attr.max_msg_sz;
-	efa_domain->addrlen = (info->src_addr) ? info->src_addrlen : info->dest_addrlen;
-	efa_domain->rdm_cq_size = MAX(info->rx_attr->size + info->tx_attr->size,
+	efa_domain->rdm->mode = info->mode;
+	efa_domain->rdm->mtu_size = efa_domain->device->ibv_port_attr.max_msg_sz;
+	efa_domain->rdm->addrlen = (info->src_addr) ? info->src_addrlen : info->dest_addrlen;
+	efa_domain->rdm->cq_size = MAX(info->rx_attr->size + info->tx_attr->size,
 				  efa_env.cq_size);
-	efa_domain->num_read_msg_in_flight = 0;
+	efa_domain->rdm->num_read_msg_in_flight = 0;
+
 	return 0;
+
+err_free:
+	free(efa_domain->rdm);
+	efa_domain->rdm = NULL;
+	return err;
 }
 
 /* @brief Allocate a domain, open the device, and set it up based on the hints.
@@ -192,14 +213,6 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	err = ofi_domain_init(fabric_fid, info, &efa_domain->util_domain,
 			      context, OFI_LOCK_MUTEX);
 	if (err) {
-		ret = err;
-		goto err_free;
-	}
-
-	err = ofi_genlock_init(&efa_domain->srx_lock, efa_domain->util_domain.threading != FI_THREAD_SAFE ?
-			       OFI_LOCK_NOOP : OFI_LOCK_MUTEX);
-	if (err) {
-		EFA_WARN(FI_LOG_DOMAIN, "srx lock init failed! err: %d\n", err);
 		ret = err;
 		goto err_free;
 	}
@@ -268,6 +281,8 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	}
 
 	efa_domain->util_domain.domain_fid.fid.ops = &efa_ops_domain_fid;
+
+	efa_domain->rdm = NULL;
 	if (EFA_EP_TYPE_IS_RDM(info)) {
 		err = efa_domain_init_rdm(efa_domain, info);
 		if (err) {
@@ -338,19 +353,22 @@ static int efa_domain_close(fid_t fid)
 	if (ret)
 		return ret;
 
-	if (efa_domain->shm_domain) {
-		ret = fi_close(&efa_domain->shm_domain->fid);
-		if (ret)
-			return ret;
+	if (efa_domain->rdm) {
+		if (efa_domain->rdm->shm_domain) {
+			ret = fi_close(&efa_domain->rdm->shm_domain->fid);
+			if (ret)
+				return ret;
+		}
+
+		if (efa_domain->rdm->shm_info)
+			fi_freeinfo(efa_domain->rdm->shm_info);
+
+		ofi_genlock_destroy(&efa_domain->rdm->srx_lock);
+		free(efa_domain->rdm);
 	}
 
-	if (efa_domain->shm_info)
-		fi_freeinfo(efa_domain->shm_info);
-
 	if (efa_domain->info)
-		fi_freeinfo(efa_domain->info);
-
-	ofi_genlock_destroy(&efa_domain->srx_lock);
+			fi_freeinfo(efa_domain->info);
 	free(efa_domain->qp_table);
 	free(efa_domain);
 	return 0;

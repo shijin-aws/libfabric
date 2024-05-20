@@ -11,10 +11,23 @@
 #include "ofi_hmem.h"
 #include "ofi_util.h"
 
-struct efa_domain {
-	struct util_domain	util_domain;
+/**
+ * Domain fields that are only used by RDM ep type
+ */
+struct efa_domain_rdm {
+	uint64_t mode;
+	size_t mtu_size;
+	size_t cq_size;
+	size_t addrlen;
 	struct fi_info		*shm_info;
 	struct fid_domain	*shm_domain;
+	struct ofi_genlock	srx_lock; /* shared among peer providers */
+	/* number of rdma read msgs in flight */
+	uint64_t num_read_msg_in_flight;
+};
+
+struct efa_domain {
+	struct util_domain	util_domain;
 	struct efa_device	*device;
 	struct ibv_pd		*ibv_pd;
 	struct fi_info		*info;
@@ -23,14 +36,12 @@ struct efa_domain {
 	struct efa_qp		**qp_table;
 	size_t			qp_table_sz_m1;
 	struct efa_hmem_info	hmem_info[OFI_HMEM_MAX];
-	size_t			mtu_size;
-	size_t			addrlen;
 	bool 			mr_local;
-	uint64_t		rdm_mode;
-	size_t			rdm_cq_size;
 	struct dlist_entry	list_entry; /* linked to g_efa_domain_list */
-	struct ofi_genlock	srx_lock; /* shared among peer providers */
-	uint64_t		num_read_msg_in_flight;
+	/**
+ 	* Domain fields that are only used by RDM ep type
+ 	*/
+	struct efa_domain_rdm *rdm;
 };
 
 extern struct dlist_entry g_efa_domain_list;

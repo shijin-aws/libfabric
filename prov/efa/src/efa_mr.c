@@ -868,7 +868,7 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 
 	efa_mr->inserted_to_mr_map = true;
 
-	if (efa_mr->domain->shm_domain) {
+	if (efa_mr->domain->rdm && efa_mr->domain->rdm->shm_domain) {
 		/* We need to add FI_REMOTE_READ to allow for Read implemented
 		* message protocols.
 		*/
@@ -883,7 +883,7 @@ static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const void *at
 
 		mr_attr.hmem_data = efa_mr->peer.hmem_data;
 
-		ret = fi_mr_regattr(efa_mr->domain->shm_domain, &mr_attr,
+		ret = fi_mr_regattr(efa_mr->domain->rdm->shm_domain, &mr_attr,
 				    shm_flags, &efa_mr->shm_mr);
 
 		mr_attr.access = original_access;

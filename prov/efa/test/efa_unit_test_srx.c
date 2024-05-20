@@ -65,5 +65,5 @@ void test_efa_srx_lock(struct efa_resource **state)
         srx_ctx = efa_rdm_ep_get_peer_srx_ctx(efa_rdm_ep);
         efa_domain = container_of(resource->domain, struct efa_domain,
 				  util_domain.domain_fid.fid);
-        assert_true(((void *) srx_ctx->lock == (void *) &efa_domain->srx_lock));
+        assert_true(((void *) srx_ctx->lock == (void *) &efa_domain->rdm->srx_lock));
 }

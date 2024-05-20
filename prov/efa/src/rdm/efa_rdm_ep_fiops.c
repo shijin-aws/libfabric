@@ -441,8 +441,9 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	if (ret)
 		goto err_free_ep;
 
-	if (efa_domain->shm_domain) {
-		ret = fi_endpoint(efa_domain->shm_domain, efa_domain->shm_info,
+	assert(efa_domain->rdm);
+	if (efa_domain->rdm->shm_domain) {
+		ret = fi_endpoint(efa_domain->rdm->shm_domain, efa_domain->rdm->shm_info,
 				  &efa_rdm_ep->shm_ep, efa_rdm_ep);
 		if (ret)
 			goto err_destroy_base_ep;
@@ -1004,12 +1005,13 @@ static void efa_rdm_ep_close_shm_resources(struct efa_rdm_ep *efa_rdm_ep)
 	}
 
 	efa_domain = efa_rdm_ep_domain(efa_rdm_ep);
+	assert(efa_domain->rdm);
 
-	if (efa_domain->shm_domain) {
-		ret = fi_close(&efa_domain->shm_domain->fid);
+	if (efa_domain->rdm->shm_domain) {
+		ret = fi_close(&efa_domain->rdm->shm_domain->fid);
 		if (ret)
 			EFA_WARN(FI_LOG_EP_CTRL, "Unable to close shm domain\n");
-		efa_domain->shm_domain = NULL;
+		efa_domain->rdm->shm_domain = NULL;
 	}
 
 	if (efa_domain->fabric->shm_fabric) {
@@ -1019,9 +1021,9 @@ static void efa_rdm_ep_close_shm_resources(struct efa_rdm_ep *efa_rdm_ep)
 		efa_domain->fabric->shm_fabric = NULL;
 	}
 
-	if (efa_domain->shm_info) {
-		fi_freeinfo(efa_domain->shm_info);
-		efa_domain->shm_info = NULL;
+	if (efa_domain->rdm->shm_info) {
+		fi_freeinfo(efa_domain->rdm->shm_info);
+		efa_domain->rdm->shm_info = NULL;
 	}
 }
 
@@ -1043,7 +1045,7 @@ void efa_rdm_ep_update_shm(struct efa_rdm_ep *ep)
 	 * when efa_env.enable_shm_transfer is false
 	 * , shm resources won't be created.
 	 */
-	if (!efa_rdm_ep_domain(ep)->shm_domain)
+	if (!efa_rdm_ep_domain(ep)->rdm->shm_domain)
 		return;
 
 	use_shm = true;

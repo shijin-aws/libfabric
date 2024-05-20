@@ -433,7 +433,7 @@ static ssize_t efa_rdm_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t coun
 
 	domain = container_of(cq->util_cq.domain, struct efa_domain, util_domain);
 
-	ofi_genlock_lock(&domain->srx_lock);
+	ofi_genlock_lock(&domain->rdm->srx_lock);
 
 	if (cq->shm_cq) {
 		fi_cq_read(cq->shm_cq, NULL, 0);
@@ -452,7 +452,7 @@ static ssize_t efa_rdm_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t coun
 	ret = ofi_cq_readfrom(&cq->util_cq.cq_fid, buf, count, src_addr);
 
 out:
-	ofi_genlock_unlock(&domain->srx_lock);
+	ofi_genlock_unlock(&domain->rdm->srx_lock);
 
 	return ret;
 }
@@ -535,14 +535,15 @@ int efa_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 	(*cq_fid)->fid.ops = &efa_rdm_cq_fi_ops;
 	(*cq_fid)->ops = &efa_rdm_cq_ops;
 
+	assert(efa_domain->rdm);
 	/* open shm cq as peer cq */
-	if (efa_domain->shm_domain) {
+	if (efa_domain->rdm->shm_domain) {
 		memcpy(&shm_cq_attr, attr, sizeof(*attr));
 		/* Bind ep with shm provider's cq */
 		shm_cq_attr.flags |= FI_PEER;
 		peer_cq_context.size = sizeof(peer_cq_context);
 		peer_cq_context.cq = cq->util_cq.peer_cq;
-		ret = fi_cq_open(efa_domain->shm_domain, &shm_cq_attr,
+		ret = fi_cq_open(efa_domain->rdm->shm_domain, &shm_cq_attr,
 				 &cq->shm_cq, &peer_cq_context);
 		if (ret) {
 			EFA_WARN(FI_LOG_CQ, "Unable to open shm cq: %s\n", fi_strerror(-ret));
