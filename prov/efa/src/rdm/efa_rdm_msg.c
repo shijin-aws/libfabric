@@ -776,6 +776,7 @@ struct efa_rdm_ope *efa_rdm_msg_alloc_rxe_for_msgrtm(struct efa_rdm_ep *ep,
 		 * pkt_entry->ope right away.
 		 */
 		assert((*pkt_entry_ptr)->ope);
+		efa_rdm_pke_rtm_update_rxe(*pkt_entry_ptr, (*pkt_entry_ptr)->ope);
 		return (*pkt_entry_ptr)->ope;
 	}
 
