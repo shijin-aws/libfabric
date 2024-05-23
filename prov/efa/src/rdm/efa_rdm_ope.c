@@ -1333,7 +1333,7 @@ int efa_rdm_ope_post_read(struct efa_rdm_ope *ope)
 	assert(max_read_once_len > 0);
 
 	err = ofi_iov_locate(ope->iov, ope->iov_count,
-			     ope->bytes_read_offset + ope->bytes_read_submitted + ep->msg_prefix_size,
+			     ope->bytes_read_offset + ope->bytes_read_submitted,
 			     &iov_idx, &iov_offset);
 	if (OFI_UNLIKELY(err)) {
 		EFA_WARN(FI_LOG_CQ, "ofi_iov_locate failed! err: %d\n", err);
