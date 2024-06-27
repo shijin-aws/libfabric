@@ -1235,6 +1235,11 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 
 		assert(ep->peer_srx_ep);
 		srx_ctx = efa_rdm_ep_get_peer_srx_ctx(ep);
+
+		efa_rdm_ep_grow_rx_pools(ep);
+		ep->efa_rx_pkts_to_post = efa_rdm_ep_get_rx_pool_size(ep);
+		//efa_rdm_ep_bulk_post_internal_rx_pkts(ep);
+
 		ofi_genlock_lock(srx_ctx->lock);
 
 		efa_rdm_ep_set_extra_info(ep);
