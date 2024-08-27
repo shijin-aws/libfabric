@@ -464,6 +464,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	dlist_init(&rx_progressed_ep_list);
 
 	/* Call ibv_start_poll only once */
+	EFA_WARN(FI_LOG_EP_CTRL, "Polling ibv cq ex %p\n", ibv_cq->ibv_cq_ex);
 	err = ibv_start_poll(ibv_cq->ibv_cq_ex, &poll_cq_attr);
 	should_end_poll = !err;
 

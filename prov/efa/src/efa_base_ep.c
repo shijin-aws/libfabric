@@ -41,6 +41,7 @@ int efa_base_ep_destruct_qp(struct efa_base_ep *base_ep)
 	struct efa_qp *user_recv_qp = base_ep->user_recv_qp;
 
 	if (qp) {
+		EFA_WARN(FI_LOG_EP_CTRL, "Destroy default IBV QP ex %p\n", qp->ibv_qp_ex);
 		domain = qp->base_ep->domain;
 		domain->qp_table[qp->qp_num & domain->qp_table_sz_m1] = NULL;
 		efa_qp_destruct(qp);
@@ -48,6 +49,7 @@ int efa_base_ep_destruct_qp(struct efa_base_ep *base_ep)
 	}
 
 	if (user_recv_qp) {
+		EFA_WARN(FI_LOG_EP_CTRL, "Destroy user recv IBV QP ex %p\n", user_recv_qp->ibv_qp_ex);
 		domain = user_recv_qp->base_ep->domain;
 		domain->qp_table[user_recv_qp->qp_num & domain->qp_table_sz_m1] = NULL;
 		efa_qp_destruct(user_recv_qp);

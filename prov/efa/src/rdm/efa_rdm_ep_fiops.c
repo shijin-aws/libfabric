@@ -100,6 +100,7 @@ int efa_rdm_ep_create_base_ep_ibv_qp(struct efa_rdm_ep *ep)
 	if (ret)
 		return ret;
 
+	EFA_WARN(FI_LOG_EP_CTRL, "Create default IBV QP ex %p with tx cq: %p, rx cq: %p\n", ep->base_ep.qp->ibv_qp_ex, tx_ibv_cq, rx_ibv_cq);
 	/**
 	 * Create separate user_recv_qp to receive pkts that carries user data
 	 * without any headers.
@@ -111,6 +112,7 @@ int efa_rdm_ep_create_base_ep_ibv_qp(struct efa_rdm_ep *ep)
 			return ret;
 		}
 		ep->base_ep.user_recv_qp->base_ep = &ep->base_ep;
+		EFA_WARN(FI_LOG_EP_CTRL, "Create User recv IBV QP ex %p with tx cq: %p, rx cq: %p\n", ep->base_ep.user_recv_qp->ibv_qp_ex, tx_ibv_cq, rx_ibv_cq);
 	}
 
 	return FI_SUCCESS;
