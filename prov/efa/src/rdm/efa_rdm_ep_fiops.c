@@ -543,6 +543,8 @@ int efa_rdm_ep_open(struct fid_domain *domain, struct fi_info *info,
 	if (ret)
 		goto err_free_ep;
 
+	//EFA_WARN(FI_LOG_EP_CTRL, "opened efa rdm ep %p, efa_domain: %p, domain name:%s\n", efa_rdm_ep, efa_rdm_ep_domain(efa_rdm_ep), efa_rdm_ep_domain(efa_rdm_ep)->util_domain.name);
+
 	if (efa_domain->shm_domain) {
 		ret = fi_endpoint(efa_domain->shm_domain, efa_domain->shm_info,
 				  &efa_rdm_ep->shm_ep, efa_rdm_ep);
@@ -712,6 +714,7 @@ static int efa_rdm_ep_bind(struct fid *ep_fid, struct fid *bfid, uint64_t flags)
 		if (ret)
 			return ret;
 
+		EFA_WARN(FI_LOG_EP_CTRL, "bind ep %p  with cq %p, efa_domain: %p\n", efa_rdm_ep, cq, efa_rdm_ep_domain(efa_rdm_ep));
 		if (cq->shm_cq) {
 			/* Bind ep with shm provider's cq */
 			ret = fi_ep_bind(efa_rdm_ep->shm_ep, &cq->shm_cq->fid, flags);
@@ -895,7 +898,6 @@ void efa_rdm_ep_wait_send(struct efa_rdm_ep *efa_rdm_ep)
 			efa_rdm_cq_poll_ibv_cq(-1, &rx_cq->ibv_cq);
 		efa_domain_progress_rdm_peers_and_queues(efa_rdm_ep_domain(efa_rdm_ep));
 	}
-
 	ofi_genlock_unlock(&efa_rdm_ep_domain(efa_rdm_ep)->srx_lock);
 }
 
@@ -958,6 +960,8 @@ static int efa_rdm_ep_close(struct fid *fid)
 	struct efa_rdm_ep *efa_rdm_ep;
 
 	efa_rdm_ep = container_of(fid, struct efa_rdm_ep, base_ep.util_ep.ep_fid.fid);
+
+	EFA_WARN(FI_LOG_EP_CTRL, "closing ep %p on host id %lx with ibv_qp %p, qpn: %d, efa_domain %p, name: %s, cxt: %p\n", efa_rdm_ep, efa_rdm_ep->host_id, efa_rdm_ep->base_ep.qp->ibv_qp, efa_rdm_ep->base_ep.qp->qp_num, efa_rdm_ep_domain(efa_rdm_ep), efa_rdm_ep_domain(efa_rdm_ep)->util_domain.name, efa_rdm_ep_domain(efa_rdm_ep)->device->ibv_ctx);
 
 	if (efa_rdm_ep->base_ep.efa_qp_enabled)
 		efa_rdm_ep_wait_send(efa_rdm_ep);
@@ -1277,6 +1281,7 @@ static int efa_rdm_ep_ctrl(struct fid *fid, int command, void *arg)
 		if (ret)
 			return ret;
 
+		EFA_WARN(FI_LOG_EP_CTRL, "enabled ep %p on host id %lx with ibv_qp %p, qpn: %d, efa_domain: %p, name: %s, ctx: %p\n", ep, ep->host_id, ep->base_ep.qp->ibv_qp, ep->base_ep.qp->qp_num, efa_rdm_ep_domain(ep), efa_rdm_ep_domain(ep)->util_domain.name, efa_rdm_ep_domain(ep)->device->ibv_ctx);
 		ret = efa_rdm_ep_insert_cq_ibv_cq_poll_list(ep);
 		if (ret)
 			goto err_destroy_qp;

@@ -54,6 +54,8 @@ int efa_base_ep_destruct_qp(struct efa_base_ep *base_ep)
 		base_ep->user_recv_qp = NULL;
 	}
 
+	base_ep->efa_qp_enabled = false;
+
 	return 0;
 }
 

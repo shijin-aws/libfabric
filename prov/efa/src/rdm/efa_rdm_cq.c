@@ -475,6 +475,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		opcode = ibv_wc_read_opcode(ibv_cq->ibv_cq_ex);
 		if (ibv_cq->ibv_cq_ex->status) {
 			prov_errno = efa_rdm_cq_get_prov_errno(ibv_cq->ibv_cq_ex);
+			EFA_WARN(FI_LOG_CQ, "hit cq error, qpn: %d, prov_errno: %d, efa_rdm_cq: %p, efa_rdm_ep: %p, qp enabled: %d\n", ibv_wc_read_qp_num(ibv_cq->ibv_cq_ex), prov_errno, efa_rdm_cq, ep, ep->base_ep.efa_qp_enabled);
 			switch (opcode) {
 			case IBV_WC_SEND: /* fall through */
 			case IBV_WC_RDMA_WRITE: /* fall through */
@@ -672,6 +673,8 @@ int efa_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 
 	efa_domain = container_of(domain, struct efa_domain,
 				  util_domain.domain_fid);
+
+	EFA_WARN(FI_LOG_CQ, "created efa_rdm_cq %p, efa_domain: %p\n", cq, efa_domain);
 	/* Override user cq size if it's less than recommended cq size */
 	attr->size = MAX(efa_domain->rdm_cq_size, attr->size);
 

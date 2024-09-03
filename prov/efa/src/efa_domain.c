@@ -190,6 +190,8 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	if (!efa_domain)
 		return -FI_ENOMEM;
 
+	//EFA_WARN(FI_LOG_DOMAIN, "created efa_domain: %p, name: %s\n", efa_domain, efa_domain->util_domain.name);
+
 	dlist_init(&efa_domain->list_entry);
 	efa_domain->fabric = container_of(fabric_fid, struct efa_fabric,
 					  util_fabric.fabric_fid);
@@ -329,6 +331,8 @@ static int efa_domain_close(fid_t fid)
 
 	efa_domain = container_of(fid, struct efa_domain,
 				  util_domain.domain_fid.fid);
+
+	//EFA_WARN(FI_LOG_DOMAIN, "closed efa_domain: %p\n", efa_domain);
 
 	dlist_remove(&efa_domain->list_entry);
 
