@@ -298,6 +298,13 @@ static void efa_rdm_cq_handle_recv_completion(struct efa_ibv_cq *ibv_cq, struct 
 	}
 
 	pkt_entry->pkt_size = ibv_wc_read_byte_len(ibv_cq_ex);
+	EFA_WARN(FI_LOG_CQ, "Get recv completion from rdma-core of size %zu\n", pkt_entry->pkt_size);
+	if (pkt_entry->pkt_size == 84) {
+	  printf("Receive payload data: \n");
+	  for (int i=0; i<64; i++)
+	    printf("%c", *((char *)pkt_entry->wiredata + i + 20));
+	  printf("\n");
+	}
 	if (ibv_wc_read_wc_flags(ibv_cq_ex) & IBV_WC_WITH_IMM) {
 		has_imm_data = true;
 		imm_data = ibv_wc_read_imm_data(ibv_cq_ex);
@@ -516,6 +523,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 			efa_rdm_pke_handle_send_completion(pkt_entry);
 			break;
 		case IBV_WC_RECV:
+
 			efa_rdm_cq_handle_recv_completion(ibv_cq, pkt_entry, ep);
 #if ENABLE_DEBUG
 			ep->recv_comps++;

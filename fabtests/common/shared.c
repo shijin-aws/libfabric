@@ -3756,11 +3756,14 @@ int ft_fill_buf(void *buf, size_t size)
 		msg_buf = (char *) buf;
 	}
 
+	printf("data filled in send buffer: \n");
 	for (i = 0; i < size; i++) {
 		msg_buf[i] = integ_alphabet[msg_index];
+		printf("%c", msg_buf[i]);
 		if (++msg_index >= integ_alphabet_length)
 			msg_index = 0;
 	}
+	printf("\n");
 
 	if (opts.iface != FI_HMEM_SYSTEM) {
 		ret = ft_hmem_copy_to(opts.iface, opts.device, buf, msg_buf, size);
@@ -3961,6 +3964,7 @@ int ft_check_buf(void *buf, size_t size)
 	int msg_index = 0;
 	size_t i;
 	int ret = 0;
+	bool err = false;
 
 	if (opts.iface != FI_HMEM_SYSTEM) {
 		assert(dev_host_buf);
@@ -3973,14 +3977,17 @@ int ft_check_buf(void *buf, size_t size)
 		recv_data = (char *)buf;
 	}
 
+	printf("Received data: \n");
 	for (i = 0; i < size; i++) {
 		c = integ_alphabet[msg_index];
+		printf("%c", recv_data[i]);
 		if (++msg_index >= integ_alphabet_length)
 			msg_index = 0;
 		if (c != recv_data[i])
-			break;
+			err = true;
 	}
-	if (i != size) {
+	printf("\n");
+	if (err) {
 		printf("Data check error (%c!=%c) at byte %zu for "
 		       "buffer size %zu\n", c, recv_data[i], i, size);
 		ret = -FI_EIO;

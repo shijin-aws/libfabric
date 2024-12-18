@@ -65,6 +65,7 @@ ssize_t efa_rdm_pke_init_payload_from_ope(struct efa_rdm_pke *pke,
 	mr_p2p_available = false;
 	use_inline_buf = false;
 
+	EFA_WARN(FI_LOG_EP_DATA, "pkt hdr size %zu, payload size %zu\n", payload_offset, data_size);
 	if (iov_mr) {
 		ret = efa_rdm_ep_use_p2p(pke->ep, iov_mr);
 		if (ret < 0)
@@ -465,6 +466,11 @@ ssize_t efa_rdm_pke_copy_payload_to_ope(struct efa_rdm_pke *pke,
 	if (efa_mr_is_cuda(desc))
 		return efa_rdm_pke_copy_payload_to_cuda(pke, ope);
 
+	if (efa_mr_is_neuron(desc)) {
+	  EFA_WARN(FI_LOG_EP_DATA, "use local rdma read to copy data from bounce buffer to neuron buffer, payload size %zu\n", pke->payload_size);
+		return efa_rdm_rxe_post_local_read_or_queue(ope, segment_offset, pke, pke->payload, pke->payload_size);
+	}
+		
 	if (efa_mr_is_hmem(desc))
 		return efa_rdm_pke_queued_copy_payload_to_hmem(pke, ope);
 
