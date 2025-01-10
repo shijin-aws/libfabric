@@ -789,7 +789,7 @@ void efa_rdm_rxe_report_completion(struct efa_rdm_ope *rxe)
 	if (!(rxe->internal_flags & EFA_RDM_RXE_RECV_CANCEL) &&
 	    (ofi_need_completion(cq_flags, rxe->fi_flags) ||
 	     (rxe->cq_entry.flags & FI_MULTI_RECV))) {
-		EFA_DBG(FI_LOG_CQ,
+		EFA_INFO(FI_LOG_CQ,
 		       "Writing recv completion for rxe from peer: %"
 		       PRIu64 " rx_id: %" PRIu32 " msg_id: %" PRIu32
 		       " tag: %lx total_len: %" PRIu64 "\n",
@@ -889,7 +889,7 @@ void efa_rdm_txe_report_completion(struct efa_rdm_ope *txe)
 
 	assert(txe->type == EFA_RDM_TXE);
 	if (efa_rdm_txe_should_update_cq(txe)) {
-		EFA_DBG(FI_LOG_CQ,
+		EFA_INFO(FI_LOG_CQ,
 		       "Writing send completion for txe to peer: %" PRIu64
 		       " tx_id: %" PRIu32 " msg_id: %" PRIu32 " tag: %lx len: %"
 		       PRIu64 "\n",

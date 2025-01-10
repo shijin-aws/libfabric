@@ -121,7 +121,7 @@ ssize_t efa_rdm_rma_readmsg(struct fid_ep *ep, const struct fi_msg_rma *msg, uin
 	void **tmp_desc;
 	struct util_srx_ctx *srx_ctx;
 
-	EFA_DBG(FI_LOG_EP_DATA,
+	EFA_INFO(FI_LOG_EP_DATA,
 	       "read iov_len: %lu flags: %lx\n",
 	       ofi_total_iov_len(msg->msg_iov, msg->iov_count),
 	       flags);
@@ -434,7 +434,7 @@ static inline ssize_t efa_rdm_generic_writemsg(struct efa_rdm_ep *efa_rdm_ep,
 
 	efa_perfset_start(efa_rdm_ep, perf_efa_tx);
 
-	EFA_DBG(FI_LOG_EP_DATA,
+	EFA_INFO(FI_LOG_EP_DATA,
 	       "write iov_len %lu flags: %lx\n",
 	       ofi_total_iov_len(msg->msg_iov, msg->iov_count),
 	       flags);

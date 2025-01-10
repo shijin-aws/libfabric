@@ -179,14 +179,14 @@ ssize_t efa_rdm_msg_generic_send(struct efa_rdm_ep *ep, struct efa_rdm_peer *pee
 
 	use_p2p = ret;
 
-	EFA_DBG(FI_LOG_EP_DATA,
-	       "iov_len: %lu tag: %lx op: %x flags: %lx\n",
-	       txe->total_len,
-	       tag, op, flags);
-
 	assert(txe->op == ofi_op_msg || txe->op == ofi_op_tagged);
 
 	txe->msg_id = peer->next_msg_id++;
+
+	EFA_INFO(FI_LOG_EP_DATA,
+	       "iov_len: %lu tag: %lx op: %x flags: %lx msg_id %u\n",
+	       txe->total_len,
+	       tag, op, flags, txe->msg_id);
 
 	efa_rdm_tracepoint(send_begin, txe->msg_id,
 		    (size_t) txe->cq_entry.op_context, txe->total_len);
@@ -915,7 +915,7 @@ ssize_t efa_rdm_msg_generic_recv(struct efa_rdm_ep *ep, const struct fi_msg *msg
 
 	efa_perfset_start(ep, perf_efa_recv);
 
-	EFA_DBG(FI_LOG_EP_DATA,
+	EFA_INFO(FI_LOG_EP_DATA,
 	       "%s: iov_len: %lu tag: %lx ignore: %lx op: %x flags: %lx\n",
 	       __func__, ofi_total_iov_len(msg->msg_iov, msg->iov_count), tag, ignore,
 	       op, flags);
