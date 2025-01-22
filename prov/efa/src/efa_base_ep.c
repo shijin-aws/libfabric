@@ -351,7 +351,7 @@ int efa_base_ep_construct(struct efa_base_ep *base_ep,
 	}
 
 	/* This is SRD qp's default behavior */
-	base_ep->rnr_retry = EFA_RNR_INFINITE_RETRY;
+	base_ep->rnr_retry = EFA_RDM_DEFAULT_RNR_RETRY;
 
 	base_ep->efa_recv_wr_vec = calloc(sizeof(struct efa_recv_wr), EFA_RDM_EP_MAX_WR_PER_IBV_POST_RECV);
 	if (!base_ep->efa_recv_wr_vec) {

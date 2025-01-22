@@ -95,12 +95,13 @@ static void efa_cq_handle_error(struct efa_base_ep *base_ep,
 		err_entry.err_data = err_msg;
 	}
 
-	EFA_WARN(FI_LOG_CQ, "err: %d, message: %s (%d)\n",
+	EFA_WARN(FI_LOG_CQ, "err: %d, message: %s (%d), op code %d\n",
 		err_entry.err,
 		err_entry.err_data
 			? (const char *) err_entry.err_data
 			: efa_strerror(err_entry.prov_errno),
-		err_entry.prov_errno);
+		err_entry.prov_errno,
+		ibv_wc_read_opcode(ibv_cq_ex));
 
 	efa_show_help(err_entry.prov_errno);
 

@@ -136,6 +136,8 @@ static inline ssize_t efa_post_recv(struct efa_base_ep *base_ep, const struct fi
 		err = (err == ENOMEM) ? -FI_EAGAIN : -err;
 	}
 
+	EFA_WARN(FI_LOG_EP_DATA, "posted recv of size %zu to device, ret: %d\n", ofi_total_iov_len(msg->msg_iov, msg->iov_count), err);
+
 	base_ep->recv_wr_index = 0;
 
 out:
@@ -270,6 +272,7 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 	if (!(flags & FI_MORE)) {
 		ret = ibv_wr_complete(qp->ibv_qp_ex);
 		base_ep->is_wr_started = false;
+		EFA_WARN(FI_LOG_EP_DATA, "posted send of size %zu, context %p to device, ret: %d\n", ofi_total_iov_len(msg->msg_iov, msg->iov_count), msg->context, ret);
 	}
 
 	ofi_genlock_unlock(&base_ep->util_ep.lock);
