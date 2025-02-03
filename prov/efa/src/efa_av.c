@@ -602,7 +602,7 @@ int efa_av_insert_one(struct efa_av *av, struct efa_ep_addr *addr,
 		goto out;
 	}
 
-	EFA_INFO(FI_LOG_AV, "Inserting address GID[%s] QP[%u] QKEY[%u] to AV ....\n",
+	EFA_WARN(FI_LOG_AV, "Inserting address GID[%s] QP[%u] QKEY[%u] to AV ....\n",
 		 raw_gid_str, addr->qpn, addr->qkey);
 
 	/*
@@ -904,9 +904,8 @@ int efa_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 	if (ret)
 		goto err;
 
-	if (EFA_INFO_TYPE_IS_RDM(efa_domain->info)) {
-		av->ep_type = FI_EP_RDM;
-
+	av->ep_type = efa_domain->info->ep_attr->type;
+	if (av->ep_type == FI_EP_RDM) {
 		av_attr = *attr;
 		if (efa_domain->fabric && efa_domain->fabric->shm_fabric) {
 			/*
@@ -928,8 +927,6 @@ int efa_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 			if (ret)
 				goto err_close_util_av;
 		}
-	} else {
-		av->ep_type = FI_EP_DGRAM;
 	}
 
 	EFA_INFO(FI_LOG_AV, "fi_av_attr:%" PRId64 "\n",

@@ -91,7 +91,7 @@ static int efa_domain_init_device_and_pd(struct efa_domain *efa_domain,
 	if (i == g_device_cnt)
 		return -FI_ENODEV;
 
-	EFA_INFO(FI_LOG_DOMAIN, "Domain %s selected device %s\n", domain_name, device_name);
+	EFA_WARN(FI_LOG_DOMAIN, "Domain %s selected device %s\n", domain_name, device_name);
 	efa_domain->ibv_pd = efa_domain->device->ibv_pd;
 	return 0;
 }

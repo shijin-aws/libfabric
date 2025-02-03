@@ -602,7 +602,7 @@ int ofi_check_domain_attr(const struct fi_provider *prov, uint32_t api_version,
 
 	if (fi_resource_mgmt_level(user_attr->resource_mgmt) <
 	    fi_resource_mgmt_level(prov_attr->resource_mgmt)) {
-		FI_INFO(prov, FI_LOG_CORE, "Invalid resource mgmt model\n");
+		FI_INFO(prov, FI_LOG_CORE, "Invalid resource mgmt model: user %d, prov: %d\n", fi_resource_mgmt_level(user_attr->resource_mgmt), fi_resource_mgmt_level(prov_attr->resource_mgmt));
 		return -FI_ENODATA;
 	}
 

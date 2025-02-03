@@ -167,10 +167,12 @@ static int efa_base_ep_modify_qp_rst2rts(struct efa_base_ep *base_ep,
 		return err;
 
 	if (base_ep->util_ep.type != FI_EP_DGRAM &&
-	    efa_domain_support_rnr_retry_modify(base_ep->domain))
+	    efa_domain_support_rnr_retry_modify(base_ep->domain)) {
+		EFA_WARN(FI_LOG_EP_CTRL, "enable qp with rnr retry\n");
 		return efa_base_ep_modify_qp_state(
 			base_ep, qp, IBV_QPS_RTS,
 			IBV_QP_STATE | IBV_QP_SQ_PSN | IBV_QP_RNR_RETRY);
+		}
 
 	return efa_base_ep_modify_qp_state(base_ep, qp, IBV_QPS_RTS,
 					   IBV_QP_STATE | IBV_QP_SQ_PSN);
@@ -268,7 +270,7 @@ int efa_base_ep_enable_qp(struct efa_base_ep *base_ep, struct efa_qp *qp)
 
 	qp->qp_num = qp->ibv_qp->qp_num;
 	base_ep->domain->qp_table[qp->qp_num & base_ep->domain->qp_table_sz_m1] = qp;
-	EFA_INFO(FI_LOG_EP_CTRL, "QP enabled! qp_n: %d qkey: %d\n", qp->qp_num, qp->qkey);
+	EFA_WARN(FI_LOG_EP_CTRL, "QP enabled! qp_n: %d qkey: %d\n", qp->qp_num, qp->qkey);
 
 	return err;
 }
@@ -574,6 +576,8 @@ void efa_base_ep_construct_ibv_qp_init_attr_ex(struct efa_base_ep *ep,
 	attr_ex->cap.max_send_sge = info->tx_attr->iov_limit;
 	attr_ex->cap.max_recv_wr = info->rx_attr->size;
 	attr_ex->cap.max_recv_sge = info->rx_attr->iov_limit;
+	EFA_WARN(FI_LOG_EP_CTRL, "max_send_wr: %zu,  max_send_sge: %zu, max_recv_wr: %zu, max_recv_sge: %zu\n",
+	info->tx_attr->size, info->tx_attr->iov_limit, info->rx_attr->size, info->rx_attr->iov_limit);
 	attr_ex->cap.max_inline_data = ep->domain->device->efa_attr.inline_buf_size;
 	attr_ex->pd = ep->domain->ibv_pd;
 	attr_ex->qp_context = ep;

@@ -177,14 +177,9 @@ void efa_prov_info_set_ep_attr(struct fi_info *prov_info,
 	prov_info->ep_attr->max_msg_size = device->ibv_port_attr.max_msg_sz;
 
 	switch (info_type) {
-		case EFA_INFO_RDM:
-			prov_info->ep_attr->type = FI_EP_RDM;
-			/* max_msg_size for RDM path is set in efa_prov_info_alloc_for_rdm */
-			break;
+		case EFA_INFO_RDM: /* fall through */
 		case EFA_INFO_DIRECT:
 			prov_info->ep_attr->type = FI_EP_RDM;
-			/* max_msg_size in ep_attr should be the maximum of send/recv and RMA sizes */
-			prov_info->ep_attr->max_msg_size = MAX(device->ibv_port_attr.max_msg_sz, device->max_rdma_size);
 			break;
 		case EFA_INFO_DGRAM:
 			prov_info->ep_attr->type = FI_EP_DGRAM;
@@ -715,6 +710,49 @@ int efa_prov_info_alloc_for_rdm(struct fi_info **prov_info_rdm_ptr,
 	}
 
 	*prov_info_rdm_ptr = prov_info_rdm;
+	return 0;
+}
+
+
+int efa_prov_info_alloc_for_direct(struct fi_info **prov_info_direct_ptr,
+				struct efa_device *device)
+{
+	struct fi_info *prov_info_direct;
+
+	assert(device->direct_info);
+
+	prov_info_direct  = fi_dupinfo(device->direct_info);
+	if (!prov_info_direct)
+		return -FI_ENOMEM;
+
+	/* EFA direct endpoint ensure thread safety by pthread lock */
+	prov_info_direct->domain_attr->threading = FI_THREAD_SAFE;
+	/* EFA direct endpoint handles Receiver Not Ready (RNR) events doing
+	 * rnr retry in firmware level
+	 */
+	prov_info_direct->domain_attr->resource_mgmt = FI_RM_ENABLED;
+
+	prov_info_direct->ep_attr->protocol = FI_PROTO_EFA;
+	prov_info_direct->tx_attr->op_flags = FI_INJECT | FI_COMPLETION | FI_TRANSMIT_COMPLETE |
+						   FI_DELIVERY_COMPLETE;
+	prov_info_direct->rx_attr->op_flags = FI_COMPLETION;
+
+	*prov_info_direct_ptr = prov_info_direct;
+
+	if (efa_device_support_rdma_read()
+		&& efa_device_support_rdma_write()) {
+		EFA_WARN(FI_LOG_CORE, "Adding RMA caps to efa direct info\n");
+		prov_info_direct->caps |= OFI_TX_RMA_CAPS | OFI_RX_RMA_CAPS;
+		prov_info_direct->tx_attr->caps |= OFI_TX_RMA_CAPS;
+		prov_info_direct->tx_attr->caps |= OFI_RX_RMA_CAPS;
+		/* max_msg_size in ep_attr should be the maximum of send/recv and RMA sizes */
+		prov_info_direct->ep_attr->max_msg_size = MAX(device->ibv_port_attr.max_msg_sz, device->max_rdma_size);
+		if (!efa_device_support_unsolicited_write_recv()) {
+			prov_info_direct->mode |= FI_RX_CQ_DATA;
+			prov_info_direct->rx_attr->mode |= FI_RX_CQ_DATA;
+		}
+	}
+
 	return 0;
 }
 

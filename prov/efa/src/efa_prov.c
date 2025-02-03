@@ -89,9 +89,10 @@ static int efa_util_prov_initialize()
 	* So we populate the efa-direct info objects first
 	*/
 	for (i = 0; i < g_device_cnt; ++i) {
-		prov_info_direct = fi_dupinfo(g_device_list[i].direct_info);
-		if (!prov_info_direct) {
-			EFA_WARN(FI_LOG_DOMAIN, "Failed to allocate prov_info for EFA direct\n");
+		err = efa_prov_info_alloc_for_direct(&prov_info_direct, &g_device_list[i]);
+		if (err) {
+			EFA_WARN(FI_LOG_DOMAIN, "Failed to allocate prov_info for direct. error: %d\n",
+				 err);
 			continue;
 		}
 
