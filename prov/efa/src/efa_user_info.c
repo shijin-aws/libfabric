@@ -371,6 +371,22 @@ int efa_user_info_alter_direct(int version, struct fi_info *info, const struct f
 		info->domain_attr->mr_mode |= FI_MR_HMEM;
 	}
 
+	if (hints && (hints->caps & FI_RMA)) {
+		/**
+		 * RDMA with immediate needs to consume a recv buffer
+		 * when unsolicited write recv is not supported. So
+		 * FI_RX_CQ_DATA is required.
+		 */
+		if (!efa_device_support_unsolicited_write_recv() &&
+			!(hints->mode & FI_RX_CQ_DATA)) {
+				EFA_INFO(FI_LOG_CORE,
+			        "FI_RX_CQ_DATA is required for FI_RMA when unsolicited write recv is not supported \n");
+			return -FI_ENODATA;
+		}
+
+		info->mode |= FI_RX_CQ_DATA;
+		info->rx_attr->mode |= FI_RX_CQ_DATA;
+	}
 	/*
 	 * Handle user-provided hints and adapt the info object passed back up
 	 * based on EFA-specific constraints.

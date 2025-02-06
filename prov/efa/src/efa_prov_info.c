@@ -217,10 +217,6 @@ void efa_prov_info_set_tx_rx_attr(struct fi_info *prov_info,
 				  struct efa_device *device,
 				  enum fi_ep_type ep_type)
 {
-	/* efa-direct and DGRAM paths require FI_CONTEXT2 */
-	prov_info->tx_attr->mode |= FI_CONTEXT2;
-	prov_info->rx_attr->mode |= FI_CONTEXT2;
-
 	if (ep_type == FI_EP_RDM) {
 		*prov_info->tx_attr	= efa_rdm_tx_attr;
 		*prov_info->rx_attr	= efa_rdm_rx_attr;
@@ -238,6 +234,14 @@ void efa_prov_info_set_tx_rx_attr(struct fi_info *prov_info,
 		*prov_info->tx_attr	= efa_dgrm_tx_attr;
 		*prov_info->rx_attr	= efa_dgrm_rx_attr;
 	}
+
+	/* efa-direct and DGRAM paths require FI_CONTEXT2 */
+	prov_info->tx_attr->mode |= FI_CONTEXT2;
+	prov_info->rx_attr->mode |= FI_CONTEXT2;
+
+	/* FI_RX_CQ_DATA should only apply to rx_attr */
+	if (prov_info->mode & FI_RX_CQ_DATA)
+		prov_info->rx_attr->mode |= FI_RX_CQ_DATA;
 
 	prov_info->tx_attr->inject_size = device->efa_attr.inline_buf_size;
 	prov_info->tx_attr->iov_limit = device->efa_attr.max_sq_sge;
@@ -476,8 +480,7 @@ int efa_prov_info_alloc(struct fi_info **prov_info_ptr,
 		/* Claim RMA support in the efa-direct path only if read, write
 		 *  and unsolicited write are all available */
 		if (efa_device_support_rdma_read() &&
-			efa_device_support_rdma_write() &&
-			efa_device_support_unsolicited_write_recv())
+			efa_device_support_rdma_write())
 			prov_info->caps |= (OFI_TX_RMA_CAPS | OFI_RX_RMA_CAPS);
 	} else {
 		if (ep_type != FI_EP_DGRAM) {
