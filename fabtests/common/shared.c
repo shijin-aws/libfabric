@@ -3711,13 +3711,11 @@ int ft_parse_api_opts(int op, char *optarg, struct fi_info *hints,
 			opts->rma_op = FT_RMA_READ;
 		} else if (!strcasecmp(optarg, "writedata")) {
 			hints->caps |= FI_WRITE | FI_REMOTE_WRITE;
-			hints->mode |= FI_RX_CQ_DATA;
 			hints->domain_attr->cq_data_size = 4;
 			opts->rma_op = FT_RMA_WRITEDATA;
 			opts->cqdata_op = FT_CQDATA_WRITEDATA;
 			cq_attr.format = FI_CQ_FORMAT_DATA;
 		} else if (!strcasecmp(optarg, "senddata")) {
-			hints->mode |= FI_RX_CQ_DATA;
 			hints->domain_attr->cq_data_size = 4;
 			opts->cqdata_op = FT_CQDATA_SENDDATA;
 			cq_attr.format = FI_CQ_FORMAT_DATA;
