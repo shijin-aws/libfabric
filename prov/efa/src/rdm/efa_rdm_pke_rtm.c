@@ -192,6 +192,12 @@ ssize_t efa_rdm_pke_proc_matched_rtm(struct efa_rdm_pke *pkt_entry)
 	rxe = pkt_entry->ope;
 	assert(rxe && rxe->state == EFA_RDM_RXE_MATCHED);
 
+	/**
+	 * Since the rxe is now matched, we need to clean the unexp_pkt
+	 * since the pkts are now processed.
+	 */
+	rxe->unexp_pkt = NULL;
+
 	efa_rdm_tracepoint(rx_pke_proc_matched_msg_begin, (size_t) pkt_entry, pkt_entry->payload_size, rxe->msg_id, (size_t) rxe->cq_entry.op_context, rxe->total_len);
 	if (!rxe->peer) {
 		rxe->addr = pkt_entry->addr;

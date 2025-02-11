@@ -101,7 +101,8 @@ static int efa_rdm_srx_discard(struct fi_peer_rx_entry *peer_rxe)
 	EFA_WARN(FI_LOG_EP_CTRL,
 		"Discarding unmatched unexpected rxe: %p pkt_entry %p\n",
 		rxe, rxe->unexp_pkt);
-	efa_rdm_pke_release_rx(rxe->unexp_pkt);
+	efa_rdm_pke_release_rx_list(rxe->unexp_pkt);
+	rxe->unexp_pkt = NULL;
 	efa_rdm_rxe_release_internal(rxe);
 	return FI_SUCCESS;
 }
