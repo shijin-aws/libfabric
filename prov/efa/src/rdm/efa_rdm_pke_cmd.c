@@ -521,6 +521,9 @@ void efa_rdm_pke_handle_tx_error(struct efa_rdm_pke *pkt_entry, int prov_errno)
 						  &efa_rdm_ep_domain(ep)->ope_queued_list);
 			}
 		} else {
+			EFA_WARN(FI_LOG_CQ,
+				 "receiver hit tx error %s for pkt type %d\n",
+				 efa_strerror(prov_errno), efa_rdm_pke_get_base_hdr(pkt_entry)->type);
 			efa_rdm_rxe_handle_error(pkt_entry->ope, err, prov_errno);
 			efa_rdm_pke_release_tx(pkt_entry);
 		}
