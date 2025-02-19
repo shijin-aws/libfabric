@@ -157,6 +157,9 @@ void efa_rdm_rxe_release_internal(struct efa_rdm_ope *rxe)
 
 	dlist_remove(&rxe->ep_entry);
 
+	if (efa_rdm_rxe_map_lookup(&rxe->ep->rxe_map, rxe->msg_id, rxe->addr))
+		efa_rdm_rxe_map_remove(&rxe->ep->rxe_map, rxe->msg_id, rxe->peer->efa_fiaddr, rxe);
+
 	for (i = 0; i < rxe->iov_count; i++) {
 		if (rxe->mr[i]) {
 			err = fi_close((struct fid *)rxe->mr[i]);

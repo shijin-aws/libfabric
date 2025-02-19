@@ -7,6 +7,7 @@
 #include "efa_rdm_pke.h"
 #include "efa_rdm_protocol.h"
 #include "efa_rdm_pkt_type.h"
+#include "efa_rdm_pke_rtm.h"
 #include "efa_mr.h"
 
 /**

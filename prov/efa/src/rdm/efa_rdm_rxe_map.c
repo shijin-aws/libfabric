@@ -15,14 +15,14 @@
  * pointer to an RX entry. If such RX entry does not exist, return NULL
 */
 struct efa_rdm_ope *efa_rdm_rxe_map_lookup(struct efa_rdm_rxe_map *rxe_map,
-					   struct efa_rdm_pke *pkt_entry)
+					   uint64_t msg_id, fi_addr_t addr)
 {
 	struct efa_rdm_rxe_map_entry *entry = NULL;
 	struct efa_rdm_rxe_map_key key;
 
 	memset(&key, 0, sizeof(key));
-	key.msg_id = efa_rdm_pke_get_rtm_msg_id(pkt_entry);
-	key.addr = pkt_entry->addr;
+	key.msg_id = msg_id;
+	key.addr = addr;
 	HASH_FIND(hh, rxe_map->head, &key, sizeof(struct efa_rdm_rxe_map_key), entry);
 	return entry ? entry->rxe : NULL;
 }
@@ -39,22 +39,22 @@ struct efa_rdm_ope *efa_rdm_rxe_map_lookup(struct efa_rdm_rxe_map *rxe_map,
  * @param[in]		rxe		RX entry
 */
 void efa_rdm_rxe_map_insert(struct efa_rdm_rxe_map *rxe_map,
-			    struct efa_rdm_pke *pkt_entry,
+			    uint64_t msg_id, fi_addr_t addr,
 			    struct efa_rdm_ope *rxe)
 {
 	struct efa_rdm_rxe_map_entry *entry;
 
-	entry = ofi_buf_alloc(pkt_entry->ep->map_entry_pool);
+	entry = ofi_buf_alloc(rxe->ep->map_entry_pool);
 	if (OFI_UNLIKELY(!entry)) {
 		EFA_WARN(FI_LOG_CQ,
 			"Map entries for medium size message exhausted.\n");
-		efa_base_ep_write_eq_error(&pkt_entry->ep->base_ep, FI_ENOBUFS, FI_EFA_ERR_RXE_POOL_EXHAUSTED);
+		efa_base_ep_write_eq_error(&rxe->ep->base_ep, FI_ENOBUFS, FI_EFA_ERR_RXE_POOL_EXHAUSTED);
 		return;
 	}
 
 	memset(&entry->key, 0, sizeof(entry->key));
-	entry->key.msg_id = efa_rdm_pke_get_rtm_msg_id(pkt_entry);
-	entry->key.addr = pkt_entry->addr;
+	entry->key.msg_id = msg_id;
+	entry->key.addr = addr;
 
 #if ENABLE_DEBUG
 	{
