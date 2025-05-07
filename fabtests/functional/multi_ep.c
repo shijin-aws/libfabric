@@ -47,6 +47,7 @@
 
 #include "shared.h"
 #include "hmem.h"
+#include <pthread.h>
 
 static struct fid_ep **eps;
 static char **send_bufs, **recv_bufs;
@@ -67,6 +68,8 @@ enum {
 	LONG_OPT_SHARED_AV,
 	LONG_OPT_SHARED_CQ,
 };
+
+pthread_t thread1, thread2;
 
 static void free_ep_res()
 {
@@ -285,12 +288,46 @@ static int sync_all(void)
 	return FI_SUCCESS;
 }
 
+static void *post_sends(void *context)
+{
+	int i, ret;
+	size_t len;
+
+	printf("Thread 1: Send RMA info to %d remote EPs\n", num_eps - start_idx);
+	for (i = 1; i < num_eps; i++) {
+		len = opts.transfer_size;
+
+		printf("post send for ep %d \n", i);
+		ret = ep_post_tx(i, len);
+		if (ret) {
+			FT_PRINTERR("fi_send", ret);
+			return NULL;
+		}
+	}
+
+	return NULL;
+}
+
+static void *close_first_av(void *context)
+{
+	/* Now close the first ep and destroy the av */
+	printf("Thread 2: Close the first ep and destroy av\n");
+	FT_CLOSE_FID(eps[0]);
+	printf("ep close finishes\n");
+	if (!shared_av)
+		FT_CLOSE_FID(avs[0]);
+
+	return NULL;
+}
+
 static int do_sends(void)
 {
 	char temp[FT_MAX_CTRL_MSG];
 	struct fi_rma_iov *rma_iov = (struct fi_rma_iov *) temp;
 	int i, ret, cq_read_idx;
 	size_t key_size, len;
+
+	len = opts.transfer_size;
 
 	for (i = 0; i < num_eps; i++) {
 		ret = ep_post_rx(i);
@@ -300,9 +337,6 @@ static int do_sends(void)
 		}
 	}
 
-	memset(peer_iovs, 0, sizeof(*peer_iovs) * num_eps);
-
-	printf("Send RMA info to %d remote EPs\n", num_eps - start_idx);
 	for (i = 0; i < num_eps; i++) {
 		len = opts.transfer_size;
 		ret = ft_fill_rma_info(recv_mrs[i], recv_bufs[i], rma_iov,
@@ -314,24 +348,23 @@ static int do_sends(void)
 				      rma_iov, len);
 		if (ret)
 			return ret;
-
-		printf("post send for ep %d \n", i);
-		ret = ep_post_tx(i, len);
-		if (ret) {
-			FT_PRINTERR("fi_send", ret);
-			return ret;
-		}
 	}
 
-	cq_read_idx = shared_cq ? 0 : i;
+	memset(peer_iovs, 0, sizeof(*peer_iovs) * num_eps);
 
-	/* Now close the first ep and remove the av */
-	printf("Close the first ep and remove it from av\n");
-	FT_CLOSE_FID(eps[0]);
-	printf("ep close finishes\n");
-	if (!shared_av)
-		FT_CLOSE_FID(avs[0]);
+	ret = pthread_create(&thread1, NULL, post_sends, NULL);
+	if (ret)
+		printf("thread 1: post_sends create failed: %d\n", ret);
+
+	ret = pthread_create(&thread2, NULL, close_first_av, NULL);
+	if (ret)
+		printf("thread 2: close_first_av create failed: %d\n", ret);
+
+	pthread_join(thread1, NULL);
+    pthread_join(thread2, NULL);
+
 	start_idx = 1;
+	cq_read_idx = shared_cq ? 0 : i;
 
 	for (i = start_idx; i < num_eps; i++) {
 		printf("waiting completion from rx cq \n");
