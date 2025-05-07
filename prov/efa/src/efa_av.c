@@ -163,16 +163,21 @@ static inline int efa_av_is_valid_address(struct efa_ep_addr *addr)
 static
 struct efa_ah *efa_ah_alloc(struct efa_av *av, const uint8_t *gid)
 {
-	struct ibv_pd *ibv_pd = av->domain->ibv_pd;
+	struct efa_device *device = av->domain->device;
+	struct ibv_pd *ibv_pd = device->ibv_pd;
 	struct efa_ah *efa_ah;
 	struct ibv_ah_attr ibv_ah_attr = { 0 };
 	struct efadv_ah_attr efa_ah_attr = { 0 };
 	int err;
 
 	efa_ah = NULL;
-	HASH_FIND(hh, av->ah_map, gid, EFA_GID_LEN, efa_ah);
+
+	ofi_genlock_lock(&device->lock);
+	HASH_FIND(hh, device->ah_map, gid, EFA_GID_LEN, efa_ah);
+
 	if (efa_ah) {
 		efa_ah->refcnt += 1;
+		ofi_genlock_unlock(&device->lock);
 		return efa_ah;
 	}
 
@@ -180,6 +185,7 @@ struct efa_ah *efa_ah_alloc(struct efa_av *av, const uint8_t *gid)
 	if (!efa_ah) {
 		errno = FI_ENOMEM;
 		EFA_WARN(FI_LOG_AV, "cannot allocate memory for efa_ah\n");
+		ofi_genlock_unlock(&device->lock);
 		return NULL;
 	}
 
@@ -189,6 +195,7 @@ struct efa_ah *efa_ah_alloc(struct efa_av *av, const uint8_t *gid)
 	efa_ah->ibv_ah = ibv_create_ah(ibv_pd, &ibv_ah_attr);
 	if (!efa_ah->ibv_ah) {
 		EFA_WARN(FI_LOG_AV, "ibv_create_ah failed! errno: %d\n", errno);
+		ofi_genlock_unlock(&device->lock);
 		goto err_free_efa_ah;
 	}
 
@@ -196,13 +203,15 @@ struct efa_ah *efa_ah_alloc(struct efa_av *av, const uint8_t *gid)
 	if (err) {
 		errno = err;
 		EFA_WARN(FI_LOG_AV, "efadv_query_ah failed! err: %d\n", err);
+		ofi_genlock_unlock(&device->lock);
 		goto err_destroy_ibv_ah;
 	}
 
 	efa_ah->refcnt = 1;
 	efa_ah->ahn = efa_ah_attr.ahn;
 	memcpy(efa_ah->gid, gid, EFA_GID_LEN);
-	HASH_ADD(hh, av->ah_map, gid, EFA_GID_LEN, efa_ah);
+	HASH_ADD(hh, device->ah_map, gid, EFA_GID_LEN, efa_ah);
+	ofi_genlock_unlock(&device->lock);
 	return efa_ah;
 
 err_destroy_ibv_ah:
@@ -222,21 +231,25 @@ static
 void efa_ah_release(struct efa_av *av, struct efa_ah *ah)
 {
 	int err;
+	struct efa_device *device = av->domain->device;
+
 #if ENABLE_DEBUG
 	struct efa_ah *tmp;
 
-	HASH_FIND(hh, av->ah_map, ah->gid, EFA_GID_LEN, tmp);
+	ofi_genlock_lock(&device->lock);
+	HASH_FIND(hh, device->ah_map, ah->gid, EFA_GID_LEN, tmp);
 	assert(tmp == ah);
 #endif
 	assert(ah->refcnt > 0);
 	ah->refcnt -= 1;
 	if (ah->refcnt == 0) {
-		HASH_DEL(av->ah_map, ah);
+		HASH_DEL(device->ah_map, ah);
 		err = ibv_destroy_ah(ah->ibv_ah);
 		if (err)
 			EFA_WARN(FI_LOG_AV, "ibv_destroy_ah failed! err=%d\n", err);
 		free(ah);
 	}
+	ofi_genlock_unlock(&device->lock);
 }
 
 /**

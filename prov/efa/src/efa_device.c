@@ -21,6 +21,7 @@
 #include "efa.h"
 #include "efa_device.h"
 #include "efa_prov_info.h"
+#include "efa_av.h"
 
 #ifdef _WIN32
 #include "efawin.h"
@@ -92,6 +93,8 @@ int efa_device_construct(struct efa_device *efa_device,
 		goto err_close;
 	}
 
+	efa_device->ah_map = NULL;
+	ofi_genlock_init(&efa_device->lock, OFI_LOCK_MUTEX);
 #if HAVE_RDMA_SIZE
 	efa_device->max_rdma_size = efa_device->efa_attr.max_rdma_size;
 	efa_device->device_caps = efa_device->efa_attr.device_caps;
@@ -152,6 +155,21 @@ static void efa_device_destruct(struct efa_device *device)
 
 	device->ibv_pd = NULL;
 
+	/* Clean up domain-level ah_map if any entries remain */
+	ofi_genlock_lock(&device->lock);
+	if (device->ah_map) {
+		struct efa_ah *ah_entry, *tmp;
+		EFA_WARN(FI_LOG_DOMAIN, "AH map not empty during device close! Cleaning up ...\n");
+		HASH_ITER(hh, device->ah_map, ah_entry, tmp) {
+			int err = ibv_destroy_ah(ah_entry->ibv_ah);
+			if (err)
+				EFA_WARN(FI_LOG_DOMAIN, "ibv_destroy_ah failed during cleanup! err=%d\n", err);
+			HASH_DEL(device->ah_map, ah_entry);
+			free(ah_entry);
+		}
+	}
+	ofi_genlock_unlock(&device->lock);
+
 	if (device->ibv_ctx) {
 		err = ibv_close_device(device->ibv_ctx);
 		if (err)
@@ -159,6 +177,7 @@ static void efa_device_destruct(struct efa_device *device)
 			               err);
 	}
 
+	ofi_genlock_destroy(&device->lock);
 	device->ibv_ctx = NULL;
 }
 
