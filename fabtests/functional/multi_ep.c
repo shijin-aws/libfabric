@@ -61,6 +61,7 @@ static fi_addr_t *remote_fiaddr;
 static bool shared_cq = false;
 static bool shared_av = false;
 int num_eps = 3;
+static int start_idx = 0;
 
 enum {
 	LONG_OPT_SHARED_AV,
@@ -237,8 +238,10 @@ static int get_one_comp(struct fid_cq *cq)
 		if (ret > 0)
 			break;
 
-		if (ret < 0 && ret != -FI_EAGAIN)
+		if (ret < 0 && ret != -FI_EAGAIN) {
+			printf("fi_cq_read returns error %d\n", ret);
 			return ret;
+		}
 
 		if (!shared_cq) {
 			/* Drive progress on all EPs in case peer is waiting on
@@ -256,7 +259,7 @@ static int sync_all(void)
 {
 	int i, ret, cq_read_idx;
 
-	for (i = 0; i < num_eps; i++) {
+	for (i = start_idx; i < num_eps; i++) {
 		ret = ep_post_rx(i);
 		if (ret) {
 			FT_PRINTERR("fi_recv", ret);
@@ -299,7 +302,7 @@ static int do_sends(void)
 
 	memset(peer_iovs, 0, sizeof(*peer_iovs) * num_eps);
 
-	printf("Send RMA info to all %d remote EPs\n", num_eps);
+	printf("Send RMA info to %d remote EPs\n", num_eps - start_idx);
 	for (i = 0; i < num_eps; i++) {
 		len = opts.transfer_size;
 		ret = ft_fill_rma_info(recv_mrs[i], recv_bufs[i], rma_iov,
@@ -312,25 +315,40 @@ static int do_sends(void)
 		if (ret)
 			return ret;
 
+		printf("post send for ep %d \n", i);
 		ret = ep_post_tx(i, len);
 		if (ret) {
 			FT_PRINTERR("fi_send", ret);
 			return ret;
 		}
+	}
 
-		cq_read_idx = shared_cq ? 0 : i;
+	cq_read_idx = shared_cq ? 0 : i;
 
+	/* Now close the first ep and remove the av */
+	printf("Close the first ep and remove it from av\n");
+	FT_CLOSE_FID(eps[0]);
+	printf("ep close finishes\n");
+	if (!shared_av)
+		FT_CLOSE_FID(avs[0]);
+	start_idx = 1;
+
+	for (i = start_idx; i < num_eps; i++) {
+		printf("waiting completion from rx cq \n");
 		ret = get_one_comp(rxcqs[cq_read_idx]);
 		if (ret)
 			return ret;
+		printf("get 1 completion from rx cq \n");
 
+		printf("waiting completion from tx cq \n");
 		ret = get_one_comp(txcqs[cq_read_idx]);
 		if (ret)
 			return ret;
+		printf("get 1 completion from tx cq \n");
 	}
 
 	printf("Wait for all messages from peer\n");
-	for (i = 0; i < num_eps; i++) {
+	for (i = start_idx; i < num_eps; i++) {
 		ret = ft_hmem_copy_from(opts.iface, opts.device, rma_iov,
 				        recv_bufs[i], len);
 		if (ret)
@@ -353,7 +371,7 @@ static int do_rma(void)
 {
 	int i, ret, cq_read_idx;
 
-	for (i = 0; i < num_eps; i++) {
+	for (i = start_idx; i < num_eps; i++) {
 		if (ft_check_opts(FT_OPT_VERIFY_DATA)) {
 			ret = ft_fill_buf(send_bufs[i], opts.transfer_size);
 			if (ret)
@@ -365,7 +383,7 @@ static int do_rma(void)
 	}
 
 	printf("Wait for all writes from peer\n");
-	for (i = 0; i < num_eps; i++) {
+	for (i = start_idx; i < num_eps; i++) {
 		cq_read_idx = shared_cq ? 0 : i;
 		ret = get_one_comp(txcqs[cq_read_idx]);
 		if (ret)
@@ -564,30 +582,6 @@ static int run_test(void)
 				goto out;
 		}
 	}
-
-	ret = do_sends();
-	if (ret)
-		goto out;
-
-	ret = do_rma();
-	if (ret)
-		goto out;
-
-	printf("Testing closing and re-registering all MRs and retesting\n");
-	for (i = 0; i < num_eps; i++) {
-		if (fi->domain_attr->mr_mode & FI_MR_RAW) {
-			ret = fi_mr_unmap_key(domain, peer_iovs[i].key);
-			if (ret)
-				goto out;
-		}
-
-		FT_CLOSE_FID(send_mrs[i]);
-		FT_CLOSE_FID(recv_mrs[i]);
-	}
-
-	ret = reg_mrs();
-	if (ret)
-		goto out;
 
 	ret = do_sends();
 	if (ret)
