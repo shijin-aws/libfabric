@@ -44,9 +44,11 @@ enum {
 struct thread_context {
 	int idx;
 	pthread_t thread;
+	int num_cqes;
 };
 
-struct thread_context *contexts;
+struct thread_context *contexts_ep;
+struct thread_context *contexts_cq;
 
 static void free_ep_res()
 {
@@ -300,22 +302,61 @@ static void *close_first_av(void *context)
 	return NULL;
 }
 
-static int do_sends(void)
+static void *poll_tx_cq(void *context)
 {
-	char temp[FT_MAX_CTRL_MSG];
-	struct fi_rma_iov *rma_iov = (struct fi_rma_iov *) temp;
-	int i, ret, cq_read_idx;
-	size_t key_size, len;
+	int i, ret;
+	int num_cqes = 0;
 
-	len = opts.transfer_size;
+	i = ((struct thread_context *) context)->idx;
+
+	printf("Client: thread %d polling tx cq for %d cqes\n", i, ((struct thread_context *) context)->num_cqes);
+
+	while (num_cqes < ((struct thread_context *) context)->num_cqes) {
+		
+		ret = get_one_comp(txcqs[i]);
+		if (ret)
+			return NULL;
+		num_cqes++;
+		printf("Client: thread %d get %d completion from tx cq \n", i, num_cqes);
+	}
+
+	return NULL;
+}
+
+static int run_server(void)
+{
+	int i, ret, cq_read_idx;
 
 	for (i = 0; i < num_eps; i++) {
+		printf("Server: posting recv to ep %d\n", i);
 		ret = ep_post_rx(i);
 		if (ret) {
 			FT_PRINTERR("fi_recv", ret);
 			return ret;
 		}
 	}
+
+	printf("Server: wait for completions\n");
+	for (i = 0; i < num_eps; i++) {
+		cq_read_idx = shared_cq ? 0 : i;
+		ret = get_one_comp(rxcqs[cq_read_idx]);
+		if (ret)
+			return ret;
+		printf("Server: Get %d completions from rx cq\n", i);
+	}
+
+	printf("Server: PASSED multi ep recvs\n");
+	return FI_SUCCESS;
+}
+
+static int run_client(void)
+{
+	char temp[FT_MAX_CTRL_MSG];
+	struct fi_rma_iov *rma_iov = (struct fi_rma_iov *) temp;
+	int i, ret;
+	size_t key_size, len;
+
+	len = opts.transfer_size;
 
 	for (i = 0; i < num_eps; i++) {
 		len = opts.transfer_size;
@@ -332,171 +373,53 @@ static int do_sends(void)
 
 	memset(peer_iovs, 0, sizeof(*peer_iovs) * num_eps);
 
-	contexts = calloc(num_eps,  sizeof(struct thread_context));
-	for (i=0; i< num_eps; i++)
-		contexts[i].idx = i;
+	contexts_ep = calloc(num_eps,  sizeof(struct thread_context));
+	contexts_cq = calloc(num_eps,  sizeof(struct thread_context));
 
-	for (i = 1; i < num_eps; i++) {
-		ret = pthread_create(&contexts[i].thread, NULL, post_sends,  &contexts[i]);
-		if (ret)
-			printf("thread %d: post_sends create failed: %d\n", i, ret);
+	for (i=0; i< num_eps; i++) {
+		contexts_ep[i].idx = i;
+		contexts_cq[i].idx = i;
+		contexts_cq[i].num_cqes = 1;
 	}
 
-	ret = pthread_create(&contexts[0].thread, NULL, close_first_av, &contexts[0]);
-	if (ret)
-		printf("thread 0: close_first_av create failed: %d\n", ret);
+	if (shared_cq)
+		contexts_cq[0].num_cqes = num_eps;
+
+
+	if (!shared_cq) {
+		for (i = 0; i < num_eps; i++) {
+			ret = pthread_create(&contexts_cq[i].thread, NULL, poll_tx_cq,  &contexts_cq[i]);
+			if (ret)
+				printf("Client: thread %d poll_tx_cq create failed: %d\n", i, ret);
+		}
+	} else {
+		pthread_create(&contexts_cq[0].thread, NULL, poll_tx_cq,  &contexts_cq[0]);
+	}
+
+	for (i = 0; i < num_eps; i++) {
+		ret = pthread_create(&contexts_ep[i].thread, NULL, post_sends,  &contexts_ep[i]);
+		if (ret)
+			printf("Client: thread %d post_sends create failed: %d\n", i, ret);
+	}
+
+	//ret = pthread_create(&contexts_ep[0].thread, NULL, close_first_av, &contexts_ep[0]);
+	//if (ret)
+	//	printf("Client: thread 0 close_first_av create failed: %d\n", ret);
+
+	
+
+	if (!shared_cq) {
+		for (i = 0; i < num_eps; i++)
+			pthread_join(contexts_cq[i].thread, NULL);
+	} else {
+		pthread_join(contexts_cq[0].thread, NULL);
+	}
 
 	for (i=0; i<num_eps; i++)
-		pthread_join(contexts[i].thread, NULL);
+		pthread_join(contexts_ep[i].thread, NULL);
 
-
-	start_idx = 1;
-	cq_read_idx = shared_cq ? 0 : i;
-
-	for (i = start_idx; i < num_eps; i++) {
-		printf("waiting completion from rx cq \n");
-		ret = get_one_comp(rxcqs[cq_read_idx]);
-		if (ret)
-			return ret;
-		printf("get 1 completion from rx cq \n");
-
-		printf("waiting completion from tx cq \n");
-		ret = get_one_comp(txcqs[cq_read_idx]);
-		if (ret)
-			return ret;
-		printf("get 1 completion from tx cq \n");
-	}
-
-	printf("Wait for all messages from peer\n");
-	for (i = start_idx; i < num_eps; i++) {
-		ret = ft_hmem_copy_from(opts.iface, opts.device, rma_iov,
-				        recv_bufs[i], len);
-		if (ret)
-			return ret;
-
-		ret = ft_get_rma_info(rma_iov, &peer_iovs[i], key_size);
-		if (ret)
-			return ret;
-	}
-
-	ret = sync_all();
-	if (ret)
-		return ret;
-
-	printf("PASSED multi ep sends\n");
+	printf("Client: PASSED multi ep sends\n");
 	return 0;
-}
-
-static int do_rma(void)
-{
-	int i, ret, cq_read_idx;
-
-	for (i = start_idx; i < num_eps; i++) {
-		if (ft_check_opts(FT_OPT_VERIFY_DATA)) {
-			ret = ft_fill_buf(send_bufs[i], opts.transfer_size);
-			if (ret)
-				return ret;
-		}
-		ret = ep_post_write(i);
-		if (ret)
-			return ret;
-	}
-
-	printf("Wait for all writes from peer\n");
-	for (i = start_idx; i < num_eps; i++) {
-		cq_read_idx = shared_cq ? 0 : i;
-		ret = get_one_comp(txcqs[cq_read_idx]);
-		if (ret)
-			return ret;
-	}
-
-	ret = sync_all();
-	if (ret)
-		return ret;
-
-	if (ft_check_opts(FT_OPT_VERIFY_DATA)) {
-		for (i = 0; i < num_eps; i++) {
-			ret = ft_check_buf(recv_bufs[i], opts.transfer_size);
-			if (ret)
-				return ret;
-		}
-		printf("Data check OK\n");
-	}
-
-	printf("PASSED multi ep writes\n");
-	return 0;
-}
-
-static int setup_client_ep(int idx)
-{
-	int ret, av_bind_idx = idx, cq_bind_idx = idx;
-
-	if (shared_cq)
-		cq_bind_idx = 0;
-
-	if (shared_av)
-		av_bind_idx = 0;
-
-	ret = fi_endpoint(domain, fi, &eps[idx], NULL);
-	if (ret) {
-		FT_PRINTERR("fi_endpoint", ret);
-		return ret;
-	}
-
-	ret = ft_alloc_ep_res(fi, &txcqs[idx], &rxcqs[idx], NULL, NULL, NULL, &avs[idx]);
-	if (ret)
-		return ret;
-
-	ret = ft_enable_ep(eps[idx], eq, avs[av_bind_idx], txcqs[cq_bind_idx], rxcqs[cq_bind_idx],
-			   NULL, NULL, NULL);
-	if (ret)
-		return ret;
-
-	ret = ft_connect_ep(eps[idx], eq, fi->dest_addr);
-	if (ret)
-		return ret;
-
-	return 0;
-}
-
-static int setup_server_ep(int idx)
-{
-	int ret, av_bind_idx = idx, cq_bind_idx = idx;
-
-	if (shared_cq)
-		cq_bind_idx = 0;
-
-	if (shared_av)
-		av_bind_idx = 0;
-
-	ret = ft_retrieve_conn_req(eq, &fi);
-	if (ret)
-		goto failed_accept;
-
-	ret = fi_endpoint(domain, fi, &eps[idx], NULL);
-	if (ret) {
-		FT_PRINTERR("fi_endpoint", ret);
-		goto failed_accept;
-	}
-
-	ret = ft_alloc_ep_res(fi, &txcqs[idx], &rxcqs[idx], NULL, NULL, NULL, &avs[idx]);
-	if (ret)
-		return ret;
-
-	ret = ft_enable_ep(eps[idx], eq, avs[av_bind_idx], txcqs[cq_bind_idx], rxcqs[cq_bind_idx],
-			   NULL, NULL, NULL);
-	if (ret)
-		goto failed_accept;
-
-	ret = ft_accept_connection(eps[idx], eq);
-	if (ret)
-		goto failed_accept;
-
-	return 0;
-
-failed_accept:
-	fi_reject(pep, fi->handle, NULL, 0);
-	return ret;
 }
 
 static int setup_av_ep(int idx)
@@ -544,6 +467,18 @@ static int enable_ep(int idx)
 	return 0;
 }
 
+static int set_up_client(int i) {
+	int ret;
+
+	ret = setup_av_ep(i);
+	if (ret)
+		return ret;
+
+	ret = enable_ep(i);
+	if (ret)
+		return ret;
+}
+
 static int run_test(void)
 {
 	int i, ret;
@@ -570,20 +505,22 @@ static int run_test(void)
 		goto out;
 
 	for (i = 0; i < num_eps; i++) {
-		if (hints->ep_attr->type != FI_EP_MSG) {
-			ret = enable_ep(i);
-			if (ret)
-				goto out;
-		}
+		ret = enable_ep(i);
+		if (ret)
+			goto out;
 	}
 
-	ret = do_sends();
+	if (opts.dst_addr)
+		ret = run_client();
+	else
+		ret = run_server();
+
 	if (ret)
 		goto out;
 
-	ret = do_rma();
-	if (ret)
-		goto out;
+	//ret = do_rma();
+	//if (ret)
+	//	goto out;
 
 	ret = ft_finalize_ep(ep);
 out:
@@ -645,6 +582,7 @@ int main(int argc, char **argv)
 	if (optind < argc)
 		opts.dst_addr = argv[optind];
 
+	opts.threading = FI_THREAD_SAFE;
 	hints->caps = FI_MSG | FI_RMA;
 	hints->mode = FI_CONTEXT | FI_CONTEXT2;
 	hints->domain_attr->mr_mode = opts.mr_mode;
