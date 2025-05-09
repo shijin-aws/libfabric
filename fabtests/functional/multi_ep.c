@@ -69,7 +69,12 @@ enum {
 	LONG_OPT_SHARED_CQ,
 };
 
-pthread_t thread1, thread2;
+struct thread_context {
+	int idx;
+	pthread_t thread;
+};
+
+struct thread_context *contexts;
 
 static void free_ep_res()
 {
@@ -290,19 +295,20 @@ static int sync_all(void)
 
 static void *post_sends(void *context)
 {
-	int i, ret;
+	int idx, ret;
 	size_t len;
 
-	printf("Thread 1: Send RMA info to %d remote EPs\n", num_eps - start_idx);
-	for (i = 1; i < num_eps; i++) {
-		len = opts.transfer_size;
+	idx = ((struct thread_context *) context)->idx;
 
-		printf("post send for ep %d \n", i);
-		ret = ep_post_tx(i, len);
-		if (ret) {
-			FT_PRINTERR("fi_send", ret);
-			return NULL;
-		}
+	//printf("Thread %d: Send RMA info to remote EPs\n", i);
+	
+	len = opts.transfer_size;
+
+	printf("Thread %d: post send for ep %d \n", idx, idx);
+	ret = ep_post_tx(idx, len);
+	if (ret) {
+		FT_PRINTERR("fi_send", ret);
+		return NULL;
 	}
 
 	return NULL;
@@ -311,7 +317,9 @@ static void *post_sends(void *context)
 static void *close_first_av(void *context)
 {
 	/* Now close the first ep and destroy the av */
-	printf("Thread 2: Close the first ep and destroy av\n");
+	int idx = ((struct thread_context *) context)->idx;
+
+	printf("Thread %d: Close the first ep and destroy av\n", idx);
 	FT_CLOSE_FID(eps[0]);
 	printf("ep close finishes\n");
 	if (!shared_av)
@@ -352,16 +360,23 @@ static int do_sends(void)
 
 	memset(peer_iovs, 0, sizeof(*peer_iovs) * num_eps);
 
-	ret = pthread_create(&thread1, NULL, post_sends, NULL);
-	if (ret)
-		printf("thread 1: post_sends create failed: %d\n", ret);
+	contexts = calloc(num_eps,  sizeof(struct thread_context));
+	for (i=0; i< num_eps; i++)
+		contexts[i].idx = i;
 
-	ret = pthread_create(&thread2, NULL, close_first_av, NULL);
-	if (ret)
-		printf("thread 2: close_first_av create failed: %d\n", ret);
+	for (i = 1; i < num_eps; i++) {
+		ret = pthread_create(&contexts[i].thread, NULL, post_sends,  &contexts[i]);
+		if (ret)
+			printf("thread %d: post_sends create failed: %d\n", i, ret);
+	}
 
-	pthread_join(thread1, NULL);
-    pthread_join(thread2, NULL);
+	ret = pthread_create(&contexts[0].thread, NULL, close_first_av, &contexts[0]);
+	if (ret)
+		printf("thread 0: close_first_av create failed: %d\n", ret);
+
+	for (i=0; i<num_eps; i++)
+		pthread_join(contexts[i].thread, NULL);
+
 
 	start_idx = 1;
 	cq_read_idx = shared_cq ? 0 : i;
