@@ -32,6 +32,7 @@ bin_PROGRAMS = \
 	functional/fi_multi_mr \
 	functional/fi_rdm_multi_domain \
 	functional/fi_multi_ep \
+	functional/fi_multi_ep_mt \
 	functional/fi_recv_cancel \
 	functional/fi_unexpected_msg \
 	functional/fi_unmap_mem \
@@ -321,6 +322,10 @@ functional_fi_shared_ctx_LDADD = libfabtests.la
 functional_fi_multi_ep_SOURCES = \
 	functional/multi_ep.c
 functional_fi_multi_ep_LDADD = libfabtests.la
+
+functional_fi_multi_ep_mt_SOURCES = \
+	functional/multi_ep_mt.c
+functional_fi_multi_ep_mt_LDADD = libfabtests.la
 
 functional_fi_multi_mr_SOURCES = \
 	functional/multi_mr.c
