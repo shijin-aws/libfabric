@@ -198,7 +198,7 @@ static int get_one_comp(struct fid_cq *cq)
 
 static void *post_sends(void *context)
 {
-	int idx, ret;
+	int idx, ret, i;
 	size_t len;
 	uint32_t sleep_time;
 
@@ -215,11 +215,13 @@ static void *post_sends(void *context)
 		return NULL;
 	}
 
-	printf("Thread %d: post send for ep %d \n", idx, idx);
-	ret = ep_post_tx(idx, len);
-	if (ret) {
-		FT_PRINTERR("fi_send", ret);
-		return NULL;
+	for (i = 0; i < opts.iterations; i++) {
+		printf("Thread %d: post send for ep %d \n", idx, idx);
+		ret = ep_post_tx(idx, len);
+		if (ret) {
+			FT_PRINTERR("fi_send", ret);
+			return NULL;
+		}
 	}
 
 	sleep(1);
@@ -255,7 +257,7 @@ static int run_server(void)
 
 		// posting multiple recv buffers for each ep
 		// so the sent pkts can at least find a match
-	for (j = 0; j < 10 * num_eps; j++) {
+	for (j = 0; j < opts.iterations * num_eps; j++) {
 		printf("Server: posting recv\n", i);
 		ret = ep_post_rx();
 		if (ret) {
