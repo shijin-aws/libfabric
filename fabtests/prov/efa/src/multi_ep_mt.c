@@ -32,6 +32,7 @@ static struct fid_av **avs;
 static fi_addr_t *remote_fiaddr;
 int num_eps = 3;
 static int start_idx = 0;
+char remote_raw_addr[FT_MAX_CTRL_MSG];
 
 
 struct thread_context {
@@ -139,14 +140,14 @@ static int alloc_multi_ep_res()
 	return 0;
 }
 
-static int ep_post_rx(int idx)
+static int ep_post_rx()
 {
 	int ret;
 
 	do {
-		ret = fi_recv(eps[idx], recv_bufs[idx], opts.transfer_size,
-			      recv_descs[idx], FI_ADDR_UNSPEC,
-			      &recv_ctx[idx]);
+		ret = fi_recv(ep, rx_buf, opts.transfer_size,
+			      mr_desc, FI_ADDR_UNSPEC,
+			      &rx_ctx);
 		if (ret == -FI_EAGAIN)
 			(void) fi_cq_read(rxcq, NULL, 0);
 
@@ -204,7 +205,12 @@ static void *post_sends(void *context)
 	//printf("Thread %d: Send RMA info to remote EPs\n", i);
 	
 	len = opts.transfer_size;
-	open_client(idx);
+	printf("Thread %d: opening client \n", idx);
+	ret = open_client(idx);
+	if (ret) {
+		FT_PRINTERR("open client failed! ret: %d\n", ret);
+		return NULL;
+	}
 
 	printf("Thread %d: post send for ep %d \n", idx, idx);
 	ret = ep_post_tx(idx, len);
@@ -248,16 +254,14 @@ static int run_server(void)
 	int i, j, ret;
 	int num_cqes = 0;
 
-	for (i = 0; i < num_eps; i++) {
-		printf("Server: posting recv to ep %d\n", i);
 		// posting multiple recv buffers for each ep
 		// so the sent pkts can at least find a match
-		for (j = 0; j < 10; j++) {
-			ret = ep_post_rx(i);
-			if (ret) {
-				FT_PRINTERR("fi_recv", ret);
-				return ret;
-			}
+	for (j = 0; j < 10 * num_eps; j++) {
+		printf("Server: posting recv\n", i);
+		ret = ep_post_rx();
+		if (ret) {
+			FT_PRINTERR("fi_recv", ret);
+			return ret;
 		}
 	}
 
@@ -330,7 +334,7 @@ static int run_client(void)
 	return 0;
 }
 
-static int setup_av_ep(int idx)
+int open_client(int idx)
 {
 	int ret;
 	struct fi_av_attr av_attr = {0};
@@ -352,37 +356,14 @@ static int setup_av_ep(int idx)
 		return ret;
 	}
 
-	return 0;
-}
-
-static int enable_ep(int idx)
-{
-	int ret, av_bind_idx = idx, cq_bind_idx = idx;
-
-	cq_bind_idx = 0;
-
-	ret = ft_enable_ep(eps[idx], eq, avs[av_bind_idx], txcq, rxcq,
-			   NULL, NULL, NULL);
+	/* ft_enable_ep bind the ep with cq and av before enabling */
+	ret = ft_enable_ep(eps[idx], eq, avs[idx], txcq, rxcq, NULL, NULL, NULL);
 	if (ret)
-		return ret;
+ 		return ret;
 
-	ret = ft_init_av_addr(avs[av_bind_idx], eps[idx], &remote_fiaddr[idx]);
-	if (ret)
-		return ret;
 
-	return 0;
-}
-
-int open_client(int i)
-{
-	int ret;
-
-	printf("opening ep %d, av %d\n", i, i);
-	ret = setup_av_ep(i);
-	if (ret)
-		return ret;
-
-	ret = enable_ep(i);
+	/* Use the same remote addr we got from the persistent receiver ep */
+	ret = ft_av_insert(avs[idx], (void *)remote_raw_addr, 1, &remote_fiaddr[idx], 0, NULL);
 	if (ret)
 		return ret;
 
@@ -396,12 +377,74 @@ void close_client(int i)
 	FT_CLOSE_FID(avs[i]);
 }
 
+int exchange_addresses_oob(struct fid_av *av_ptr, struct fid_ep *ep_ptr,
+	fi_addr_t *remote_addr, void *addr)
+{
+	int ret;
+	size_t addrlen = FT_MAX_CTRL_MSG;
+
+	ret = fi_getname(&ep_ptr->fid, addr, &addrlen);
+	if (ret) {
+		FT_PRINTERR("fi_getname", ret);
+		return ret;
+	}
+
+	ret = ft_sock_send(oob_sock, addr, FT_MAX_CTRL_MSG);
+	if (ret)
+		return ret;
+
+	ret = ft_sock_recv(oob_sock, addr, FT_MAX_CTRL_MSG);
+	if (ret)
+		return ret;
+
+	printf("Get remote raw address %s\n", addr);
+	ret = ft_av_insert(av_ptr, addr, 1, remote_addr, 0, NULL);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+int init_fabric(void)
+{
+	int ret;
+
+	ret = ft_init();
+	if (ret)
+		return ret;
+
+	ret = ft_init_oob();
+	if (ret)
+		return ret;
+
+	ret = ft_getinfo(hints, &fi);
+	if (ret)
+		return ret;
+
+	ret = ft_open_fabric_res();
+	if (ret)
+		return ret;
+
+	ret = ft_alloc_active_res(fi);
+	if (ret)
+		return ret;
+
+	ret = ft_enable_ep_recv();
+	if (ret)
+		return ret;
+
+	/* We want to get the remote raw addr so we use our own OOB exchange function */
+	ret = exchange_addresses_oob(av, ep, &remote_fi_addr, remote_raw_addr);
+	if (ret)
+		return ret;
+}
+
 static int run_test(void)
 {
 	int i, ret;
 
 	opts.av_size = num_eps + 1;
-	ret = ft_init_fabric();
+	ret = init_fabric();
 	if (ret)
 		return ret;
 
@@ -412,22 +455,6 @@ static int run_test(void)
 	ret = reg_mrs();
 	if (ret)
 		goto out;
-
-	/* Create additional endpoints. */
-	if (!opts.dst_addr) {
-		printf("Creating %d EPs\n", num_eps);
-		for (i = 0; i < num_eps; i++) {
-			ret = setup_av_ep(i);
-			if (ret)
-				goto out;
-		}
-
-		for (i = 0; i < num_eps; i++) {
-			ret = enable_ep(i);
-			if (ret)
-				goto out;
-		}
-	}
 
 	if (opts.dst_addr)
 		ret = run_client();
@@ -478,7 +505,7 @@ int main(int argc, char **argv)
 			break;
 		case '?':
 		case 'h':
-			ft_usage(argv[0], "Multi endpoint test");
+			ft_usage(argv[0], "Multi-threading Multi endpoint test");
 			FT_PRINT_OPTS_USAGE("-c <int>",
 				"number of endpoints to create and test (def 3)");
 			FT_PRINT_OPTS_USAGE("-v", "Enable data verification");
