@@ -38,7 +38,8 @@ char remote_raw_addr[FT_MAX_CTRL_MSG];
 struct thread_context {
 	int idx;
 	pthread_t thread;
-	int num_cqes;
+	uint32_t sleep_time;
+
 };
 
 struct thread_context *contexts_ep;
@@ -199,11 +200,13 @@ static void *post_sends(void *context)
 {
 	int idx, ret;
 	size_t len;
+	uint32_t sleep_time;
 
 	idx = ((struct thread_context *) context)->idx;
+	sleep_time = ((struct thread_context *) context)->sleep_time;
 
 	//printf("Thread %d: Send RMA info to remote EPs\n", i);
-	
+	sleep(sleep_time);
 	len = opts.transfer_size;
 	printf("Thread %d: opening client \n", idx);
 	ret = open_client(idx);
@@ -234,11 +237,7 @@ static void *poll_tx_cq(void *context)
 
 	i = ((struct thread_context *) context)->idx;
 
-	printf("Client: thread %d polling tx cq for %d cqes\n", i, ((struct thread_context *) context)->num_cqes);
-
-//	while (num_cqes < ((struct thread_context *) context)->num_cqes) {
 	while (true) {
-		
 		ret = get_one_comp(txcq);
 		if (ret)
 			continue;
@@ -308,9 +307,12 @@ static int run_client(void)
 
 	for (i=0; i< num_eps; i++) {
 		contexts_ep[i].idx = i;
+		if (num_eps > 5 && i > num_eps - 5 )
+			contexts_ep[i].sleep_time = 1;
+		else
+			contexts_ep[i].sleep_time = 0;
 	}
 
-	context_cq.num_cqes = num_eps;
 	context_cq.idx = num_eps + 1;
 
 	pthread_create(&context_cq.thread, NULL, poll_tx_cq,  &context_cq);
