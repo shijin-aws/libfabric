@@ -307,8 +307,10 @@ static int run_client(void)
 
 	for (i=0; i< num_eps; i++) {
 		contexts_ep[i].idx = i;
+		// we let the last 5 threads (eps) join later than the earlier ones
+		// likely after they are closed.
 		if (num_eps > 5 && i > num_eps - 5 )
-			contexts_ep[i].sleep_time = 1;
+			contexts_ep[i].sleep_time = 2;
 		else
 			contexts_ep[i].sleep_time = 0;
 	}
