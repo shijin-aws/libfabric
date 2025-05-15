@@ -463,6 +463,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		opcode = ibv_wc_read_opcode(ibv_cq->ibv_cq_ex);
 		if (ibv_cq->ibv_cq_ex->status) {
 			prov_errno = efa_rdm_cq_get_prov_errno(ibv_cq->ibv_cq_ex);
+			EFA_WARN(FI_LOG_CQ, "Get ibv cq error with wr id %p, prov_errno %d\n", pkt_entry, prov_errno);
 			switch (opcode) {
 			case IBV_WC_SEND: /* fall through */
 			case IBV_WC_RDMA_WRITE: /* fall through */
@@ -490,9 +491,11 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 #if ENABLE_DEBUG
 			ep->send_comps++;
 #endif
+			EFA_WARN(FI_LOG_CQ, "Get send completion for pke %p\n", pkt_entry);
 			efa_rdm_pke_handle_send_completion(pkt_entry);
 			break;
 		case IBV_WC_RECV:
+			EFA_WARN(FI_LOG_CQ, "Get recv completion for pke %p\n", pkt_entry);
 			efa_rdm_cq_handle_recv_completion(ibv_cq, pkt_entry, ep);
 #if ENABLE_DEBUG
 			ep->recv_comps++;

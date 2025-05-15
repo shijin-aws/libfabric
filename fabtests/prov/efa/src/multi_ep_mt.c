@@ -28,18 +28,11 @@ static void **send_descs, **recv_descs;
 static struct fi_rma_iov *peer_iovs;
 static struct fi_context2 *recv_ctx;
 static struct fi_context2 *send_ctx;
-static struct fid_cq **txcqs, **rxcqs;
 static struct fid_av **avs;
 static fi_addr_t *remote_fiaddr;
-static bool shared_cq = false;
-static bool shared_av = false;
 int num_eps = 3;
 static int start_idx = 0;
 
-enum {
-	LONG_OPT_SHARED_AV,
-	LONG_OPT_SHARED_CQ,
-};
 
 struct thread_context {
 	int idx;
@@ -48,7 +41,7 @@ struct thread_context {
 };
 
 struct thread_context *contexts_ep;
-struct thread_context *contexts_cq;
+struct thread_context context_cq;
 
 static void free_ep_res()
 {
@@ -67,13 +60,9 @@ static void free_ep_res()
 	}
 
 	for (i = 0; i < num_eps; i++) {
-		FT_CLOSE_FID(txcqs[i]);
-		FT_CLOSE_FID(rxcqs[i]);
 		FT_CLOSE_FID(avs[i]);
 	}
 
-	free(txcqs);
-	free(rxcqs);
 	free(send_bufs);
 	free(recv_bufs);
 	free(send_mrs);
@@ -127,14 +116,12 @@ static int alloc_multi_ep_res()
 	send_bufs = calloc(num_eps, opts.transfer_size);
 	recv_bufs = calloc(num_eps, opts.transfer_size);
 
-	txcqs = calloc(num_eps, sizeof(*txcqs));
-	rxcqs = calloc(num_eps, sizeof(*rxcqs));
 	avs = calloc(num_eps, sizeof(*avs));
 
 	if (!eps || !remote_fiaddr || !send_bufs || !recv_bufs ||
 	    !send_ctx || !recv_ctx || !send_bufs || !recv_bufs ||
 	    !send_mrs || !recv_mrs || !send_descs || !recv_descs ||
-	    !txcqs || !rxcqs || !peer_iovs)
+	    !peer_iovs)
 		return -FI_ENOMEM;
 
 	for (i = 0; i < num_eps; i++) {
@@ -154,17 +141,14 @@ static int alloc_multi_ep_res()
 
 static int ep_post_rx(int idx)
 {
-	int ret, cq_read_idx = idx;
-
-	if (shared_cq)
-		cq_read_idx = 0;
+	int ret;
 
 	do {
 		ret = fi_recv(eps[idx], recv_bufs[idx], opts.transfer_size,
 			      recv_descs[idx], FI_ADDR_UNSPEC,
 			      &recv_ctx[idx]);
 		if (ret == -FI_EAGAIN)
-			(void) fi_cq_read(rxcqs[cq_read_idx], NULL, 0);
+			(void) fi_cq_read(rxcq, NULL, 0);
 
 	} while (ret == -FI_EAGAIN);
 
@@ -173,37 +157,14 @@ static int ep_post_rx(int idx)
 
 static int ep_post_tx(int idx, size_t len)
 {
-	int ret, cq_read_idx = idx;
-
-	if (shared_cq)
-		cq_read_idx = 0;
+	int ret;
 
 	do {
 		ret = fi_send(eps[idx], send_bufs[idx], len,
 			      send_descs[idx], remote_fiaddr[idx],
 			      &send_ctx[idx]);
 		if (ret == -FI_EAGAIN)
-			(void) fi_cq_read(txcqs[cq_read_idx], NULL, 0);
-
-	} while (ret == -FI_EAGAIN);
-
-	return ret;
-}
-
-static int ep_post_write(int idx)
-{
-	int ret, cq_read_idx = idx;
-
-	if (shared_cq)
-		cq_read_idx = 0;
-
-	do {
-		ret = fi_write(eps[idx], send_bufs[idx], opts.transfer_size,
-			       send_descs[idx], remote_fiaddr[idx],
-			       peer_iovs[idx].addr, peer_iovs[idx].key,
-			       &send_ctx[idx]);
-		if (ret == -FI_EAGAIN)
-			(void) fi_cq_read(txcqs[cq_read_idx], NULL, 0);
+			(void) fi_cq_read(txcq, NULL, 0);
 
 	} while (ret == -FI_EAGAIN);
 
@@ -213,6 +174,9 @@ static int ep_post_write(int idx)
 static int get_one_comp(struct fid_cq *cq)
 {
 	struct fi_cq_err_entry comp;
+	struct fi_cq_err_entry cq_err;
+
+	memset(&cq_err, 0, sizeof(cq_err));
 	int ret, i;
 
 	do {
@@ -222,48 +186,11 @@ static int get_one_comp(struct fid_cq *cq)
 
 		if (ret < 0 && ret != -FI_EAGAIN) {
 			printf("fi_cq_read returns error %d\n", ret);
+			(void) fi_cq_readerr(cq, &cq_err, 0);
 			return ret;
-		}
-
-		if (!shared_cq) {
-			/* Drive progress on all EPs in case peer is waiting on
-			 * different EP pair
-			 */
-			for (i = 0; i < num_eps; i++)
-				(void) fi_cq_read(rxcqs[i], NULL, 0);
 		}
 	} while (1);
 
-	return FI_SUCCESS;
-}
-
-static int sync_all(void)
-{
-	int i, ret, cq_read_idx;
-
-	for (i = start_idx; i < num_eps; i++) {
-		ret = ep_post_rx(i);
-		if (ret) {
-			FT_PRINTERR("fi_recv", ret);
-			return ret;
-		}
-
-		ret = ep_post_tx(i, 0);
-		if (ret) {
-			FT_PRINTERR("fi_send", ret);
-			return ret;
-		}
-
-		cq_read_idx = shared_cq ? 0 : i;
-
-		ret = get_one_comp(txcqs[cq_read_idx]);
-		if (ret)
-			return ret;
-
-		ret = get_one_comp(rxcqs[cq_read_idx]);
-		if (ret)
-			return ret;
-	}
 	return FI_SUCCESS;
 }
 
@@ -277,6 +204,7 @@ static void *post_sends(void *context)
 	//printf("Thread %d: Send RMA info to remote EPs\n", i);
 	
 	len = opts.transfer_size;
+	open_client(idx);
 
 	printf("Thread %d: post send for ep %d \n", idx, idx);
 	ret = ep_post_tx(idx, len);
@@ -285,22 +213,13 @@ static void *post_sends(void *context)
 		return NULL;
 	}
 
+	sleep(1);
+	// exit
+	printf("Thread %d: closing client\n", idx);
+	close_client(idx);
 	return NULL;
 }
 
-static void *close_first_av(void *context)
-{
-	/* Now close the first ep and destroy the av */
-	int idx = ((struct thread_context *) context)->idx;
-
-	printf("Thread %d: Close the first ep and destroy av\n", idx);
-	FT_CLOSE_FID(eps[0]);
-	printf("ep close finishes\n");
-	if (!shared_av)
-		FT_CLOSE_FID(avs[0]);
-
-	return NULL;
-}
 
 static void *poll_tx_cq(void *context)
 {
@@ -311,11 +230,12 @@ static void *poll_tx_cq(void *context)
 
 	printf("Client: thread %d polling tx cq for %d cqes\n", i, ((struct thread_context *) context)->num_cqes);
 
-	while (num_cqes < ((struct thread_context *) context)->num_cqes) {
+//	while (num_cqes < ((struct thread_context *) context)->num_cqes) {
+	while (true) {
 		
-		ret = get_one_comp(txcqs[i]);
+		ret = get_one_comp(txcq);
 		if (ret)
-			return NULL;
+			continue;
 		num_cqes++;
 		printf("Client: thread %d get %d completion from tx cq \n", i, num_cqes);
 	}
@@ -325,24 +245,31 @@ static void *poll_tx_cq(void *context)
 
 static int run_server(void)
 {
-	int i, ret, cq_read_idx;
+	int i, j, ret;
+	int num_cqes = 0;
 
 	for (i = 0; i < num_eps; i++) {
 		printf("Server: posting recv to ep %d\n", i);
-		ret = ep_post_rx(i);
-		if (ret) {
-			FT_PRINTERR("fi_recv", ret);
-			return ret;
+		// posting multiple recv buffers for each ep
+		// so the sent pkts can at least find a match
+		for (j = 0; j < 10; j++) {
+			ret = ep_post_rx(i);
+			if (ret) {
+				FT_PRINTERR("fi_recv", ret);
+				return ret;
+			}
 		}
 	}
 
 	printf("Server: wait for completions\n");
-	for (i = 0; i < num_eps; i++) {
-		cq_read_idx = shared_cq ? 0 : i;
-		ret = get_one_comp(rxcqs[cq_read_idx]);
+	while (true) {
+		//cq_read_idx = shared_cq ? 0 : i;
+		ret = get_one_comp(rxcq);
+		// ignore cq error
 		if (ret)
-			return ret;
-		printf("Server: Get %d completions from rx cq\n", i);
+			continue;
+		num_cqes++;
+		printf("Server: Get %d completions from rx cq\n", num_cqes);
 	}
 
 	printf("Server: PASSED multi ep recvs\n");
@@ -374,27 +301,15 @@ static int run_client(void)
 	memset(peer_iovs, 0, sizeof(*peer_iovs) * num_eps);
 
 	contexts_ep = calloc(num_eps,  sizeof(struct thread_context));
-	contexts_cq = calloc(num_eps,  sizeof(struct thread_context));
 
 	for (i=0; i< num_eps; i++) {
 		contexts_ep[i].idx = i;
-		contexts_cq[i].idx = i;
-		contexts_cq[i].num_cqes = 1;
 	}
 
-	if (shared_cq)
-		contexts_cq[0].num_cqes = num_eps;
+	context_cq.num_cqes = num_eps;
+	context_cq.idx = num_eps + 1;
 
-
-	if (!shared_cq) {
-		for (i = 0; i < num_eps; i++) {
-			ret = pthread_create(&contexts_cq[i].thread, NULL, poll_tx_cq,  &contexts_cq[i]);
-			if (ret)
-				printf("Client: thread %d poll_tx_cq create failed: %d\n", i, ret);
-		}
-	} else {
-		pthread_create(&contexts_cq[0].thread, NULL, poll_tx_cq,  &contexts_cq[0]);
-	}
+	pthread_create(&context_cq.thread, NULL, poll_tx_cq,  &context_cq);
 
 	for (i = 0; i < num_eps; i++) {
 		ret = pthread_create(&contexts_ep[i].thread, NULL, post_sends,  &contexts_ep[i]);
@@ -406,14 +321,7 @@ static int run_client(void)
 	//if (ret)
 	//	printf("Client: thread 0 close_first_av create failed: %d\n", ret);
 
-	
-
-	if (!shared_cq) {
-		for (i = 0; i < num_eps; i++)
-			pthread_join(contexts_cq[i].thread, NULL);
-	} else {
-		pthread_join(contexts_cq[0].thread, NULL);
-	}
+	pthread_join(context_cq.thread, NULL);
 
 	for (i=0; i<num_eps; i++)
 		pthread_join(contexts_ep[i].thread, NULL);
@@ -425,12 +333,12 @@ static int run_client(void)
 static int setup_av_ep(int idx)
 {
 	int ret;
+	struct fi_av_attr av_attr = {0};
 
-	ret = fi_getinfo(FT_FIVERSION, opts.src_addr, NULL, 0, hints, &fi);
-	if (ret) {
-		FT_PRINTERR("fi_getinfo", ret);
-		return ret;
+	if (opts.av_name) {
+		av_attr.name = opts.av_name;
 	}
+	av_attr.count = opts.av_size;
 
 	ret = fi_endpoint(domain, fi, &eps[idx], NULL);
 	if (ret) {
@@ -438,9 +346,11 @@ static int setup_av_ep(int idx)
 		return ret;
 	}
 
-	ret = ft_alloc_ep_res(fi, &txcqs[idx], &rxcqs[idx], NULL, NULL, NULL, &avs[idx]);
-	if (ret)
+	ret = fi_av_open(domain, &av_attr, &avs[idx], NULL);
+	if (ret) {
+		FT_PRINTERR("fi_av_open", ret);
 		return ret;
+	}
 
 	return 0;
 }
@@ -449,13 +359,9 @@ static int enable_ep(int idx)
 {
 	int ret, av_bind_idx = idx, cq_bind_idx = idx;
 
-	if (shared_cq)
-		cq_bind_idx = 0;
+	cq_bind_idx = 0;
 
-	if (shared_av)
-		av_bind_idx = 0;
-
-	ret = ft_enable_ep(eps[idx], eq, avs[av_bind_idx], txcqs[cq_bind_idx], rxcqs[cq_bind_idx],
+	ret = ft_enable_ep(eps[idx], eq, avs[av_bind_idx], txcq, rxcq,
 			   NULL, NULL, NULL);
 	if (ret)
 		return ret;
@@ -467,9 +373,11 @@ static int enable_ep(int idx)
 	return 0;
 }
 
-static int set_up_client(int i) {
+int open_client(int i)
+{
 	int ret;
 
+	printf("opening ep %d, av %d\n", i, i);
 	ret = setup_av_ep(i);
 	if (ret)
 		return ret;
@@ -477,6 +385,15 @@ static int set_up_client(int i) {
 	ret = enable_ep(i);
 	if (ret)
 		return ret;
+
+	return 0;
+}
+
+void close_client(int i)
+{
+	printf("closing ep %d, av %d\n", i, i);
+	FT_CLOSE_FID(eps[i]);
+	FT_CLOSE_FID(avs[i]);
 }
 
 static int run_test(void)
@@ -492,22 +409,24 @@ static int run_test(void)
 	if (ret)
 		return ret;
 
-	/* Create additional endpoints. */
-	printf("Creating %d EPs\n", num_eps);
-	for (i = 0; i < num_eps; i++) {
-		ret = setup_av_ep(i);
-		if (ret)
-			goto out;
-	}
-
 	ret = reg_mrs();
 	if (ret)
 		goto out;
 
-	for (i = 0; i < num_eps; i++) {
-		ret = enable_ep(i);
-		if (ret)
-			goto out;
+	/* Create additional endpoints. */
+	if (!opts.dst_addr) {
+		printf("Creating %d EPs\n", num_eps);
+		for (i = 0; i < num_eps; i++) {
+			ret = setup_av_ep(i);
+			if (ret)
+				goto out;
+		}
+
+		for (i = 0; i < num_eps; i++) {
+			ret = enable_ep(i);
+			if (ret)
+				goto out;
+		}
 	}
 
 	if (opts.dst_addr)
@@ -557,24 +476,12 @@ int main(int argc, char **argv)
 		case 'v':
 			opts.options |= FT_OPT_VERIFY_DATA;
 			break;
-		case 'A':
-			shared_av = true;
-			break;
-		case 'Q':
-			shared_cq = true;
-			break;
 		case '?':
 		case 'h':
 			ft_usage(argv[0], "Multi endpoint test");
 			FT_PRINT_OPTS_USAGE("-c <int>",
 				"number of endpoints to create and test (def 3)");
 			FT_PRINT_OPTS_USAGE("-v", "Enable data verification");
-			FT_PRINT_OPTS_USAGE("-Q",
-				"Share tx/rx cq among endpoints. \n"
-				"By default each ep has its own tx/rx cq");
-			FT_PRINT_OPTS_USAGE("-A",
-				"Share the av among endpoints. \n"
-				"By default each ep has its own av");
 			return EXIT_FAILURE;
 		}
 	}

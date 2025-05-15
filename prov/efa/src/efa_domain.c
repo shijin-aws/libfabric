@@ -594,6 +594,7 @@ void efa_domain_progress_rdm_peers_and_queues(struct efa_domain *domain)
 	 */
 	dlist_foreach_container(&domain->ope_longcts_send_list, struct efa_rdm_ope,
 				ope, entry) {
+		EFA_WARN(FI_LOG_DOMAIN, "iterating over ope %p and ep %p\n", ope, ope->ep);
 		peer = efa_rdm_ep_get_peer(ope->ep, ope->addr);
 		assert(peer);
 		if (peer->flags & EFA_RDM_PEER_IN_BACKOFF)
@@ -623,6 +624,7 @@ void efa_domain_progress_rdm_peers_and_queues(struct efa_domain *domain)
 		if (!(peer->flags & EFA_RDM_PEER_HANDSHAKE_RECEIVED))
 			continue;
 
+		continue;
 		if (ope->window > 0) {
 			ret = efa_rdm_ope_post_send(ope, EFA_RDM_CTSDATA_PKT);
 			if (OFI_UNLIKELY(ret)) {

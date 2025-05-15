@@ -185,6 +185,7 @@ void efa_rdm_pke_handle_cts_sent(struct efa_rdm_pke *pkt_entry)
 
 	ope = pkt_entry->ope;
 	ope->window = efa_rdm_pke_get_cts_hdr(pkt_entry)->recv_length;
+	EFA_WARN(FI_LOG_EP_DATA, "sent cts pkt %p\n", pkt_entry);
 }
 
 void efa_rdm_pke_handle_cts_recv(struct efa_rdm_pke *pkt_entry)
@@ -203,6 +204,7 @@ void efa_rdm_pke_handle_cts_recv(struct efa_rdm_pke *pkt_entry)
 
 	efa_rdm_pke_release_rx(pkt_entry);
 
+	EFA_WARN(FI_LOG_EP_DATA, "get cts pkt %p\n", pkt_entry);
 	if (ope->state != EFA_RDM_OPE_SEND) {
 		ope->state = EFA_RDM_OPE_SEND;
 		dlist_insert_tail(&ope->entry, &efa_rdm_ep_domain(ep)->ope_longcts_send_list);
