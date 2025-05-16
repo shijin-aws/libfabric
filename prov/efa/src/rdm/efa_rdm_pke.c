@@ -416,7 +416,6 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 		} else {
 			ibv_wr_send(qp->ibv_qp_ex);
 		}
-		EFA_WARN(FI_LOG_EP_DATA, "posting send of payload_size %zu\n", pkt_entry->payload_size);
 		if (pkt_entry->pkt_size <= efa_rdm_ep_domain(ep)->device->efa_attr.inline_buf_size &&
 	            !efa_mr_is_hmem((struct efa_mr *)pkt_entry->payload_mr)) {
 			iov_cnt = 1;
