@@ -224,7 +224,7 @@ static void *post_sends(void *context)
 		}
 	}
 
-	sleep(1);
+	//sleep(1);
 	// exit
 	printf("Thread %d: closing client\n", idx);
 	close_client(idx);
