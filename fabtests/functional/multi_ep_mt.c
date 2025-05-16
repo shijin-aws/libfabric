@@ -31,9 +31,10 @@ static struct fi_context2 *send_ctx;
 static struct fid_av **avs;
 static fi_addr_t *remote_fiaddr;
 int num_eps = 3;
-static int start_idx = 0;
 char remote_raw_addr[FT_MAX_CTRL_MSG];
 
+void close_client(int i);
+int open_client(int i);
 
 struct thread_context {
 	int idx;
@@ -179,7 +180,7 @@ static int get_one_comp(struct fid_cq *cq)
 	struct fi_cq_err_entry cq_err;
 
 	memset(&cq_err, 0, sizeof(cq_err));
-	int ret, i;
+	int ret;
 
 	do {
 		ret = fi_cq_read(cq, &comp, 1);
@@ -205,13 +206,12 @@ static void *post_sends(void *context)
 	idx = ((struct thread_context *) context)->idx;
 	sleep_time = ((struct thread_context *) context)->sleep_time;
 
-	//printf("Thread %d: Send RMA info to remote EPs\n", i);
 	sleep(sleep_time);
 	len = opts.transfer_size;
 	printf("Thread %d: opening client \n", idx);
 	ret = open_client(idx);
 	if (ret) {
-		FT_PRINTERR("open client failed! ret: %d\n", ret);
+		FT_PRINTERR("open client failed!\n", ret);
 		return NULL;
 	}
 
@@ -252,13 +252,13 @@ static void *poll_tx_cq(void *context)
 
 static int run_server(void)
 {
-	int i, j, ret;
+	int i, ret;
 	int num_cqes = 0;
 
-		// posting multiple recv buffers for each ep
-		// so the sent pkts can at least find a match
-	for (j = 0; j < opts.iterations * num_eps; j++) {
-		printf("Server: posting recv\n", i);
+	// posting enough recv buffers for each ep
+	// so the sent pkts can at least find a match
+	for (i = 0; i < opts.iterations * num_eps; i++) {
+		printf("Server: posting recv\n");
 		ret = ep_post_rx();
 		if (ret) {
 			FT_PRINTERR("fi_recv", ret);
@@ -268,7 +268,6 @@ static int run_server(void)
 
 	printf("Server: wait for completions\n");
 	while (true) {
-		//cq_read_idx = shared_cq ? 0 : i;
 		ret = get_one_comp(rxcq);
 		// ignore cq error
 		if (ret)
@@ -326,10 +325,6 @@ static int run_client(void)
 		if (ret)
 			printf("Client: thread %d post_sends create failed: %d\n", i, ret);
 	}
-
-	//ret = pthread_create(&contexts_ep[0].thread, NULL, close_first_av, &contexts_ep[0]);
-	//if (ret)
-	//	printf("Client: thread 0 close_first_av create failed: %d\n", ret);
 
 	pthread_join(context_cq.thread, NULL);
 
@@ -403,7 +398,6 @@ int exchange_addresses_oob(struct fid_av *av_ptr, struct fid_ep *ep_ptr,
 	if (ret)
 		return ret;
 
-	printf("Get remote raw address %s\n", addr);
 	ret = ft_av_insert(av_ptr, addr, 1, remote_addr, 0, NULL);
 	if (ret)
 		return ret;
@@ -443,11 +437,13 @@ int init_fabric(void)
 	ret = exchange_addresses_oob(av, ep, &remote_fi_addr, remote_raw_addr);
 	if (ret)
 		return ret;
+
+	return 0;
 }
 
 static int run_test(void)
 {
-	int i, ret;
+	int ret;
 
 	opts.av_size = num_eps + 1;
 	ret = init_fabric();
@@ -469,10 +465,6 @@ static int run_test(void)
 
 	if (ret)
 		goto out;
-
-	//ret = do_rma();
-	//if (ret)
-	//	goto out;
 
 	ret = ft_finalize_ep(ep);
 out:
