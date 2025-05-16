@@ -692,6 +692,7 @@ static void efa_rdm_ep_destroy_buffer_pools(struct efa_rdm_ep *efa_rdm_ep)
 	struct efa_rdm_ope *rxe;
 	struct efa_rdm_ope *txe;
 
+	ofi_genlock_lock(&efa_rdm_ep_domain(efa_rdm_ep)->srx_lock);
 #if ENABLE_DEBUG
 	struct efa_rdm_pke *pkt_entry;
 
@@ -733,6 +734,8 @@ static void efa_rdm_ep_destroy_buffer_pools(struct efa_rdm_ep *efa_rdm_ep)
 			txe);
 		efa_rdm_txe_release(txe);
 	}
+
+	ofi_genlock_unlock(&efa_rdm_ep_domain(efa_rdm_ep)->srx_lock);
 
 	if (efa_rdm_ep->ope_pool)
 		ofi_bufpool_destroy(efa_rdm_ep->ope_pool);
@@ -816,6 +819,8 @@ void efa_rdm_ep_wait_send(struct efa_rdm_ep *efa_rdm_ep)
 {
 	struct efa_cq *tx_cq, *rx_cq;
 
+	ofi_genlock_lock(&efa_rdm_ep_domain(efa_rdm_ep)->srx_lock);
+
 	tx_cq = efa_base_ep_get_tx_cq(&efa_rdm_ep->base_ep);
 	rx_cq = efa_base_ep_get_rx_cq(&efa_rdm_ep->base_ep);
 
@@ -828,6 +833,7 @@ void efa_rdm_ep_wait_send(struct efa_rdm_ep *efa_rdm_ep)
 		efa_domain_progress_rdm_peers_and_queues(efa_rdm_ep_domain(efa_rdm_ep));
 	}
 
+	ofi_genlock_unlock(&efa_rdm_ep_domain(efa_rdm_ep)->srx_lock);
 }
 
 static inline
@@ -902,10 +908,12 @@ static int efa_rdm_ep_close(struct fid *fid)
 	struct dlist_entry *entry, *tmp;
 	struct efa_rdm_ope *rxe;
 	struct util_srx_ctx *srx_ctx;
-	struct efa_domain *efa_domain;
 
 	efa_rdm_ep = container_of(fid, struct efa_rdm_ep, base_ep.util_ep.ep_fid.fid);
-	efa_domain = efa_rdm_ep_domain(efa_rdm_ep);
+
+	EFA_WARN(FI_LOG_EP_CTRL, "Closing ep %p\n", efa_rdm_ep);
+	if (efa_rdm_ep->base_ep.efa_qp_enabled)
+		efa_rdm_ep_wait_send(efa_rdm_ep);
 
 	if (efa_rdm_ep->peer_srx_ep) {
 		/*
@@ -934,11 +942,6 @@ static int efa_rdm_ep_close(struct fid *fid)
 		efa_rdm_ep->peer_srx_ep = NULL;
 	}
 
-	ofi_genlock_lock(&efa_domain->srx_lock);
-	EFA_WARN(FI_LOG_EP_CTRL, "Closing ep %p\n", efa_rdm_ep);
-	if (efa_rdm_ep->base_ep.efa_qp_enabled)
-		efa_rdm_ep_wait_send(efa_rdm_ep);
-
 	/* We need to free the util_ep first to avoid race conditions
 	 * with other threads progressing the cq. */
 	efa_base_ep_close_util_ep(&efa_rdm_ep->base_ep);
@@ -963,7 +966,6 @@ static int efa_rdm_ep_close(struct fid *fid)
 		free(efa_rdm_ep->pke_vec);
 
 	free(efa_rdm_ep);
-	ofi_genlock_unlock(&efa_domain->srx_lock);
 	return retv;
 }
 
