@@ -491,9 +491,11 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 #if ENABLE_DEBUG
 			ep->send_comps++;
 #endif
+			EFA_WARN(FI_LOG_CQ, "Get send completion for pke %p\n", pkt_entry);
 			efa_rdm_pke_handle_send_completion(pkt_entry);
 			break;
 		case IBV_WC_RECV:
+			EFA_WARN(FI_LOG_CQ, "Get recv completion for pke %p\n", pkt_entry);
 			efa_rdm_cq_handle_recv_completion(ibv_cq, pkt_entry, ep);
 #if ENABLE_DEBUG
 			ep->recv_comps++;
