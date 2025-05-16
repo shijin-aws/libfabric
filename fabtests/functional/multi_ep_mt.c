@@ -206,7 +206,10 @@ static void *post_sends(void *context)
 	idx = ((struct thread_context *) context)->idx;
 	sleep_time = ((struct thread_context *) context)->sleep_time;
 
-	sleep(sleep_time);
+	struct timespec ts;
+    ts.tv_nsec = sleep_time;
+
+	nanosleep(&ts, NULL);
 	len = opts.transfer_size;
 	printf("Thread %d: opening client \n", idx);
 	ret = open_client(idx);
@@ -286,6 +289,10 @@ static int run_client(void)
 	struct fi_rma_iov *rma_iov = (struct fi_rma_iov *) temp;
 	int i, ret;
 	size_t key_size, len;
+	// the range of the sleep time (in nanoseconds)
+	int min = 0;
+	int max = 999999999;
+	int sleep_time;
 
 	len = opts.transfer_size;
 
@@ -306,14 +313,15 @@ static int run_client(void)
 
 	contexts_ep = calloc(num_eps,  sizeof(struct thread_context));
 
+	// Seed the random number generator with the current time
+	srand(time(NULL));
+  
+	// Generate a random integer within a specific range
+	
 	for (i=0; i< num_eps; i++) {
 		contexts_ep[i].idx = i;
-		// we let the last 5 threads (eps) join later than the earlier ones
-		// likely after they are closed.
-		if (num_eps > 5 && i > num_eps - 5 )
-			contexts_ep[i].sleep_time = 2;
-		else
-			contexts_ep[i].sleep_time = 0;
+		sleep_time = (rand() % (max - min + 1)) + min;
+		contexts_ep[i].sleep_time = sleep_time;
 	}
 
 	context_cq.idx = num_eps + 1;
