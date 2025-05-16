@@ -39,8 +39,6 @@ int open_client(int i);
 struct thread_context {
 	int idx;
 	pthread_t thread;
-	uint32_t sleep_time;
-
 };
 
 struct thread_context *contexts_ep;
@@ -201,13 +199,16 @@ static void *post_sends(void *context)
 {
 	int idx, ret, i;
 	size_t len;
-	uint32_t sleep_time;
-
-	idx = ((struct thread_context *) context)->idx;
-	sleep_time = ((struct thread_context *) context)->sleep_time;
-
+	// the range of the sleep time (in nanoseconds)
+	int min = 0;
+	int max = 999999999;
+	int sleep_time;
 	struct timespec ts;
-    ts.tv_nsec = sleep_time;
+
+	srand(time(NULL));
+	sleep_time = (rand() % (max - min + 1)) + min;
+	idx = ((struct thread_context *) context)->idx;
+	ts.tv_nsec = sleep_time;
 
 	nanosleep(&ts, NULL);
 	len = opts.transfer_size;
@@ -227,7 +228,10 @@ static void *post_sends(void *context)
 		}
 	}
 
-	//sleep(1);
+	//sleep_time = (rand() % (max - min + 1)) + min;
+	//ts.tv_nsec = sleep_time;
+	//nanosleep(&ts, NULL);
+
 	// exit
 	printf("Thread %d: closing client\n", idx);
 	close_client(idx);
@@ -248,6 +252,9 @@ static void *poll_tx_cq(void *context)
 			continue;
 		num_cqes++;
 		printf("Client: thread %d get %d completion from tx cq \n", i, num_cqes);
+		// This is the maximal number of sends client will do
+		if (num_cqes == num_eps * opts.iterations)
+			break;
 	}
 
 	return NULL;
@@ -277,6 +284,9 @@ static int run_server(void)
 			continue;
 		num_cqes++;
 		printf("Server: Get %d completions from rx cq\n", num_cqes);
+		// This is the maximal number of sends client will do
+		if (num_cqes == num_eps * opts.iterations)
+			break;
 	}
 
 	printf("Server: PASSED multi ep recvs\n");
@@ -289,10 +299,6 @@ static int run_client(void)
 	struct fi_rma_iov *rma_iov = (struct fi_rma_iov *) temp;
 	int i, ret;
 	size_t key_size, len;
-	// the range of the sleep time (in nanoseconds)
-	int min = 0;
-	int max = 999999999;
-	int sleep_time;
 
 	len = opts.transfer_size;
 
@@ -313,15 +319,8 @@ static int run_client(void)
 
 	contexts_ep = calloc(num_eps,  sizeof(struct thread_context));
 
-	// Seed the random number generator with the current time
-	srand(time(NULL));
-  
-	// Generate a random integer within a specific range
-	
 	for (i=0; i< num_eps; i++) {
 		contexts_ep[i].idx = i;
-		sleep_time = (rand() % (max - min + 1)) + min;
-		contexts_ep[i].sleep_time = sleep_time;
 	}
 
 	context_cq.idx = num_eps + 1;
