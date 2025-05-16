@@ -228,9 +228,9 @@ static void *post_sends(void *context)
 		}
 	}
 
-	//sleep_time = (rand() % (max - min + 1)) + min;
-	//ts.tv_nsec = sleep_time;
-	//nanosleep(&ts, NULL);
+	sleep_time = (rand() % (max - min + 1)) + min;
+	ts.tv_nsec = sleep_time;
+	nanosleep(&ts, NULL);
 
 	// exit
 	printf("Thread %d: closing client\n", idx);
