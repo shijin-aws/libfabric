@@ -408,11 +408,6 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 		pkt_entry = pkt_entry_vec[pkt_idx];
 		assert(efa_rdm_ep_get_peer(ep, pkt_entry->addr) == peer);
 
-		int pkt_type = efa_rdm_pke_get_base_hdr(pkt_entry)->type;
-		if (pkt_type == EFA_RDM_EOR_PKT) {
-			struct efa_rdm_eor_hdr *eor_hdr = (struct efa_rdm_eor_hdr *)pkt_entry->wiredata;
-			EFA_WARN(FI_LOG_EP_DATA, "send eor hdr of send id %u for peer qpn: %u qkey %u\n", eor_hdr->send_id, conn->ep_addr->qpn, conn->ep_addr->qkey);
-		}
 		qp->ibv_qp_ex->wr_id = (uintptr_t)pkt_entry;
 		if ((pkt_entry->ope->fi_flags & FI_REMOTE_CQ_DATA) &&
 		    (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP)) {
@@ -433,6 +428,12 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 				inline_data_list[1].length = pkt_entry->payload_size;
 			}
 
+			int pkt_type = efa_rdm_pke_get_base_hdr(pkt_entry)->type;
+		if (pkt_type == EFA_RDM_EOR_PKT) {
+			struct efa_rdm_eor_hdr *eor_hdr = (struct efa_rdm_eor_hdr *)pkt_entry->wiredata;
+			EFA_WARN(FI_LOG_EP_DATA, "send inline eor hdr of send id %u for peer qpn: %u qkey %u\n", eor_hdr->send_id, conn->ep_addr->qpn, conn->ep_addr->qkey);
+		}
+
 			ibv_wr_set_inline_data_list(qp->ibv_qp_ex, iov_cnt, inline_data_list);
 		} else {
 			iov_cnt = 1;
@@ -446,6 +447,11 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 				sg_list[1].lkey = ((struct efa_mr *)pkt_entry->payload_mr)->ibv_mr->lkey;
 			}
 
+			int pkt_type = efa_rdm_pke_get_base_hdr(pkt_entry)->type;
+		if (pkt_type == EFA_RDM_EOR_PKT) {
+			struct efa_rdm_eor_hdr *eor_hdr = (struct efa_rdm_eor_hdr *)pkt_entry->wiredata;
+			EFA_WARN(FI_LOG_EP_DATA, "send sge eor hdr of send id %u for peer qpn: %u qkey %u\n", eor_hdr->send_id, conn->ep_addr->qpn, conn->ep_addr->qkey);
+		}
 			ibv_wr_set_sge_list(ep->base_ep.qp->ibv_qp_ex, iov_cnt, sg_list);
 		}
 
