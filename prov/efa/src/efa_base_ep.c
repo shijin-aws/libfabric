@@ -118,6 +118,8 @@ int efa_base_ep_destruct(struct efa_base_ep *base_ep)
 
 	err = efa_base_ep_destruct_qp(base_ep);
 
+	base_ep->efa_qp_enabled = false;
+
 	if (base_ep->efa_recv_wr_vec)
 		free(base_ep->efa_recv_wr_vec);
 	

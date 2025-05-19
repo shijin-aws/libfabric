@@ -25,6 +25,7 @@ void efa_rdm_txe_construct(struct efa_rdm_ope *txe,
 	txe->type = EFA_RDM_TXE;
 	txe->op = op;
 	txe->tx_id = ofi_buf_index(txe);
+	EFA_WARN(FI_LOG_EP_DATA, "ep %p allocated txe %p of tx id %u\n", ep, txe, txe->tx_id);
 	txe->state = EFA_RDM_TXE_REQ;
 	txe->addr = msg->addr;
 	txe->peer = peer;
@@ -1035,6 +1036,7 @@ void efa_rdm_ope_handle_send_completed(struct efa_rdm_ope *ope)
 	}
 
 	assert(ope->type == EFA_RDM_TXE);
+	EFA_WARN(FI_LOG_EP_DATA, "ep %p released txe %p of tx id %u for ope send completion\n", ope->ep, ope, ope->tx_id);
 	efa_rdm_txe_release(ope);
 }
 
@@ -1156,6 +1158,7 @@ void efa_rdm_ope_handle_recv_completed(struct efa_rdm_ope *ope)
 	}
 
 	if (ope->type == EFA_RDM_TXE) {
+		EFA_WARN(FI_LOG_EP_DATA, "ep %p released txe %p of tx id %u for recv completion\n", ope->ep, ope, ope->tx_id);
 		efa_rdm_txe_release(ope);
 	} else {
 		assert(ope->type == EFA_RDM_RXE);
@@ -1711,8 +1714,10 @@ int efa_rdm_rxe_post_local_read_or_queue(struct efa_rdm_ope *rxe,
 	txe->internal_flags |= EFA_RDM_OPE_INTERNAL;
 	err = efa_rdm_ope_post_remote_read_or_queue(txe);
 	/* The rx pkts are held until the local read completes */
-	if (err)
+	if (err) {
+		EFA_WARN(FI_LOG_EP_DATA, "ep %p released txe %p of tx id %u due to local read post failed \n", txe->ep, txe, txe->tx_id);
 		efa_rdm_txe_release(txe);
+	}
 	else if (txe->local_read_pkt_entry->alloc_type == EFA_RDM_PKE_FROM_EFA_RX_POOL)
 		txe->ep->efa_rx_pkts_held++;
 
@@ -1878,6 +1883,8 @@ ssize_t efa_rdm_ope_post_send_or_queue(struct efa_rdm_ope *ope, int pkt_type)
 		err = 0;
 	}
 
+	//if (pkt_type == EFA_RDM_EOR_PKT)
+	//	EFA_WARN(FI_LOG_EP_DATA, "eor pkt post return %d\n", err);
 	return err;
 }
 

@@ -162,6 +162,7 @@ void efa_rdm_pke_release_rx(struct efa_rdm_pke *pkt_entry)
 #if ENABLE_DEBUG
 	dlist_remove(&pkt_entry->dbg_entry);
 #endif
+	//EFA_WARN(FI_LOG_EP_DATA, "ep %p releases rx pkt %p\n", ep, pkt_entry);
 	efa_rdm_pke_release(pkt_entry);
 }
 
@@ -407,6 +408,11 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 		pkt_entry = pkt_entry_vec[pkt_idx];
 		assert(efa_rdm_ep_get_peer(ep, pkt_entry->addr) == peer);
 
+		int pkt_type = efa_rdm_pke_get_base_hdr(pkt_entry)->type;
+		if (pkt_type == EFA_RDM_EOR_PKT) {
+			struct efa_rdm_eor_hdr *eor_hdr = (struct efa_rdm_eor_hdr *)pkt_entry->wiredata;
+			EFA_WARN(FI_LOG_EP_DATA, "send eor hdr of send id %u for peer qpn: %u qkey %u\n", eor_hdr->send_id, conn->ep_addr->qpn, conn->ep_addr->qkey);
+		}
 		qp->ibv_qp_ex->wr_id = (uintptr_t)pkt_entry;
 		if ((pkt_entry->ope->fi_flags & FI_REMOTE_CQ_DATA) &&
 		    (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP)) {

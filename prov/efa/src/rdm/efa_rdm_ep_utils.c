@@ -716,6 +716,7 @@ int efa_rdm_ep_bulk_post_internal_rx_pkts(struct efa_rdm_ep *ep)
 		ep->pke_vec[i] = efa_rdm_pke_alloc(ep, ep->efa_rx_pkt_pool,
 					       EFA_RDM_PKE_FROM_EFA_RX_POOL);
 		assert(ep->pke_vec[i]);
+		//EFA_WARN(FI_LOG_EP_DATA, "ep %p allocating rx pkt %p\n", ep, ep->pke_vec[i]);
 	}
 
 	err = efa_rdm_pke_recvv(ep->pke_vec, ep->efa_rx_pkts_to_post);

@@ -8,6 +8,7 @@
 #include "efa_rdm_pke_cmd.h"
 #include "efa_rdm_pke_utils.h"
 #include "efa_rdm_pke_nonreq.h"
+#include "efa_av.h"
 
 #include "efa_rdm_tracepoint.h"
 
@@ -185,7 +186,6 @@ void efa_rdm_pke_handle_cts_sent(struct efa_rdm_pke *pkt_entry)
 
 	ope = pkt_entry->ope;
 	ope->window = efa_rdm_pke_get_cts_hdr(pkt_entry)->recv_length;
-	EFA_WARN(FI_LOG_EP_DATA, "sent cts pkt %p\n", pkt_entry);
 }
 
 void efa_rdm_pke_handle_cts_recv(struct efa_rdm_pke *pkt_entry)
@@ -204,7 +204,7 @@ void efa_rdm_pke_handle_cts_recv(struct efa_rdm_pke *pkt_entry)
 
 	efa_rdm_pke_release_rx(pkt_entry);
 
-	EFA_WARN(FI_LOG_EP_DATA, "get cts pkt %p\n", pkt_entry);
+	//EFA_WARN(FI_LOG_EP_DATA, "get cts pkt %p\n", pkt_entry);
 	if (ope->state != EFA_RDM_OPE_SEND) {
 		ope->state = EFA_RDM_OPE_SEND;
 		dlist_insert_tail(&ope->entry, &efa_rdm_ep_domain(ep)->ope_longcts_send_list);
@@ -529,6 +529,7 @@ void efa_rdm_pke_handle_rma_read_completion(struct efa_rdm_pke *context_pkt_entr
 				efa_rdm_txe_report_completion(txe);
 			}
 
+			EFA_WARN(FI_LOG_EP_DATA, "ep %p released txe %p of tx id %u for fi_read completion\n", txe->ep, txe, txe->tx_id);
 			efa_rdm_txe_release(txe);
 		}
 	} else {
@@ -673,11 +674,13 @@ void efa_rdm_pke_handle_eor_recv(struct efa_rdm_pke *pkt_entry)
 	eor_hdr = (struct efa_rdm_eor_hdr *)pkt_entry->wiredata;
 
 	/* pre-post buf used here, so can NOT track back to txe with x_entry */
+	assert(pkt_entry->ep->base_ep.efa_qp_enabled);
 	txe = ofi_bufpool_get_ibuf(pkt_entry->ep->ope_pool, eor_hdr->send_id);
 
 	txe->bytes_acked += txe->total_len - txe->bytes_runt;
 	if (txe->bytes_acked == txe->total_len) {
 		efa_rdm_txe_report_completion(txe);
+		EFA_WARN(FI_LOG_EP_DATA, "ep %p released txe %p of tx id %u after eor recv\n", txe->ep, txe, txe->tx_id);
 		efa_rdm_txe_release(txe);
 	}
 

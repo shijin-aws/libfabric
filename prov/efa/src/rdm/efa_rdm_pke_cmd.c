@@ -464,6 +464,7 @@ void efa_rdm_pke_handle_tx_error(struct efa_rdm_pke *pkt_entry, int prov_errno)
 			}
 
 			efa_rdm_pke_release_tx(pkt_entry);
+			EFA_WARN(FI_LOG_EP_DATA, "ep %p released txe %p of tx id %u in due to tx error \n", txe->ep, txe, txe->tx_id);
 			efa_rdm_txe_release(txe);
 
 			break;
@@ -485,8 +486,10 @@ void efa_rdm_pke_handle_tx_error(struct efa_rdm_pke *pkt_entry, int prov_errno)
 				}
 
 				efa_rdm_pke_release_tx(pkt_entry);
-				if (!txe->efa_outstanding_tx_ops)
+				if (!txe->efa_outstanding_tx_ops) {
+					EFA_WARN(FI_LOG_EP_DATA, "ep %p released txe %p of tx id %u for zero outstanding tx ops\n", txe->ep, txe, txe->tx_id);
 					efa_rdm_txe_release(txe);
+				}
 			} else {
 				/*
 				 * This packet is associated with a send operation, (such
@@ -576,6 +579,7 @@ void efa_rdm_pke_handle_send_completion(struct efa_rdm_pke *pkt_entry)
 	/* Start handling pkts with hdrs */
 	switch (efa_rdm_pke_get_base_hdr(pkt_entry)->type) {
 	case EFA_RDM_HANDSHAKE_PKT:
+		EFA_WARN(FI_LOG_EP_DATA, "ep %p released txe %p of tx id %u for handshake completion\n", pkt_entry->ope->ep, pkt_entry->ope, pkt_entry->ope->tx_id);
 		efa_rdm_txe_release(pkt_entry->ope);
 		break;
 	case EFA_RDM_CTS_PKT:
