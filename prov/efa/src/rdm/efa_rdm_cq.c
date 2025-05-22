@@ -10,6 +10,7 @@
 #include "efa_rdm_pke_utils.h"
 #include "efa_rdm_pke_nonreq.h"
 #include "efa_rdm_tracepoint.h"
+#include <sys/types.h>
 
 static
 const char *efa_rdm_cq_strerror(struct fid_cq *cq_fid, int prov_errno,
@@ -497,7 +498,8 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 			if (efa_rdm_pke_get_base_hdr(pkt_entry)->type == EFA_RDM_EOR_PKT) {
 				struct efa_rdm_eor_hdr *eor_hdr;
 				eor_hdr = (struct efa_rdm_eor_hdr *)pkt_entry->wiredata;
-				EFA_WARN(FI_LOG_EP_DATA, "ep %p (qpn %u qkey: %u) receives eor pkt %p of send id %u\n", pkt_entry->ep, pkt_entry->ep->base_ep.qp->qp_num, pkt_entry->ep->base_ep.qp->qkey, pkt_entry, eor_hdr->send_id);
+				pid_t tid = gettid();
+				EFA_WARN(FI_LOG_EP_DATA, "tid %d, ep %p (qpn %u qkey: %u) receives eor pkt %p of send id %u recv id %u\n", tid, pkt_entry->ep, pkt_entry->ep->base_ep.qp->qp_num, pkt_entry->ep->base_ep.qp->qkey, pkt_entry, eor_hdr->send_id, eor_hdr->recv_id);
 			}
 			efa_rdm_cq_handle_recv_completion(ibv_cq, pkt_entry, ep);
 #if ENABLE_DEBUG

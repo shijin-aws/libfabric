@@ -13,6 +13,7 @@
 #include "efa_rdm_pkt_type.h"
 #include "efa_rdm_pke_req.h"
 #include "efa_cntr.h"
+#include <sys/types.h>
 
 
 static inline
@@ -935,7 +936,8 @@ static int efa_rdm_ep_close(struct fid *fid)
 	}
 
 	ofi_genlock_lock(&efa_domain->srx_lock);
-	EFA_WARN(FI_LOG_EP_CTRL, "Closing ep %p\n", efa_rdm_ep);
+	pid_t tid = gettid();
+	EFA_WARN(FI_LOG_EP_CTRL, "tid %d Closing ep %p\n", tid, efa_rdm_ep);
 	if (efa_rdm_ep->base_ep.efa_qp_enabled)
 		efa_rdm_ep_wait_send(efa_rdm_ep);
 

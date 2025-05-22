@@ -431,7 +431,7 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 			int pkt_type = efa_rdm_pke_get_base_hdr(pkt_entry)->type;
 		if (pkt_type == EFA_RDM_EOR_PKT) {
 			struct efa_rdm_eor_hdr *eor_hdr = (struct efa_rdm_eor_hdr *)pkt_entry->wiredata;
-			EFA_WARN(FI_LOG_EP_DATA, "send inline eor hdr of send id %u for peer qpn: %u qkey %u\n", eor_hdr->send_id, conn->ep_addr->qpn, conn->ep_addr->qkey);
+			EFA_WARN(FI_LOG_EP_DATA, "send inline eor hdr of send id %u recv_id %u for peer qpn: %u qkey %u\n", eor_hdr->send_id, eor_hdr->recv_id, conn->ep_addr->qpn, conn->ep_addr->qkey);
 		}
 
 			ibv_wr_set_inline_data_list(qp->ibv_qp_ex, iov_cnt, inline_data_list);
@@ -450,7 +450,7 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 			int pkt_type = efa_rdm_pke_get_base_hdr(pkt_entry)->type;
 		if (pkt_type == EFA_RDM_EOR_PKT) {
 			struct efa_rdm_eor_hdr *eor_hdr = (struct efa_rdm_eor_hdr *)pkt_entry->wiredata;
-			EFA_WARN(FI_LOG_EP_DATA, "send sge eor hdr of send id %u for peer qpn: %u qkey %u\n", eor_hdr->send_id, conn->ep_addr->qpn, conn->ep_addr->qkey);
+			EFA_WARN(FI_LOG_EP_DATA, "send sge eor hdr of send id %u recv_id %u for peer qpn: %u qkey %u\n", eor_hdr->send_id, eor_hdr->recv_id, conn->ep_addr->qpn, conn->ep_addr->qkey);
 		}
 			ibv_wr_set_sge_list(ep->base_ep.qp->ibv_qp_ex, iov_cnt, sg_list);
 		}

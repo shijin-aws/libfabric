@@ -36,6 +36,8 @@ char remote_raw_addr[FT_MAX_CTRL_MSG];
 void close_client(int i);
 int open_client(int i);
 
+int _timeout = 10;
+
 struct thread_context {
 	int idx;
 	pthread_t thread;
@@ -185,9 +187,11 @@ static int get_one_comp(struct fid_cq *cq)
 		if (ret > 0)
 			break;
 
-		if (ret < 0 && ret != -FI_EAGAIN) {
-			printf("fi_cq_read returns error %d\n", ret);
-			(void) fi_cq_readerr(cq, &cq_err, 0);
+		if (ret < 0) {
+			if (ret != -FI_EAGAIN) {
+				printf("fi_cq_read returns error %d\n", ret);
+				(void) fi_cq_readerr(cq, &cq_err, 0);
+			}
 			return ret;
 		}
 	} while (1);
@@ -243,10 +247,18 @@ static void *poll_tx_cq(void *context)
 {
 	int i, ret;
 	int num_cqes = 0;
+	struct timespec a, b;
 
 	i = ((struct thread_context *) context)->idx;
 
+	clock_gettime(CLOCK_MONOTONIC, &a);
 	while (true) {
+		clock_gettime(CLOCK_MONOTONIC, &b);
+		//printf("b.tv_sec - a.tv_sec = %d\n", b.tv_sec - a.tv_sec);
+		if ((b.tv_sec - a.tv_sec) > _timeout) {
+			printf("%ds timeout expired, exiting \n", _timeout);
+			break;
+		}
 		ret = get_one_comp(txcq);
 		if (ret)
 			continue;
@@ -277,7 +289,16 @@ static int run_server(void)
 	}
 
 	printf("Server: wait for completions\n");
+	struct timespec a, b;
+
+	clock_gettime(CLOCK_MONOTONIC, &a);
 	while (true) {
+		clock_gettime(CLOCK_MONOTONIC, &b);
+		//printf("b.tv_sec - a.tv_sec = %d\n", b.tv_sec - a.tv_sec);
+		if ((b.tv_sec - a.tv_sec) > _timeout) {
+			printf("%ds timeout expired, exiting...\n", _timeout);
+			break;
+		}
 		ret = get_one_comp(rxcq);
 		// ignore cq error
 		if (ret)

@@ -680,10 +680,11 @@ void efa_rdm_pke_handle_eor_recv(struct efa_rdm_pke *pkt_entry)
 	txe->bytes_acked += txe->total_len - txe->bytes_runt;
 	if (txe->bytes_acked == txe->total_len) {
 		efa_rdm_txe_report_completion(txe);
-		EFA_WARN(FI_LOG_EP_DATA, "ep %p released txe %p of tx id %u after eor recv\n", txe->ep, txe, txe->tx_id);
+		//EFA_WARN(FI_LOG_EP_DATA, "ep %p released txe %p of tx id %u after eor recv\n", txe->ep, txe, txe->tx_id);
 		efa_rdm_txe_release(txe);
 	}
 
+	EFA_WARN(FI_LOG_EP_DATA, "ep %p released received eor pkt %p\n", pkt_entry->ep, pkt_entry);
 	efa_rdm_pke_release_rx(pkt_entry);
 
 }
