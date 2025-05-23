@@ -126,6 +126,9 @@ int ofi_mmap_anon_pages(void **memptr, size_t size, int flags)
 {
 	*memptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS | flags, -1, 0);
+
+	//FI_WARN(&core_prov, FI_LOG_CORE, "ofi_mmap_anon_pages %zu\n", size);
+	memset(*memptr, 0, size);
 	if (OFI_UNLIKELY(*memptr == MAP_FAILED)) {
 		return -errno;
 	}

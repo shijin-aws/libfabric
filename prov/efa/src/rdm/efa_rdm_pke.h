@@ -84,6 +84,7 @@ struct efa_rdm_pke {
 #if ENABLE_DEBUG
 	/** @brief entry to a linked list of posted buf list */
 	struct dlist_entry dbg_entry;
+	size_t generation;
 #endif
 	/** @brief pointer to #efa_rdm_ep */
 	struct efa_rdm_ep *ep;

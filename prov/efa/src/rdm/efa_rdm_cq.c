@@ -440,6 +440,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	struct efa_domain *efa_domain;
 	struct efa_qp *qp;
 	struct dlist_entry rx_progressed_ep_list, *tmp;
+	uint32_t foo;
 
 	efa_cq = container_of(ibv_cq, struct efa_cq, ibv_cq);
 	efa_domain = container_of(efa_cq->util_cq.domain, struct efa_domain, util_domain);
@@ -450,7 +451,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	should_end_poll = !err;
 
 	while (!err) {
-		pkt_entry = (void *)(uintptr_t)ibv_cq->ibv_cq_ex->wr_id;
+		pkt_entry = (void *)(uintptr_t)(ibv_cq->ibv_cq_ex->wr_id & ~(63));
 		qp = efa_domain->qp_table[ibv_wc_read_qp_num(ibv_cq->ibv_cq_ex) & efa_domain->qp_table_sz_m1];
 		ep = container_of(qp->base_ep, struct efa_rdm_ep, base_ep);
 #if HAVE_LTTNG
@@ -487,6 +488,11 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 			}
 			break;
 		}
+		memcpy(&foo, pkt_entry->wiredata, 4);
+		if(foo == 0xdeadbeef) {
+			EFA_WARN(FI_LOG_CQ, "ep %p qpn %u qkey %u get garbage wire data on pkt %p of pkt_size %u\n", pkt_entry->ep, pkt_entry->ep->base_ep.qp->qp_num, pkt_entry->ep->base_ep.qp->qkey, pkt_entry, ibv_wc_read_byte_len(ibv_cq->ibv_cq_ex));
+			assert(0);
+		}
 		switch (opcode) {
 		case IBV_WC_SEND:
 #if ENABLE_DEBUG
@@ -499,7 +505,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 				struct efa_rdm_eor_hdr *eor_hdr;
 				eor_hdr = (struct efa_rdm_eor_hdr *)pkt_entry->wiredata;
 				pid_t tid = gettid();
-				EFA_WARN(FI_LOG_EP_DATA, "tid %d, ep %p (qpn %u qkey: %u) receives eor pkt %p of send id %u recv id %u\n", tid, pkt_entry->ep, pkt_entry->ep->base_ep.qp->qp_num, pkt_entry->ep->base_ep.qp->qkey, pkt_entry, eor_hdr->send_id, eor_hdr->recv_id);
+				EFA_WARN(FI_LOG_EP_DATA, "tid %d, ep %p (qpn %u qkey: %u) receives eor pkt %p, wr id %p, of send id %u recv id %u, pkt_size %u\n", tid, pkt_entry->ep, pkt_entry->ep->base_ep.qp->qp_num, pkt_entry->ep->base_ep.qp->qkey, pkt_entry, (void *)(uintptr_t)(ibv_cq->ibv_cq_ex->wr_id), eor_hdr->send_id, eor_hdr->recv_id, ibv_wc_read_byte_len(ibv_cq->ibv_cq_ex));
 			}
 			efa_rdm_cq_handle_recv_completion(ibv_cq, pkt_entry, ep);
 #if ENABLE_DEBUG

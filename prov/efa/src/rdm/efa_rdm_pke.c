@@ -85,6 +85,7 @@ void efa_rdm_pke_release(struct efa_rdm_pke *pkt_entry)
 #ifdef ENABLE_EFA_POISONING
 	efa_rdm_poison_mem_region(pkt_entry, ofi_buf_pool(pkt_entry)->attr.size);
 #endif
+	efa_rdm_poison_mem_region(pkt_entry, ofi_buf_pool(pkt_entry)->attr.size);
 	pkt_entry->flags = 0;
 	ofi_buf_free(pkt_entry);
 }
@@ -674,6 +675,10 @@ ssize_t efa_rdm_pke_recvv(struct efa_rdm_pke **pke_vec,
 	for (i = 0; i < pke_cnt; ++i) {
 		recv_wr = &ep->base_ep.efa_recv_wr_vec[i];
 		recv_wr->wr.wr_id = (uintptr_t)pke_vec[i];
+		assert(((uintptr_t)pke_vec[i]  & (63)) == 0);
+//#if ENABLE_DEBUG
+//		recv_wr->wr.wr_id += pke_vec[i]->generation++;
+//#endif
 		recv_wr->wr.num_sge = 1;
 		recv_wr->wr.sg_list = recv_wr->sge;
 		recv_wr->wr.sg_list[0].length = pke_vec[i]->pkt_size;
