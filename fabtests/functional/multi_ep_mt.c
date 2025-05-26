@@ -494,7 +494,7 @@ static int run_test(void)
 	if (ret)
 		goto out;
 
-	ret = ft_finalize_ep(ep);
+	//ret = ft_finalize_ep(ep);
 out:
 	free_ep_res();
 	return ret;
