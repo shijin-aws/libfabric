@@ -1,24 +1,24 @@
 /* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
-/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All
+ * rights reserved. */
 
-
+#include <getopt.h>
+#include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
 #include <time.h>
-#include <netdb.h>
 #include <unistd.h>
 
 #include <rdma/fabric.h>
-#include <rdma/fi_errno.h>
-#include <rdma/fi_tagged.h>
-#include <rdma/fi_endpoint.h>
-#include <rdma/fi_rma.h>
 #include <rdma/fi_cm.h>
+#include <rdma/fi_endpoint.h>
+#include <rdma/fi_errno.h>
+#include <rdma/fi_rma.h>
+#include <rdma/fi_tagged.h>
 
-#include "shared.h"
 #include "hmem.h"
+#include "shared.h"
 #include <pthread.h>
 
 static struct fid_ep **eps;
@@ -35,8 +35,6 @@ char remote_raw_addr[FT_MAX_CTRL_MSG];
 
 void close_client(int i);
 int open_client(int i);
-
-int _timeout = 10;
 
 struct thread_context {
 	int idx;
@@ -121,20 +119,21 @@ static int alloc_multi_ep_res()
 
 	avs = calloc(num_eps, sizeof(*avs));
 
-	if (!eps || !remote_fiaddr || !send_bufs || !recv_bufs ||
-	    !send_ctx || !recv_ctx || !send_bufs || !recv_bufs ||
-	    !send_mrs || !recv_mrs || !send_descs || !recv_descs ||
-	    !peer_iovs)
+	if (!eps || !remote_fiaddr || !send_bufs || !recv_bufs || !send_ctx ||
+	    !recv_ctx || !send_bufs || !recv_bufs || !send_mrs || !recv_mrs ||
+	    !send_descs || !recv_descs || !peer_iovs)
 		return -FI_ENOMEM;
 
 	for (i = 0; i < num_eps; i++) {
 		ret = ft_hmem_alloc(opts.iface, opts.device,
-				    (void **) &send_bufs[i], opts.transfer_size);
+				    (void **) &send_bufs[i],
+				    opts.transfer_size);
 		if (ret)
 			return ret;
 
 		ret = ft_hmem_alloc(opts.iface, opts.device,
-				    (void **) &recv_bufs[i], opts.transfer_size);
+				    (void **) &recv_bufs[i],
+				    opts.transfer_size);
 		if (ret)
 			return ret;
 	}
@@ -147,9 +146,8 @@ static int ep_post_rx()
 	int ret;
 
 	do {
-		ret = fi_recv(ep, rx_buf, opts.transfer_size,
-			      mr_desc, FI_ADDR_UNSPEC,
-			      &rx_ctx);
+		ret = fi_recv(ep, rx_buf, opts.transfer_size, mr_desc,
+			      FI_ADDR_UNSPEC, &rx_ctx);
 		if (ret == -FI_EAGAIN)
 			(void) fi_cq_read(rxcq, NULL, 0);
 
@@ -163,9 +161,8 @@ static int ep_post_tx(int idx, size_t len)
 	int ret;
 
 	do {
-		ret = fi_send(eps[idx], send_bufs[idx], len,
-			      send_descs[idx], remote_fiaddr[idx],
-			      &send_ctx[idx]);
+		ret = fi_send(eps[idx], send_bufs[idx], len, send_descs[idx],
+			      remote_fiaddr[idx], &send_ctx[idx]);
 		if (ret == -FI_EAGAIN)
 			(void) fi_cq_read(txcq, NULL, 0);
 
@@ -242,7 +239,6 @@ static void *post_sends(void *context)
 	return NULL;
 }
 
-
 static void *poll_tx_cq(void *context)
 {
 	int i, ret;
@@ -254,16 +250,16 @@ static void *poll_tx_cq(void *context)
 	clock_gettime(CLOCK_MONOTONIC, &a);
 	while (true) {
 		clock_gettime(CLOCK_MONOTONIC, &b);
-		//printf("b.tv_sec - a.tv_sec = %d\n", b.tv_sec - a.tv_sec);
-		if ((b.tv_sec - a.tv_sec) > _timeout) {
-			printf("%ds timeout expired, exiting \n", _timeout);
+		if ((b.tv_sec - a.tv_sec) > timeout) {
+			printf("%ds timeout expired, exiting \n", timeout);
 			break;
 		}
 		ret = get_one_comp(txcq);
 		if (ret)
 			continue;
 		num_cqes++;
-		printf("Client: thread %d get %d completion from tx cq \n", i, num_cqes);
+		printf("Client: thread %d get %d completion from tx cq \n", i,
+		       num_cqes);
 		// This is the maximal number of sends client will do
 		if (num_cqes == num_eps * opts.iterations)
 			break;
@@ -294,9 +290,8 @@ static int run_server(void)
 	clock_gettime(CLOCK_MONOTONIC, &a);
 	while (true) {
 		clock_gettime(CLOCK_MONOTONIC, &b);
-		//printf("b.tv_sec - a.tv_sec = %d\n", b.tv_sec - a.tv_sec);
-		if ((b.tv_sec - a.tv_sec) > _timeout) {
-			printf("%ds timeout expired, exiting...\n", _timeout);
+		if ((b.tv_sec - a.tv_sec) > timeout) {
+			printf("%ds timeout expired, exiting...\n", timeout);
 			break;
 		}
 		ret = get_one_comp(rxcq);
@@ -338,25 +333,28 @@ static int run_client(void)
 
 	memset(peer_iovs, 0, sizeof(*peer_iovs) * num_eps);
 
-	contexts_ep = calloc(num_eps,  sizeof(struct thread_context));
+	contexts_ep = calloc(num_eps, sizeof(struct thread_context));
 
-	for (i=0; i< num_eps; i++) {
+	for (i = 0; i < num_eps; i++) {
 		contexts_ep[i].idx = i;
 	}
 
 	context_cq.idx = num_eps + 1;
 
-	pthread_create(&context_cq.thread, NULL, poll_tx_cq,  &context_cq);
+	pthread_create(&context_cq.thread, NULL, poll_tx_cq, &context_cq);
 
 	for (i = 0; i < num_eps; i++) {
-		ret = pthread_create(&contexts_ep[i].thread, NULL, post_sends,  &contexts_ep[i]);
+		ret = pthread_create(&contexts_ep[i].thread, NULL, post_sends,
+				     &contexts_ep[i]);
 		if (ret)
-			printf("Client: thread %d post_sends create failed: %d\n", i, ret);
+			printf("Client: thread %d post_sends create failed: "
+			       "%d\n",
+			       i, ret);
 	}
 
 	pthread_join(context_cq.thread, NULL);
 
-	for (i=0; i<num_eps; i++)
+	for (i = 0; i < num_eps; i++)
 		pthread_join(contexts_ep[i].thread, NULL);
 
 	printf("Client: PASSED multi ep sends\n");
@@ -386,13 +384,14 @@ int open_client(int idx)
 	}
 
 	/* ft_enable_ep bind the ep with cq and av before enabling */
-	ret = ft_enable_ep(eps[idx], eq, avs[idx], txcq, rxcq, NULL, NULL, NULL);
+	ret = ft_enable_ep(eps[idx], eq, avs[idx], txcq, rxcq, NULL, NULL,
+			   NULL);
 	if (ret)
- 		return ret;
-
+		return ret;
 
 	/* Use the same remote addr we got from the persistent receiver ep */
-	ret = ft_av_insert(avs[idx], (void *)remote_raw_addr, 1, &remote_fiaddr[idx], 0, NULL);
+	ret = ft_av_insert(avs[idx], (void *) remote_raw_addr, 1,
+			   &remote_fiaddr[idx], 0, NULL);
 	if (ret)
 		return ret;
 
@@ -407,7 +406,7 @@ void close_client(int i)
 }
 
 int exchange_addresses_oob(struct fid_av *av_ptr, struct fid_ep *ep_ptr,
-	fi_addr_t *remote_addr, void *addr)
+			   fi_addr_t *remote_addr, void *addr)
 {
 	int ret;
 	size_t addrlen = FT_MAX_CTRL_MSG;
@@ -461,7 +460,8 @@ int init_fabric(void)
 	if (ret)
 		return ret;
 
-	/* We want to get the remote raw addr so we use our own OOB exchange function */
+	/* We want to get the remote raw addr so we use our own OOB exchange
+	 * function */
 	ret = exchange_addresses_oob(av, ep, &remote_fi_addr, remote_raw_addr);
 	if (ret)
 		return ret;
@@ -494,7 +494,6 @@ static int run_test(void)
 	if (ret)
 		goto out;
 
-	//ret = ft_finalize_ep(ep);
 out:
 	free_ep_res();
 	return ret;
@@ -508,12 +507,14 @@ int main(int argc, char **argv)
 	opts = INIT_OPTS;
 	opts.transfer_size = 256;
 	opts.options |= FT_OPT_OOB_ADDR_EXCH;
+	timeout = 10;
 
 	hints = fi_allocinfo();
 	if (!hints)
 		return EXIT_FAILURE;
 
-	while ((op = getopt_long(argc, argv, "c:vhAQ" ADDR_OPTS INFO_OPTS CS_OPTS,
+	while ((op = getopt_long(argc, argv,
+				 "c:vhT:" ADDR_OPTS INFO_OPTS CS_OPTS,
 				 long_opts, &lopt_idx)) != -1) {
 		switch (op) {
 		default:
@@ -529,11 +530,16 @@ int main(int argc, char **argv)
 		case 'v':
 			opts.options |= FT_OPT_VERIFY_DATA;
 			break;
+		case 'T':
+			timeout = atoi(optarg);
+			break;
 		case '?':
 		case 'h':
-			ft_usage(argv[0], "Multi-threading Multi endpoint test");
+			ft_usage(argv[0],
+				 "Multi-threading Multi endpoint test");
 			FT_PRINT_OPTS_USAGE("-c <int>",
-				"number of endpoints to create and test (def 3)");
+					    "number of endpoints to create and "
+					    "test (def 3)");
 			FT_PRINT_OPTS_USAGE("-v", "Enable data verification");
 			return EXIT_FAILURE;
 		}
