@@ -85,7 +85,6 @@ void efa_rdm_pke_release(struct efa_rdm_pke *pkt_entry)
 #ifdef ENABLE_EFA_POISONING
 	efa_rdm_poison_mem_region(pkt_entry, ofi_buf_pool(pkt_entry)->attr.size);
 #endif
-	efa_rdm_poison_mem_region(pkt_entry, ofi_buf_pool(pkt_entry)->attr.size);
 	pkt_entry->flags = 0;
 	ofi_buf_free(pkt_entry);
 }
