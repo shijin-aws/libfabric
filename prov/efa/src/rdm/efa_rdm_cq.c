@@ -483,6 +483,12 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 			}
 			break;
 		}
+		uint32_t foo;
+		memcpy(&foo, pkt_entry->wiredata, 4);
+		if(foo == 0xdeadbeef) {
+			EFA_WARN(FI_LOG_CQ, "ep %p qpn %u qkey %u get garbage wire data on pkt %p of pkt_size %u\n", pkt_entry->ep, pkt_entry->ep->base_ep.qp->qp_num, pkt_entry->ep->base_ep.qp->qkey, pkt_entry, ibv_wc_read_byte_len(ibv_cq->ibv_cq_ex));
+			assert("pkt_entry->wiredata has deadbeef" && 0);
+		}
 		switch (opcode) {
 		case IBV_WC_SEND:
 #if ENABLE_DEBUG
