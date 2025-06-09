@@ -42,10 +42,10 @@ static int efa_domain_hmem_info_init_protocol_thresholds(enum fi_hmem_iface ifac
 	switch (iface) {
 	case FI_HMEM_SYSTEM:
 		/* We have not yet tested runting with system memory */
-		info->runt_size = 0;
-		info->max_medium_msg_size = EFA_DEFAULT_INTER_MAX_MEDIUM_MESSAGE_SIZE;
-		info->min_read_msg_size = EFA_DEFAULT_INTER_MIN_READ_MESSAGE_SIZE;
-		info->min_read_write_size = EFA_DEFAULT_INTER_MIN_READ_WRITE_SIZE;
+		info->runt_size = EFA_DEFAULT_RUNT_SIZE;
+		info->max_medium_msg_size = 0;
+		info->min_read_msg_size = efa_max_eager_msg_size_with_largest_header() + 1;
+		info->min_read_write_size = efa_max_eager_msg_size_with_largest_header() + 1;
 		fi_param_get_size_t(&efa_prov, "runt_size", &info->runt_size);
 		fi_param_get_size_t(&efa_prov, "inter_max_medium_message_size", &info->max_medium_msg_size);
 		fi_param_get_size_t(&efa_prov, "inter_min_read_message_size", &info->min_read_msg_size);
