@@ -205,7 +205,7 @@ static void *post_sends(void *context)
 	int max = 999999999;
 	int sleep_time;
 	struct timespec ts;
-	int num_eps = 3;
+	int num_eps = 10;
 
 	srand(time(NULL));
 	sleep_time = (rand() % (max - min + 1)) + min;
@@ -314,25 +314,7 @@ static int run_server(void)
 
 static int run_client(void)
 {
-	char temp[FT_MAX_CTRL_MSG];
-	struct fi_rma_iov *rma_iov = (struct fi_rma_iov *) temp;
 	int i, ret;
-	size_t key_size, len;
-
-	len = opts.transfer_size;
-
-	for (i = 0; i < num_eps; i++) {
-		len = opts.transfer_size;
-		ret = ft_fill_rma_info(recv_mrs[i], recv_bufs[i], rma_iov,
-				       &key_size, &len);
-		if (ret)
-			return ret;
-
-		ret = ft_hmem_copy_to(opts.iface, opts.device, send_bufs[i],
-				      rma_iov, len);
-		if (ret)
-			return ret;
-	}
 
 	memset(peer_iovs, 0, sizeof(*peer_iovs) * num_eps);
 
@@ -510,7 +492,7 @@ int main(int argc, char **argv)
 	opts = INIT_OPTS;
 	opts.transfer_size = 256;
 	opts.options |= FT_OPT_OOB_ADDR_EXCH;
-	timeout = 10;
+	timeout = 20;
 
 	hints = fi_allocinfo();
 	if (!hints)
