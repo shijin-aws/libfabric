@@ -205,7 +205,7 @@ static void *post_sends(void *context)
 	int max = 999999999;
 	int sleep_time;
 	struct timespec ts;
-	int num_eps = 10;
+	int num_transient_eps = 10;
 
 	srand(time(NULL));
 	sleep_time = (rand() % (max - min + 1)) + min;
@@ -214,7 +214,7 @@ static void *post_sends(void *context)
 
 	nanosleep(&ts, NULL);
 	len = opts.transfer_size;
-	for (j = 0; j < num_eps; j++) {
+	for (j = 0; j < num_transient_eps; j++) {
 		printf("Thread %d: opening client \n", idx);
 		ret = open_client(idx);
 		if (ret) {
@@ -222,7 +222,7 @@ static void *post_sends(void *context)
 			return NULL;
 		}
 
-		for (i = 0; i < opts.iterations / num_eps; i++) {
+		for (i = 0; i < opts.iterations / num_transient_eps; i++) {
 			printf("Thread %d: post send for ep %d \n", idx, idx);
 			ret = ep_post_tx(idx, len);
 			if (ret) {
