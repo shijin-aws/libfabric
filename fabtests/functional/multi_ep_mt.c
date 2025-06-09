@@ -198,13 +198,14 @@ static int get_one_comp(struct fid_cq *cq)
 
 static void *post_sends(void *context)
 {
-	int idx, ret, i;
+	int idx, ret, i, j;
 	size_t len;
 	// the range of the sleep time (in nanoseconds)
 	int min = 0;
 	int max = 999999999;
 	int sleep_time;
 	struct timespec ts;
+	int num_eps = 3;
 
 	srand(time(NULL));
 	sleep_time = (rand() % (max - min + 1)) + min;
@@ -213,29 +214,31 @@ static void *post_sends(void *context)
 
 	nanosleep(&ts, NULL);
 	len = opts.transfer_size;
-	printf("Thread %d: opening client \n", idx);
-	ret = open_client(idx);
-	if (ret) {
-		FT_PRINTERR("open client failed!\n", ret);
-		return NULL;
-	}
-
-	for (i = 0; i < opts.iterations; i++) {
-		printf("Thread %d: post send for ep %d \n", idx, idx);
-		ret = ep_post_tx(idx, len);
+	for (j = 0; j < num_eps; j++) {
+		printf("Thread %d: opening client \n", idx);
+		ret = open_client(idx);
 		if (ret) {
-			FT_PRINTERR("fi_send", ret);
+			FT_PRINTERR("open client failed!\n", ret);
 			return NULL;
 		}
+
+		for (i = 0; i < opts.iterations / num_eps; i++) {
+			printf("Thread %d: post send for ep %d \n", idx, idx);
+			ret = ep_post_tx(idx, len);
+			if (ret) {
+				FT_PRINTERR("fi_send", ret);
+				return NULL;
+			}
+		}
+
+		sleep_time = (rand() % (max - min + 1)) + min;
+		ts.tv_nsec = sleep_time;
+		nanosleep(&ts, NULL);
+
+		// exit
+		printf("Thread %d: closing client\n", idx);
+		close_client(idx);
 	}
-
-	sleep_time = (rand() % (max - min + 1)) + min;
-	ts.tv_nsec = sleep_time;
-	nanosleep(&ts, NULL);
-
-	// exit
-	printf("Thread %d: closing client\n", idx);
-	close_client(idx);
 	return NULL;
 }
 
