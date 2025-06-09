@@ -43,9 +43,9 @@ struct efa_rdm_pke *efa_rdm_pke_alloc(struct efa_rdm_ep *ep,
 	if (!pkt_entry)
 		return NULL;
 
-#ifdef ENABLE_EFA_POISONING
+//#ifdef ENABLE_EFA_POISONING
 	efa_rdm_poison_mem_region(pkt_entry, pkt_pool->attr.size);
-#endif
+//#endif
 	dlist_init(&pkt_entry->entry);
 
 #if ENABLE_DEBUG
