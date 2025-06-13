@@ -11,6 +11,7 @@
 #include "ofi_hmem.h"
 #include "ofi_util.h"
 #include "ofi_lock.h"
+#include "fi_ext_efa.h"
 
 enum efa_domain_info_type {
 	EFA_INFO_RDM,
@@ -114,5 +115,10 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 		    struct fid_domain **domain_fid, void *context);
 
 void efa_domain_progress_rdm_peers_and_queues(struct efa_domain *domain);
+
+int efa_domain_query_cq(struct fid_cq *cq_fid, struct fi_efa_cq_attr *cq_attr);
+int efa_domain_query_qp_wqs(struct fid_ep *ep_fid,
+				   struct fi_efa_wq_attr *sq_attr,
+				   struct fi_efa_wq_attr *rq_attr);
 
 #endif

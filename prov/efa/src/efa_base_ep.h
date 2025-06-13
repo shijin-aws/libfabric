@@ -45,6 +45,9 @@ struct efa_qp {
 	struct efa_base_ep *base_ep;
 	uint32_t qp_num;
 	uint32_t qkey;
+
+	struct efadv_wq_attr sq_attr;
+	struct efadv_wq_attr rq_attr;
 };
 
 #define EFA_GID_LEN	16

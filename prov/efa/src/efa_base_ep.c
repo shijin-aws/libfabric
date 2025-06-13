@@ -263,6 +263,14 @@ int efa_base_ep_create_qp(struct efa_base_ep *base_ep,
 	if (ret)
 		return ret;
 
+#if HAVE_EFADV_QUERY_QP_WQS
+	{
+		/* TODO: where to put these in libfabric QP? */
+		struct efadv_wq_attr *sq_attr=NULL, *rq_attr=NULL;
+		ret = efadv_query_qp_wqs(base_ep->qp->ibv_qp, sq_attr, rq_attr, sizeof(sq_attr));
+	}
+#endif
+
 	base_ep->qp->base_ep = base_ep;
 	return 0;
 }

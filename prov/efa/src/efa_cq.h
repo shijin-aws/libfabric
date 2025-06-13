@@ -21,9 +21,31 @@ struct efa_ibv_cq_poll_list_entry {
 	struct efa_ibv_cq	*cq;
 };
 
+// struct efa_cqdirect_sub_cq {
+// 	/* identical to rdma-core efa_sub_cq */
+// 	uint16_t consumed_cnt;
+// 	int phase;
+// 	uint8_t *buf;
+// 	int qmask;
+// 	int cqe_size;
+// 	uint32_t ref_cnt;
+// };
+
+struct efa_cqdirect_cq {
+	/* combines fi_efa_cq_attr (public) with rdma-core's private efa_sub_cq */
+	struct fi_efa_cq_attr cq_attr;	
+	struct efa_io_cdesc_common *cur_cqe;
+	int phase;
+	int qmask;
+	uint16_t consumed_cnt;
+};
+
 struct efa_cq {
 	struct util_cq		util_cq;
 	struct efa_ibv_cq	ibv_cq;
+#if HAVE_EFADV_QUERY_CQ
+	struct efa_cqdirect_cq  cqdirect;
+#endif
 };
 
 extern struct fi_ops_cq efa_cq_ops;

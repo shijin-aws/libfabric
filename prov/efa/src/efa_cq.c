@@ -12,8 +12,6 @@
 #include "efa_cq.h"
 #include <infiniband/verbs.h>
 
-#include <
-
 
 static inline uint64_t efa_cq_opcode_to_fi_flags(enum ibv_wc_opcode opcode) {
 	switch (opcode) {
@@ -241,58 +239,121 @@ efa_cq_proc_ibv_recv_rdma_with_imm_completion(struct efa_base_ep *base_ep,
 	}
 }
 
-static int efacq_start_poll(struct ibv_cq_ex *current,
-			 struct ibv_poll_cq_attr *attr)
+/* stolen from rdma-core: efa_io_defs.h */
+struct efa_io_cdesc_common {
+	/*
+	 * verbs-generated request ID, as provided in the completed tx or rx
+	 * descriptor.
+	 */
+	uint16_t req_id;
+	uint8_t status;
+	/*
+	 * flags
+	 * 0 : phase - Phase bit
+	 * 2:1 : q_type - enum efa_io_queue_type: send/recv
+	 * 3 : has_imm - indicates that immediate data is
+	 *    present - for RX completions only
+	 * 6:4 : op_type - enum efa_io_send_op_type
+	 * 7 : unsolicited - indicates that there is no
+	 *    matching request - for RDMA with imm. RX only
+	 */
+	uint8_t flags;
+	/* local QP number */
+	uint16_t qp_num;
+};
+
+#define __bf_shf(x) ((x) - 1)
+
+#define BIT(nr)     (1UL << (nr))
+#define EFA_IO_CDESC_COMMON_PHASE_MASK BIT(1)
+#define FIELD_GET(_mask, _reg) \
+	({ (typeof(_mask))(((_reg) & (_mask)) >> __bf_shf(_mask)); })
+
+/* need this for other arch.  This is for x86_64: */
+#define udma_from_device_barrier() asm volatile("lfence" ::: "memory")
+
+	
+#define EFA_GET(ptr, mask) FIELD_GET(mask, *(ptr))
+
+
+static int efa_cqe_is_pending(struct efa_io_cdesc_common *cqe_common,
+			      int phase)
 {
-	// struct rxe_cq *cq = container_of(current, struct rxe_cq, vcq.cq_ex);
+	return EFA_GET(&cqe_common->flags, EFA_IO_CDESC_COMMON_PHASE_MASK) == phase;
+}
 
-	// pthread_spin_lock(&cq->lock);
+static inline struct efa_io_cdesc_common *
+efa_sub_cq_get_cqe(struct efa_cqdirect_cq *cqd, int entry)
+{
+	return (struct efa_io_cdesc_common *)(cqd->cq_attr.buffer +
+					      (entry * cqd->cq_attr.entry_size));
+}
 
-	// cq->cur_index = load_consumer_index(cq->queue);
+static inline uint32_t efa_cqdirect_get_current_index(struct efa_cqdirect_cq *cqdirect)
+{
+	return cqdirect->consumed_cnt & cqdirect->qmask;
+}
 
-	// if (check_cq_queue_empty(cq)) {
-	// 	pthread_spin_unlock(&cq->lock);
-	// 	errno = ENOENT;
-	// 	return errno;
-	// }
+static struct efa_io_cdesc_common *
+efa_cqdirect_next_sub_cqe_get(struct efa_cqdirect_cq *cqdirect)
+{
+	/* See: cq_next_sub_cqe_get */
+	struct efa_io_cdesc_common *cqe;
+	uint32_t current_index;
 
-	// cq->wc = addr_from_index(cq->queue, cq->cur_index);
-	// cq->vcq.cq_ex.status = cq->wc->status;
-	// cq->vcq.cq_ex.wr_id = cq->wc->wr_id;
+	current_index = efa_cqdirect_get_current_index(cqdirect);
+	cqe = efa_sub_cq_get_cqe(cqdirect, current_index);
+	if (efa_cqe_is_pending(cqe, cqdirect->phase)) {
+		/* Do not read the rest of the completion entry before the
+		 * phase bit has been validated.
+		 */
+		udma_from_device_barrier();
+		cqdirect->consumed_cnt++;
+		if (!efa_cqdirect_get_current_index(cqdirect))
+			cqdirect->phase = 1 - cqdirect->phase;
+		return cqe;
+	}
 
+	return NULL;
+}
+
+static inline int
+efa_cqdirect_start_poll( struct ibv_cq_ex *ibvcqx, struct efa_cqdirect_cq *cqdirect)
+{
+	cqdirect->cur_cqe = efa_cqdirect_next_sub_cqe_get(cqdirect);
+	if (!cqdirect->cur_cqe)
+		return ENOENT;
+
+	// efa_process_ex_cqe(cq, *cur_qp);
 	return 0;
 }
 
-void efa_cq_poll_direct_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq) {
+
+void efa_cqdirect_poll_cq(ssize_t cqe_to_process, struct efa_cq *cq) {
 
 	bool should_end_poll = false;
 	struct efa_base_ep *base_ep;
-	struct efa_cq *cq;
 	struct efa_domain *efa_domain;
 	struct fi_cq_tagged_entry cq_entry = {0};
 	struct fi_cq_err_entry err_entry;
 	ssize_t err = 0;
 	size_t num_cqe = 0; /* Count of read entries */
 	int prov_errno, opcode;
+	// struct efa_ibv_cq *ibv_cq = &cq->ibv_cq;
 
-	// assert(efa_domain->info_type == EFA_INFO_DIRECT);
-
-
-	cq = container_of(ibv_cq, struct efa_cq, ibv_cq);
+	
 	efa_domain = container_of(cq->util_cq.domain, struct efa_domain, util_domain);
-
-	/* Initialize an empty ibv_poll_cq_attr struct for ibv_start_poll.
-	 * EFA expects .comp_mask = 0, or otherwise returns EINVAL.
-	 */
-	struct ibv_poll_cq_attr poll_cq_attr = {.comp_mask = 0};
+	assert(efa_domain->info_type == EFA_INFO_DIRECT);
+	assert(cq->cqdirect.cq_attr.buffer);
 
 
 	/* Call ibv_start_poll only once */
-	err = efacq_start_poll(cq->ibv_cq.ibv_cq_ex, &poll_cq_attr);
+	err = efa_cqdirect_start_poll(cq->ibv_cq.ibv_cq_ex, &cq->cqdirect);
 	should_end_poll = !err;
 
 	while (!err) {
-		base_ep = efa_domain->qp_table[ibv_wc_read_qp_num(cq->ibv_cq.ibv_cq_ex) & efa_domain->qp_table_sz_m1]->base_ep;
+		int qp_num = ibv_wc_read_qp_num(cq->ibv_cq.ibv_cq_ex) & efa_domain->qp_table_sz_m1;
+		base_ep = efa_domain->qp_table[qp_num]->base_ep;
 		opcode = ibv_wc_read_opcode(cq->ibv_cq.ibv_cq_ex);
 		if (cq->ibv_cq.ibv_cq_ex->status) {
 			prov_errno = ibv_wc_read_vendor_err(cq->ibv_cq.ibv_cq_ex);
@@ -394,13 +455,6 @@ void efa_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 
 	cq = container_of(ibv_cq, struct efa_cq, ibv_cq);
 	efa_domain = container_of(cq->util_cq.domain, struct efa_domain, util_domain);
-
-	if (efa_env.efa_direct_cq_ops
-		// && efa_domain->info_type == EFA_INFO_DIRECT
-	   ) {
-		efa_cq_poll_direct_cq( cqe_to_process, ibv_cq);
-		return;
-	}
 
 	/* Initialize an empty ibv_poll_cq_attr struct for ibv_start_poll.
 	 * EFA expects .comp_mask = 0, or otherwise returns EINVAL.
@@ -515,6 +569,13 @@ struct fi_ops_cq efa_cq_ops = {
 void efa_cq_progress(struct util_cq *cq)
 {
 	struct efa_cq *efa_cq = container_of(cq, struct efa_cq, util_cq);
+	struct efa_domain *efa_domain = container_of(efa_cq->util_cq.domain, struct efa_domain, util_domain);
+
+
+	if (efa_env.efa_direct_cq_ops && efa_domain->info_type == EFA_INFO_DIRECT) {
+		efa_cqdirect_poll_cq( efa_env.efa_cq_read_size, efa_cq);
+		return;
+	}
 
 	/* Acquire the lock to prevent race conditions when qp_table is being updated */
 	ofi_genlock_lock(&cq->ep_list_lock);
@@ -595,6 +656,20 @@ int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 	(*cq_fid)->fid.context = context;
 	(*cq_fid)->fid.ops = &efa_cq_fi_ops;
 	(*cq_fid)->ops = &efa_cq_ops;
+
+#if HAVE_EFADV_QUERY_CQ
+	retv = efa_domain_query_cq(*cq_fid, &cq->cqdirect.cq_attr);
+	if (retv != FI_SUCCESS) {
+		EFA_WARN(FI_LOG_CQ, "Unable to get cq_attr after open: %s\n",
+			fi_strerror(-retv));
+		cq->cqdirect.cq_attr.buffer = NULL;
+	} else {
+		/* see efa_sub_cq_initialize */
+		cq->cqdirect.phase = 1;
+		cq->cqdirect.consumed_cnt = 0;
+		cq->cqdirect.qmask = cq->cqdirect.cq_attr.num_entries - 1;
+	}
+#endif
 
 	return 0;
 

@@ -462,7 +462,7 @@ efa_domain_query_mr(struct fid_mr *mr, struct fi_efa_mr_attr *mr_attr)
  * @param rq_attr pointer to receive queue attributes
  * @return 0 on success, negative integer on failure
  */
-static int efa_domain_query_qp_wqs(struct fid_ep *ep_fid,
+int efa_domain_query_qp_wqs(struct fid_ep *ep_fid,
 				   struct fi_efa_wq_attr *sq_attr,
 				   struct fi_efa_wq_attr *rq_attr)
 {
@@ -525,7 +525,7 @@ static int efa_domain_query_qp_wqs(struct fid_ep *ep_fid,
  * @param cq_attr pointer to fi_efa_cq_attr
  * @return 0 on success, negative integer on failure
  */
-static int efa_domain_query_cq(struct fid_cq *cq_fid, struct fi_efa_cq_attr *cq_attr)
+int efa_domain_query_cq(struct fid_cq *cq_fid, struct fi_efa_cq_attr *cq_attr)
 {
 	struct efa_cq *efa_cq = container_of(cq_fid, struct efa_cq, util_cq.cq_fid);
 	struct efadv_cq_attr attr = {0};
