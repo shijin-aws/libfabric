@@ -801,13 +801,16 @@ bool efa_rdm_ep_has_unfinished_send(struct efa_rdm_ep *efa_rdm_ep)
 	/* Only flush the opes queued due to rnr and ctrl */
 	uint64_t queued_ope_flags = EFA_RDM_OPE_QUEUED_CTRL | EFA_RDM_OPE_QUEUED_RNR;
 
-	if (efa_rdm_ep->efa_outstanding_tx_ops > 0)
+	if (efa_rdm_ep->efa_outstanding_tx_ops > 0) {
+		EFA_WARN(FI_LOG_EP_CTRL, "efa_rdm_ep->efa_outstanding_tx_ops: %zu\n", efa_rdm_ep->efa_outstanding_tx_ops);
 		return true;
+	}
 
 	dlist_foreach_safe(&efa_rdm_ep_domain(efa_rdm_ep)->ope_queued_list, entry, tmp) {
 		ope = container_of(entry, struct efa_rdm_ope,
 					queued_entry);
 		if (ope->ep == efa_rdm_ep && (ope->internal_flags & queued_ope_flags)) {
+			EFA_WARN(FI_LOG_EP_CTRL, "efa_rdm_ep has queued packets \n");
 			return true;
 		}
 	}

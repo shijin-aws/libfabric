@@ -437,25 +437,29 @@ enum ibv_wc_status efa_rdm_cq_process_wc_closing_ep(struct efa_ibv_cq *cq, struc
 				   pkt_entry->ope->addr);
 #endif
 
-	if (OFI_UNLIKELY(status != IBV_WC_SUCCESS)) {
-		if (!efa_cq_wc_is_unsolicited(cq->ibv_cq_ex)) {
-			peer = efa_rdm_ep_get_peer(ep, pkt_entry->addr);
+	if (!efa_cq_wc_is_unsolicited(cq->ibv_cq_ex)) {
+		peer = efa_rdm_ep_get_peer(ep, pkt_entry->addr);
+		if (OFI_UNLIKELY(status != IBV_WC_SUCCESS)) {
 			prov_errno = efa_rdm_cq_get_prov_errno(cq->ibv_cq_ex, peer);
-			if (prov_errno == EFA_IO_COMP_STATUS_REMOTE_ERROR_RNR) {
+			if (!(pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP) &&
+				prov_errno == EFA_IO_COMP_STATUS_REMOTE_ERROR_RNR &&
+				ep->handle_resource_management == FI_RM_ENABLED) {
 				switch(efa_rdm_pke_get_base_hdr(pkt_entry)->type) {
 				case EFA_RDM_RECEIPT_PKT:
 				case EFA_RDM_EOR_PKT:
-					efa_rdm_ep_queue_rnr_pkt(ep, &pkt_entry->ope->queued_pkts, pkt_entry, peer);
+					efa_rdm_ep_record_tx_op_completed(ep, pkt_entry, peer);
+					efa_rdm_ep_queue_rnr_pkt(ep, pkt_entry, peer);
+					return status;
 				default:
 					break;
 				}
 			}
 		}
-	} else {
 		switch (opcode) {
 		case IBV_WC_SEND: /* fall through */
 		case IBV_WC_RDMA_WRITE: /* fall through */
 		case IBV_WC_RDMA_READ:
+			efa_rdm_ep_record_tx_op_completed(ep, pkt_entry, peer);
 			efa_rdm_pke_release_tx(pkt_entry);
 			break;
 		case IBV_WC_RECV: /* fall through */
@@ -604,7 +608,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	/* Call ibv_start_poll only once */
 	efa_cq_start_poll(ibv_cq);
 
-	while (efa_cq_wc_available(ibv_cq) && i++ < cqe_to_process) {
+	while (efa_cq_wc_available(ibv_cq)) {
 		ep = efa_rdm_cq_get_rdm_ep(ibv_cq, efa_domain);
 		if (OFI_UNLIKELY(efa_rdm_cq_process_wc(ibv_cq, ep) != IBV_WC_SUCCESS))
 			break;
@@ -615,6 +619,8 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		 * ibv_next_poll MUST be call after the current WC is fully processed,
 		 * which prevents later calls on ibv_cq_ex from reading the wrong WC.
 		 */
+		if (++i == cqe_to_process)
+			break;
 		efa_cq_next_poll(ibv_cq);
 	}
 	efa_cq_end_poll(ibv_cq);

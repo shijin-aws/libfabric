@@ -317,9 +317,9 @@ static inline bool efa_cq_wc_available(struct efa_ibv_cq *cq)
 static inline void efa_cq_report_poll_err(struct efa_ibv_cq *cq)
 {
 	int err = cq->poll_err;
-	int prov_errno = ibv_wc_read_vendor_err(cq->ibv_cq_ex);
 
 	if (err && err != ENOENT) {
+		int prov_errno = ibv_wc_read_vendor_err(cq->ibv_cq_ex);
 		err = err > 0 ? err : -err;
 		EFA_WARN(FI_LOG_CQ, "Encountered error during CQ polling. err: %s (%d), prov_errno: %s (%d)\n",
 				fi_strerror(err), err, efa_strerror(prov_errno), prov_errno);
