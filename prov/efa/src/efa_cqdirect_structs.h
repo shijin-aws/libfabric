@@ -1,0 +1,106 @@
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
+
+#ifndef _EFA_CQDIRECT_STRUCTS_H
+#define _EFA_CQDIRECT_STRUCTS_H
+
+#include "config.h"
+#include <asm/types.h>
+#include "efa_cqdirect_efa_io_defs.h"
+// #include <infiniband/efadv.h>
+
+/*
+ * The contents of this file only make sense if we can query rdma-core for QP
+ * and CQ information.
+ */
+
+#define HAVE_CQDIRECT (HAVE_EFADV_QUERY_QP_WQS && HAVE_EFADV_QUERY_CQ)
+
+
+struct efa_cqdirect_wq {
+	/* see `struct efa_wq` in rdma-core/providers/efa/efa.h */
+
+	uint64_t *wrid;
+	/* wrid_idx_pool: Pool of free indexes in the wrid array, used to select the
+	 * wrid entry to be used to hold the next tx packet's context.
+	 * At init time, entry N will hold value N, as OOO tx-completions arrive,
+	 * the value stored in a given entry might not equal the entry's index.
+	 */
+	uint32_t *wrid_idx_pool;
+	uint32_t wqe_cnt;
+	uint32_t wqe_size;
+	uint32_t wqe_posted;
+	uint32_t wqe_completed;
+	uint16_t pc; /* Producer counter */
+	uint16_t desc_mask;
+	/* wrid_idx_pool_next: Index of the next entry to use in wrid_idx_pool. */
+	uint16_t wrid_idx_pool_next;
+	int max_sge;
+	int phase;
+	pthread_spinlock_t wqlock;
+
+	uint32_t *db;
+	uint16_t sub_cq_idx;
+};
+
+struct efa_cqdirect_cq {
+	/* combines fi_efa_cq_attr (public) with rdma-core's private efa_sub_cq */
+
+	uint8_t *buffer;
+    uint32_t entry_size;
+    uint32_t num_entries;
+
+	struct efa_io_cdesc_common *cur_cqe;
+	struct efa_qp *cur_qp;
+	struct efa_cqdirect_wq *cur_wq;
+	int phase;
+	int qmask;
+	uint16_t consumed_cnt;
+
+};
+
+struct efa_cqdirect_rq {
+	/* see efa_rq in rdma-core/providers/efa/efa.h */
+	struct efa_cqdirect_wq wq;
+	uint8_t *buf;
+	// size_t buf_size;
+};
+
+struct efa_cqdirect_sq {
+	/* see efa_sq in rdma-core/providers/efa/efa.h */
+	struct efa_cqdirect_wq wq;
+	uint8_t *desc; // this is the "buf" for the sq.
+	// uint32_t desc_offset;
+	// size_t desc_ring_mmap_size;
+	size_t max_inline_data;
+	size_t max_wr_rdma_sge;
+	uint16_t max_batch_wr; //TODO: how?
+
+	/* Buffer for pending WR entries in the current session */
+	// uint8_t *local_queue;
+	/* cqdirect change:  Number of WR entries posted without ringing doorbell */
+	uint32_t num_wqe_pending;
+	/* Phase before current session */
+	// int phase_rb;
+	
+	/* Current wqe being built, points into batch. */
+	struct efa_io_tx_wqe *curr_tx_wqe;
+	/* staging for the WQE's.  Once FI_MORE=0, flush. */
+	struct efa_io_tx_wqe wqe_batch[16];
+
+};
+
+struct efa_cqdirect_qp {
+	// struct efadv_wq_attr sq_attr;
+	// struct efadv_wq_attr rq_attr;
+
+	// struct verbs_qp verbs_qp;
+	struct efa_cqdirect_sq sq;
+	struct efa_cqdirect_rq rq;
+	// int page_size;
+	// int sq_sig_all;
+	int wr_session_err;
+	// struct ibv_device *dev;
+};
+
+#endif

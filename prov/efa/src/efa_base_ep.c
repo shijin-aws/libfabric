@@ -7,6 +7,7 @@
 #include "efa_cq.h"
 #include "efa_cntr.h"
 #include "rdm/efa_rdm_protocol.h"
+#include "efa_cqdirect.h"
 
 int efa_base_ep_bind_av(struct efa_base_ep *base_ep, struct efa_av *av)
 {
@@ -263,12 +264,8 @@ int efa_base_ep_create_qp(struct efa_base_ep *base_ep,
 	if (ret)
 		return ret;
 
-#if HAVE_EFADV_QUERY_QP_WQS
-	{
-		/* TODO: where to put these in libfabric QP? */
-		struct efadv_wq_attr *sq_attr=NULL, *rq_attr=NULL;
-		ret = efadv_query_qp_wqs(base_ep->qp->ibv_qp, sq_attr, rq_attr, sizeof(sq_attr));
-	}
+#if HAVE_CQDIRECT
+	ret = efa_cqdirect_qp_initialize(base_ep->qp);
 #endif
 
 	base_ep->qp->base_ep = base_ep;
