@@ -12,6 +12,8 @@
 #include "efa_cqdirect_efa_io_defs.h"
 #include "efa_av.h"
 
+#define PRINT_TRACE 0
+
 
 static inline void efa_cqdirect_rq_ring_doorbell(struct efa_cqdirect_rq *rq, uint16_t pc)
 {
@@ -25,6 +27,9 @@ static inline void efa_sq_ring_doorbell(struct efa_cqdirect_sq *sq, uint16_t pc)
 	// old_db = mmio_read32(sq->wq.db); //DEBUG ONLY:
 	mmio_write32(sq->wq.db, pc);
 	// new_db = mmio_read32(sq->wq.db); //DEBUG ONLY:
+#if PRINT_TRACE
+	printf("[cqdirect] SQ Doorbell: %d\n",pc);
+#endif
 	
 }
 
@@ -158,6 +163,9 @@ static void efa_cqdirect_process_ex_cqe(struct efa_cq *efa_cq, struct efa_qp *qp
 		ibvcqx->wr_id = efa_cq->cqdirect.cur_wq->wrid[wrid_idx];
 		ibvcqx->status = to_ibv_status(cqe->status);
 
+#if PRINT_TRACE
+		printf("[cqdirect] Got completion for wrid_idx at %d (SQ).  status=%d\n", wrid_idx, ibvcqx->status);
+#endif
 		// rdma_tracepoint(rdma_core_efa, process_completion, cq->dev->name, ibvcqx->wr_id,
 		// 		ibvcqx->status, efa_wc_read_opcode(ibvcqx), cqe->qp_num,
 		// 		UINT32_MAX, UINT16_MAX, efa_wc_read_byte_len(ibvcqx));
@@ -167,11 +175,15 @@ static void efa_cqdirect_process_ex_cqe(struct efa_cq *efa_cq, struct efa_qp *qp
 			efa_cq->cqdirect.cur_wq->wrid[wrid_idx] : 0;
 		ibvcqx->status = to_ibv_status(cqe->status);
 
+#if PRINT_TRACE
+		printf("[cqdirect] Got completion for wrid_idx at %d (RQ).  status=%d\n", wrid_idx, ibvcqx->status);
+#endif
 		// rdma_tracepoint(rdma_core_efa, process_completion, cq->dev->name, ibvcqx->wr_id,
 		// 		ibvcqx->status, efa_wc_read_opcode(ibvcqx),
 		// 		efa_wc_read_src_qp(ibvcqx), cqe->qp_num, efa_wc_read_slid(ibvcqx),
 		// 		efa_wc_read_byte_len(ibvcqx));
 	}
+
 }
 
 uint32_t efa_cqdirect_wc_read_qp_num(struct efa_cq *efa_cq) {
@@ -323,6 +335,9 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	direct_qp->rq.wq.db = rq_attr.doorbell;
 	direct_qp->rq.wq.wqe_size = rq_attr.entry_size;
 	direct_qp->rq.wq.max_sge = 3;
+	// TODO: in rdma-core, the wqe_cnt is set to rq_desc_cnt / qp->rq.wq.max_sge,
+	// TODO: while the desc_mask is just rq_desc_cnt - 1.  In practice only the mask matters.
+	rq_attr.num_entries = 32768; // TODO fix this hard-coded number!
 	efa_cqdirect_wq_initialize(&direct_qp->rq.wq, rq_attr.num_entries);
 	
 
@@ -432,6 +447,9 @@ int efa_cqdirect_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, struct ibv
 	struct efa_cqdirect_wq *wq = &qp->cqdirect_qp.rq.wq;
 	uint32_t rq_desc_offset;
 	uint32_t i;
+
+	// TODO: unlike rdma-core, this method directly writes to the
+	// TODO: write-combining memory of the RQ.  This might be sub-optimal.
 
 	while (wr) {
 
@@ -699,6 +717,42 @@ void efa_cqdirect_wr_start(struct efa_qp *qp)
 	// sq->phase_rb = qp->sq.wq.phase;
 }
 
+#if PRINT_TRACE
+static inline void dump_sqe(struct efa_io_tx_wqe *sqe, int count) {
+
+	for (int jcount=0;jcount < count; jcount++) {
+		printf("SQE[%d].META: req_id=%d, ctrl1=%x, ctrl2=%x, desp_qp=%d, len=%d, imm=%d, ah=%d, qkey=0x%x\n",
+			jcount,
+			sqe->meta.req_id,
+			sqe->meta.ctrl1,
+			sqe->meta.ctrl2,
+			sqe->meta.dest_qp_num,
+			sqe->meta.length,
+			sqe->meta.immediate_data,
+			sqe->meta.ah,
+			sqe->meta.qkey);
+	
+		if (EFA_GET(&sqe->meta.ctrl1, EFA_IO_TX_META_DESC_INLINE_MSG)) {
+			printf("[cqdirect] SQE[%d].INLINE (%d bytes): ",jcount, sqe->meta.length);
+			for (int jbyte=0; jbyte<sqe->meta.length; jbyte++) {
+				printf("%02hhX ",sqe->data.inline_data[jbyte]);
+			}
+			printf("\n");
+		} else {
+			for (int jsge=0; jsge<sqe->meta.length; jsge++) {
+				printf("[cqdirect] SQE[%d].SGE[%d] (%d bytes): lkey=0x%x, addr_lo=0x%x, addr_hi=0x%x\n",jcount,jsge,
+					sqe->data.sgl[jsge].length,
+					sqe->data.sgl[jsge].lkey,
+					sqe->data.sgl[jsge].buf_addr_lo,
+					sqe->data.sgl[jsge].buf_addr_hi );
+			}
+		}
+
+		sqe++;
+	}
+}
+#endif
+
 int efa_cqdirect_wr_complete(struct efa_qp *qp) {
 	/* See: efa_send_wr_complete. */
 	
@@ -720,11 +774,18 @@ int efa_cqdirect_wr_complete(struct efa_qp *qp) {
 		num_wqe_to_copy = MIN(MIN(
 				sq->num_wqe_pending, sq->wq.wqe_cnt - sq_desc_idx),
 				max_txbatch - curbatch);
+
+#if PRINT_TRACE
+		printf("[cqdirect] Copying to SQ@%p: idx %d, %ld bytes * %d entries:\n",sq->desc, sq_desc_idx, sizeof(struct efa_io_tx_wqe), num_wqe_to_copy);
+		dump_sqe(sq->wqe_batch + local_idx, num_wqe_to_copy);
+#endif
+
 		mmio_memcpy_x64(
 				(struct efa_io_tx_wqe *)sq->desc + sq_desc_idx,
 				sq->wqe_batch + local_idx,
 				num_wqe_to_copy * sizeof(struct efa_io_tx_wqe));
 
+		sq->wqe_batch[local_idx].meta.req_id=99;
 		sq->num_wqe_pending -= num_wqe_to_copy;
 		local_idx += num_wqe_to_copy;
 		curbatch += num_wqe_to_copy;
@@ -739,6 +800,7 @@ int efa_cqdirect_wr_complete(struct efa_qp *qp) {
 			mmio_wc_start();
 		}
 	}
+	sq->wq.pc = pc;
 
 	if (curbatch) {
 		mmio_flush_writes();
