@@ -10,12 +10,42 @@
 #include <infiniband/verbs.h>
 
 
+/*** TODO: adjust CQ_INLINE_MODE and then refactor to remove efa_cqdirect_internal.h
+ * CQ_INLINE_MODE=0: not even inline hints are given.
+ * CQ_INLINE_MODE=1: typical "static inline" hint
+ * CQ_INLINE_MODE=2: __attribute__((always_inline)) forces the issue even at -O0.
+ *                   ALSO all CQ functions are inlined within libfabric, and defined before the entry functions.
+ * 
+*/
+#define CQ_INLINE_MODE 2
+
+#if CQ_INLINE_MODE == 0
+#define MAYBE_INLINE static
+#define ENTRY_FUN
+#include "efa_cqdirect_internal.h"
+#endif
+
+#if CQ_INLINE_MODE == 1
+#define MAYBE_INLINE static inline
+#define ENTRY_FUN
+#include "efa_cqdirect_internal.h"
+#endif
+
+
+#if CQ_INLINE_MODE == 2
+#define MAYBE_INLINE __attribute__((always_inline)) static inline
+#define ENTRY_FUN static inline
+#include "efa_cqdirect_internal.h"
+#include "efa_cqdirect_entry.h"
+#endif
+
+
 
 int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp);
 int efa_cqdirect_cq_initialize( struct efa_cq *efa_cq);
 
 
-int efa_cqdirect_post_recv(struct efa_qp *efaqp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad_wr);
+ENTRY_FUN int efa_cqdirect_post_recv(struct efa_qp *efaqp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad_wr);
 static inline int efaibv_post_recv(struct efa_qp *efaqp, struct ibv_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad_wr) {
 	if (efaqp->cqdirect_enabled)
 		return efa_cqdirect_post_recv(efaqp, wr, bad_wr);
@@ -33,57 +63,57 @@ static inline int efaibv_post_recv(struct efa_qp *efaqp, struct ibv_qp *qp, stru
    if(efacq->cqdirect_enabled) { return efa_cqdirect_##fun(efacq, ##__VA_ARGS__); } else { return ibv_##fun(efacq->ibv_cq.ibv_cq_ex, ##__VA_ARGS__); }
 
 
-int efa_cqdirect_wr_complete(struct efa_qp *efaqp);
+ENTRY_FUN int efa_cqdirect_wr_complete(struct efa_qp *efaqp);
 static inline int efaibv_wr_complete(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx) {
 	EFADIRECT_SWITCH_RETURNING(wr_complete)
 }
 
-void efa_cqdirect_wr_rdma_read(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr);
+ENTRY_FUN void efa_cqdirect_wr_rdma_read(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr);
 static inline void efaibv_wr_rdma_read(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx, uint32_t rkey, uint64_t remote_addr) {
 	EFADIRECT_SWITCH(wr_rdma_read, rkey, remote_addr)
 }
 
-void efa_cqdirect_wr_rdma_write(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr);
+ENTRY_FUN void efa_cqdirect_wr_rdma_write(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr);
 static inline void efaibv_wr_rdma_write(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx, uint32_t rkey, uint64_t remote_addr) {
 	EFADIRECT_SWITCH(wr_rdma_write, rkey, remote_addr)
 }
 
-void efa_cqdirect_wr_rdma_write_imm(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr, __be32 imm_data);
+ENTRY_FUN void efa_cqdirect_wr_rdma_write_imm(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr, __be32 imm_data);
 static inline void efaibv_wr_rdma_write_imm(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx, uint32_t rkey, uint64_t remote_addr, __be32 imm_data) {
 	EFADIRECT_SWITCH(wr_rdma_write_imm, rkey, remote_addr, imm_data)
 }
 
-void efa_cqdirect_wr_send(struct efa_qp *efaqp);
+ENTRY_FUN void efa_cqdirect_wr_send(struct efa_qp *efaqp);
 static inline void efaibv_wr_send(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx) {
 	EFADIRECT_SWITCH(wr_send)
 }
 
-void efa_cqdirect_wr_send_imm(struct efa_qp *efaqp, __be32 imm_data);
+ENTRY_FUN void efa_cqdirect_wr_send_imm(struct efa_qp *efaqp, __be32 imm_data);
 static inline void efaibv_wr_send_imm(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx, __be32 imm_data) {
 	EFADIRECT_SWITCH(wr_send_imm, imm_data)
 }
 
-void efa_cqdirect_wr_set_inline_data_list(struct efa_qp *efaqp, size_t num_buf, const struct ibv_data_buf *buf_list);
+ENTRY_FUN void efa_cqdirect_wr_set_inline_data_list(struct efa_qp *efaqp, size_t num_buf, const struct ibv_data_buf *buf_list);
 static inline void efaibv_wr_set_inline_data_list(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx, size_t num_buf, const struct ibv_data_buf *buf_list) {
 	EFADIRECT_SWITCH(wr_set_inline_data_list, num_buf, buf_list)
 }
 
-void efa_cqdirect_wr_set_sge_list(struct efa_qp *efaqp, size_t num_sge, const struct ibv_sge *sg_list);
+ENTRY_FUN void efa_cqdirect_wr_set_sge_list(struct efa_qp *efaqp, size_t num_sge, const struct ibv_sge *sg_list);
 static inline void efaibv_wr_set_sge_list(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx, size_t num_sge, const struct ibv_sge *sg_list) {
 	EFADIRECT_SWITCH(wr_set_sge_list, num_sge, sg_list)
 }
 
-void efa_cqdirect_wr_set_ud_addr(struct efa_qp *efaqp, struct ibv_ah *ah, uint32_t remote_qpn, uint32_t remote_qkey);
+ENTRY_FUN void efa_cqdirect_wr_set_ud_addr(struct efa_qp *efaqp, struct ibv_ah *ah, uint32_t remote_qpn, uint32_t remote_qkey);
 static inline void efaibv_wr_set_ud_addr(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx, struct ibv_ah *ah, uint32_t remote_qpn, uint32_t remote_qkey) {
 	EFADIRECT_SWITCH(wr_set_ud_addr, ah, remote_qpn, remote_qkey)
 }
  
-void efa_cqdirect_wr_start(struct efa_qp *efaqp);
+ENTRY_FUN void efa_cqdirect_wr_start(struct efa_qp *efaqp);
 static inline void efaibv_wr_start(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx) {
 	EFADIRECT_SWITCH(wr_start)
 }
 
-int efa_cqdirect_start_poll(struct efa_cq *efacq, struct ibv_poll_cq_attr *attr);
+ENTRY_FUN int efa_cqdirect_start_poll(struct efa_cq *efacq, struct ibv_poll_cq_attr *attr);
 static inline int efaibv_start_poll(struct efa_cq *efacq, struct ibv_poll_cq_attr *attr) {
 	EFADIRECT_SWITCH_CQ_RETURNING(start_poll, attr)
 }
@@ -96,37 +126,37 @@ static inline int efaibv_start_poll(struct efa_cq *efacq, struct ibv_poll_cq_att
 // 		return ibv_wc_read_opcode(efacq->ibv_cq.ibv_cq_ex);
 // 	}
 // }
-enum ibv_wc_opcode efa_cqdirect_wc_read_opcode(struct efa_cq *efacq );
+ENTRY_FUN enum ibv_wc_opcode efa_cqdirect_wc_read_opcode(struct efa_cq *efacq );
 static inline enum ibv_wc_opcode efaibv_wc_read_opcode(struct efa_cq *efacq) {
 	EFADIRECT_SWITCH_CQ_RETURNING(wc_read_opcode)
 }
 
-int efa_cqdirect_next_poll(struct efa_cq *efacq);
+ENTRY_FUN int efa_cqdirect_next_poll(struct efa_cq *efacq);
 static inline int efaibv_next_poll(struct efa_cq *efacq) {
 	EFADIRECT_SWITCH_CQ_RETURNING(next_poll)
 }
 
-void efa_cqdirect_end_poll(struct efa_cq *efacq);
+ENTRY_FUN void efa_cqdirect_end_poll(struct efa_cq *efacq);
 static inline void efaibv_end_poll(struct efa_cq *efacq) {
 	EFADIRECT_SWITCH_CQ(end_poll)
 }
 
-uint32_t efa_cqdirect_wc_read_qp_num(struct efa_cq *efacq);
+ENTRY_FUN uint32_t efa_cqdirect_wc_read_qp_num(struct efa_cq *efacq);
 static inline uint32_t efaibv_wc_read_qp_num(struct efa_cq *efacq) {
 	EFADIRECT_SWITCH_CQ_RETURNING(wc_read_qp_num)
 }
 
-uint32_t efa_cqdirect_wc_read_byte_len(struct efa_cq *efacq);
+ENTRY_FUN uint32_t efa_cqdirect_wc_read_byte_len(struct efa_cq *efacq);
 static inline uint32_t efaibv_wc_read_byte_len(struct efa_cq *efacq) {
 	EFADIRECT_SWITCH_CQ_RETURNING(wc_read_byte_len)
 }
 
-unsigned int efa_cqdirect_wc_read_wc_flags(struct efa_cq *efacq);
+ENTRY_FUN unsigned int efa_cqdirect_wc_read_wc_flags(struct efa_cq *efacq);
 static inline unsigned int efaibv_wc_read_wc_flags(struct efa_cq *efacq) {
 	EFADIRECT_SWITCH_CQ_RETURNING(wc_read_wc_flags)
 }
 
-__be32 efa_cqdirect_wc_read_imm_data(struct efa_cq *efacq);
+ENTRY_FUN __be32 efa_cqdirect_wc_read_imm_data(struct efa_cq *efacq);
 static inline __be32 efaibv_wc_read_imm_data(struct efa_cq *efacq) {
 	EFADIRECT_SWITCH_CQ_RETURNING(wc_read_imm_data)
 }
@@ -140,9 +170,7 @@ static inline __be32 efaibv_wc_read_imm_data(struct efa_cq *efacq) {
  * @return true the wc consumes a recv buffer
  * @return false the wc doesn't consume a recv buffer
  */
-static inline
-bool efaibv_wc_is_unsolicited(struct efa_cq *efa_cq)
-{
+static inline bool efaibv_wc_is_unsolicited(struct efa_cq *efa_cq) {
 	struct ibv_cq_ex *ibv_cq_ex;
 	
 	if (!efa_use_unsolicited_write_recv())
@@ -157,9 +185,7 @@ bool efaibv_wc_is_unsolicited(struct efa_cq *efa_cq)
 
 #else
 
-static inline
-bool efaibv_wc_is_unsolicited(struct efa_cq *efa_cq)
-{
+static inline bool efaibv_wc_is_unsolicited(struct efa_cq *efa_cq) {
 	return false;
 }
 
@@ -220,6 +246,12 @@ Complete set:
 9.  ibv_wr_set_sge_list
 10. ibv_wr_set_ud_addr
 11. ibv_wr_start
+ibv_wc_read_byte_len
+ibv_wc_read_wc_flags
+ibv_wc_read_imm_data
+// ibv_wc_read_slid
+// ibv_wc_read_src_qp
+
 */
 
 #endif
