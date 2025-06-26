@@ -30,7 +30,10 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	struct efadv_wq_attr rq_attr;
 
 	memset(&efa_qp->cqdirect_qp, 0, sizeof(efa_qp->cqdirect_qp));
-	
+		
+	efa_cqdirect_timer_init(&efa_qp->cqdirect_qp.send_timing);
+	efa_cqdirect_timer_init(&efa_qp->cqdirect_qp.recv_timing);
+
 	efa_qp->cqdirect_enabled = 0;
 	if (!efa_env.efa_direct_cq_ops) {
 		// TODO: probably need to make sure CQ and QP both have visibility to efa_qp->cqdirect_enabled
@@ -80,9 +83,12 @@ int efa_cqdirect_cq_initialize( struct efa_cq *efa_cq) {
 	struct efadv_cq_attr attr = {0};
 	int ret;
 
-	efa_cq->cqdirect_enabled = 0;
 	
 	memset(&efa_cq->cqdirect, 0, sizeof(efa_cq->cqdirect));
+	efa_cq->cqdirect_enabled = 0;
+
+	efa_cqdirect_timer_init(&efa_cq->cqdirect.timing);
+
 	if (!efa_env.efa_direct_cq_ops) {
 		/* nothing to do.  Not using directcq.*/
 

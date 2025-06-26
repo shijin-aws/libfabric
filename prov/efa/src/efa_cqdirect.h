@@ -9,7 +9,6 @@
 #include "efa_cq.h"
 #include <infiniband/verbs.h>
 
-
 /*** TODO: adjust CQ_INLINE_MODE and then refactor to remove efa_cqdirect_internal.h
  * CQ_INLINE_MODE=0: not even inline hints are given.
  * CQ_INLINE_MODE=1: typical "static inline" hint
@@ -39,6 +38,11 @@
 #include "efa_cqdirect_entry.h"
 #endif
 
+#define clock_tic(clock_id) timers[clock_id].tsc_start = __rdtsc()
+#define clock_toc(clock_id) \
+    timers[clock_id].cycles_total += __rdtsc() - timers[clock_id].tsc_start; \
+    timers[clock_id].ncalls += 1;
+
 
 
 int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp);
@@ -47,10 +51,14 @@ int efa_cqdirect_cq_initialize( struct efa_cq *efa_cq);
 
 ENTRY_FUN int efa_cqdirect_post_recv(struct efa_qp *efaqp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad_wr);
 static inline int efaibv_post_recv(struct efa_qp *efaqp, struct ibv_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad_wr) {
+	int ret;
+	efa_cqdirect_timer_start(&efaqp->cqdirect_qp.recv_timing);	
 	if (efaqp->cqdirect_enabled)
-		return efa_cqdirect_post_recv(efaqp, wr, bad_wr);
+		ret = efa_cqdirect_post_recv(efaqp, wr, bad_wr);
 	else
-		return ibv_post_recv(qp, wr, bad_wr);
+		ret = ibv_post_recv(qp, wr, bad_wr);
+	efa_cqdirect_timer_stop(&efaqp->cqdirect_qp.recv_timing);
+	return ret;
 }
 
 #define EFADIRECT_SWITCH(fun, ...) \
@@ -65,7 +73,11 @@ static inline int efaibv_post_recv(struct efa_qp *efaqp, struct ibv_qp *qp, stru
 
 ENTRY_FUN int efa_cqdirect_wr_complete(struct efa_qp *efaqp);
 static inline int efaibv_wr_complete(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx) {
-	EFADIRECT_SWITCH_RETURNING(wr_complete)
+	int ret;
+	if(efaqp->cqdirect_enabled) { ret = efa_cqdirect_wr_complete(efaqp); } else { ret = ibv_wr_complete(ibvqpx ); }
+	efa_cqdirect_timer_stop(&efaqp->cqdirect_qp.send_timing);
+	return ret;
+
 }
 
 ENTRY_FUN void efa_cqdirect_wr_rdma_read(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr);
@@ -110,12 +122,17 @@ static inline void efaibv_wr_set_ud_addr(struct efa_qp *efaqp, struct ibv_qp_ex 
  
 ENTRY_FUN void efa_cqdirect_wr_start(struct efa_qp *efaqp);
 static inline void efaibv_wr_start(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx) {
+	efa_cqdirect_timer_start(&efaqp->cqdirect_qp.send_timing);
 	EFADIRECT_SWITCH(wr_start)
 }
 
 ENTRY_FUN int efa_cqdirect_start_poll(struct efa_cq *efacq, struct ibv_poll_cq_attr *attr);
 static inline int efaibv_start_poll(struct efa_cq *efacq, struct ibv_poll_cq_attr *attr) {
-	EFADIRECT_SWITCH_CQ_RETURNING(start_poll, attr)
+	int ret;
+	efa_cqdirect_timer_start(&efacq->cqdirect.timing);
+	if(efacq->cqdirect_enabled) { ret = efa_cqdirect_start_poll(efacq,attr); } else { ret = ibv_start_poll(efacq->ibv_cq.ibv_cq_ex,attr); }
+	efa_cqdirect_timer_stop(&efacq->cqdirect.timing);
+	return ret;
 }
 
 // enum ibv_wc_opcode efa_cqdirect_wc_read_opcode(struct efa_cq *efacq);

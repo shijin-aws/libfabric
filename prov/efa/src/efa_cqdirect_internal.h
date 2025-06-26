@@ -206,8 +206,6 @@ MAYBE_INLINE int efa_cqdirect_start_poll( struct efa_cq *efa_cq, struct ibv_poll
 	qpn = efa_cq->cqdirect.cur_cqe->qp_num;
 	efa_domain = container_of(efa_cq->util_cq.domain, struct efa_domain, util_domain);
 	efa_cq->cqdirect.cur_qp = efa_domain->qp_table[qpn & efa_domain->qp_table_sz_m1];
-	
-
 
 	efa_cqdirect_process_ex_cqe(efa_cq, efa_cq->cqdirect.cur_qp);
 	return 0;
