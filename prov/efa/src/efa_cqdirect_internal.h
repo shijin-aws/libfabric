@@ -25,10 +25,7 @@ MAYBE_INLINE void efa_cqdirect_rq_ring_doorbell(struct efa_cqdirect_rq *rq, uint
 
 MAYBE_INLINE void efa_sq_ring_doorbell(struct efa_cqdirect_sq *sq, uint16_t pc)
 {
-	// int32_t old_db, new_db; //DEBUG ONLY:
-	// old_db = mmio_read32(sq->wq.db); //DEBUG ONLY:
 	mmio_write32(sq->wq.db, pc);
-	// new_db = mmio_read32(sq->wq.db); //DEBUG ONLY:
 #if PRINT_TRACE
 	printf("[cqdirect] SQ Doorbell: %d\n",pc);
 #endif
@@ -448,6 +445,30 @@ static inline void dump_sqe(struct efa_io_tx_wqe *sqe, int count) {
 #endif
 
 
+MAYBE_INLINE void efa_cqdirect_send_wr_post_working(struct efa_cqdirect_sq *sq, bool force_doorbell) {
+	uint32_t sq_desc_idx;
+
+	uint32_t max_txbatch = sq->max_batch_wr;
+
+	sq_desc_idx = (sq->wq.pc-1) & sq->wq.desc_mask;
+#if PRINT_TRACE
+	printf("[cqdirect] Copying to SQ@%p: idx %d, %ld bytes * %d entries:\n",sq->desc, sq_desc_idx, sizeof(struct efa_io_tx_wqe), 1);
+	dump_sqe(&sq->curr_tx_wqe, 1);
+#endif
+	mmio_memcpy_x64(
+		(struct efa_io_tx_wqe *)sq->desc + sq_desc_idx,
+		&sq->curr_tx_wqe,
+		sizeof(struct efa_io_tx_wqe));
+	/* this routine only rings the doorbell if it must. */
+	if (force_doorbell || sq->num_wqe_pending == max_txbatch) {
+		mmio_flush_writes();
+		efa_sq_ring_doorbell(sq, sq->wq.pc);
+		mmio_wc_start();
+		sq->num_wqe_pending = 0;
+	}
+}
+
+
 MAYBE_INLINE struct efa_io_tx_wqe* efa_cqdirect_send_wr_common(struct efa_qp *qp,
 						enum efa_io_send_op_type op_type)
 {
@@ -455,7 +476,6 @@ MAYBE_INLINE struct efa_io_tx_wqe* efa_cqdirect_send_wr_common(struct efa_qp *qp
 	struct efa_cqdirect_qp *cqd_qp = &qp->cqdirect_qp;
 	struct efa_cqdirect_sq *sq = &qp->cqdirect_qp.sq;
 	struct efa_io_tx_meta_desc *meta_desc;
-	int wqe_idx;
 	int err;
 
 	if (unlikely(cqd_qp->wr_session_err))
@@ -468,15 +488,14 @@ MAYBE_INLINE struct efa_io_tx_wqe* efa_cqdirect_send_wr_common(struct efa_qp *qp
 		return NULL;
 	}
 
-	/* MODIFIED: since we don't have the local_queue, just grab an entry
-	directly on the CQ. */
-	// wqe_idx = (sq->wq.pc) & sq->wq.desc_mask;
-	wqe_idx = sq->num_wqe_pending;
+	/* MODIFIED: if any are pending, copy out the previous one first: */
+	if (sq->num_wqe_pending) {
+		efa_cqdirect_send_wr_post_working(sq, false);
+	}
 
-	sq->curr_tx_wqe = &sq->wqe_batch[wqe_idx];
-	memset(sq->curr_tx_wqe, 0, sizeof(*sq->curr_tx_wqe));
+	memset(&sq->curr_tx_wqe, 0, sizeof(sq->curr_tx_wqe));
 
-	meta_desc = &sq->curr_tx_wqe->meta;
+	meta_desc = &sq->curr_tx_wqe.meta;
 	efa_set_common_ctrl_flags(meta_desc, sq, op_type);
 	meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq,
 							    ibvqpx->wr_id);
@@ -484,7 +503,7 @@ MAYBE_INLINE struct efa_io_tx_wqe* efa_cqdirect_send_wr_common(struct efa_qp *qp
 	/* advance index and change phase */
 	efa_sq_advance_post_idx(sq);
 	sq->num_wqe_pending++;
-	return sq->curr_tx_wqe;
+	return &sq->curr_tx_wqe;
 }
 
 

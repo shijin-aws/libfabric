@@ -93,6 +93,7 @@ struct efa_cqdirect_rq {
 	// size_t buf_size;
 };
 
+#define EFA_CQDIRECT_TX_WQE_MAX_CACHE 1
 struct efa_cqdirect_sq {
 	/* see efa_sq in rdma-core/providers/efa/efa.h */
 	struct efa_cqdirect_wq wq;
@@ -105,15 +106,14 @@ struct efa_cqdirect_sq {
 
 	/* Buffer for pending WR entries in the current session */
 	// uint8_t *local_queue;
-	/* cqdirect change:  Number of WR entries posted without ringing doorbell */
+	/* cqdirect change:  Number of WR entries we have accepted without ringing doorbell,
+	   however we copy each wqe as soon as we finish building it. */
 	uint32_t num_wqe_pending;
 	/* Phase before current session */
 	// int phase_rb;
 	
-	/* Current wqe being built, points into batch. */
-	struct efa_io_tx_wqe *curr_tx_wqe;
-	/* staging for the WQE's.  Once FI_MORE=0, flush. */
-	struct efa_io_tx_wqe wqe_batch[16];
+	/* Current wqe being built. */
+	struct efa_io_tx_wqe curr_tx_wqe;
 
 };
 

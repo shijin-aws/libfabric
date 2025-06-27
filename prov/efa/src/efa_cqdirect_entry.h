@@ -66,55 +66,11 @@ ENTRY_FUN int efa_cqdirect_wr_complete(struct efa_qp *qp) {
 	
 	struct efa_cqdirect_sq *sq = &qp->cqdirect_qp.sq;
 
-	uint32_t max_txbatch = sq->max_batch_wr;
-	uint32_t pc, sq_desc_idx, curbatch, num_wqe_to_copy, local_idx;
 
-	/*
-	 * Copy local queue to device in chunks, handling wraparound and max
-	 * doorbell batch.
-	 */
-	pc = sq->wq.pc - sq->num_wqe_pending;
-	sq_desc_idx = pc & sq->wq.desc_mask;
-	local_idx=0;
-    curbatch=0;
+	/* it should not be possible to get here with sq->num_wqe_pending==0 */
+	assert(sq->num_wqe_pending);
 
-	/* mmio_wc_start() comes from efa_send_wr_start() */
-	while (sq->num_wqe_pending) {
-		num_wqe_to_copy = MIN(MIN(
-				sq->num_wqe_pending, sq->wq.wqe_cnt - sq_desc_idx),
-				max_txbatch - curbatch);
-
-#if PRINT_TRACE
-		printf("[cqdirect] Copying to SQ@%p: idx %d, %ld bytes * %d entries:\n",sq->desc, sq_desc_idx, sizeof(struct efa_io_tx_wqe), num_wqe_to_copy);
-		dump_sqe(sq->wqe_batch + local_idx, num_wqe_to_copy);
-#endif
-
-		mmio_memcpy_x64(
-				(struct efa_io_tx_wqe *)sq->desc + sq_desc_idx,
-				sq->wqe_batch + local_idx,
-				num_wqe_to_copy * sizeof(struct efa_io_tx_wqe));
-
-		sq->wqe_batch[local_idx].meta.req_id=99;
-		sq->num_wqe_pending -= num_wqe_to_copy;
-		local_idx += num_wqe_to_copy;
-		curbatch += num_wqe_to_copy;
-		pc += num_wqe_to_copy;
-		sq_desc_idx = (sq_desc_idx + num_wqe_to_copy) &
-			      sq->wq.desc_mask;
-
-		if (curbatch == max_txbatch) {
-			mmio_flush_writes();
-			efa_sq_ring_doorbell(sq, pc);
-			curbatch = 0;
-			mmio_wc_start();
-		}
-	}
-	sq->wq.pc = pc;
-
-	if (curbatch) {
-		mmio_flush_writes();
-		efa_sq_ring_doorbell(sq, sq->wq.pc);
-	}
+	efa_cqdirect_send_wr_post_working(sq, true);
 
 	return qp->cqdirect_qp.wr_session_err;
 }
@@ -173,7 +129,7 @@ ENTRY_FUN void efa_cqdirect_wr_set_inline_data_list(struct efa_qp *efa_qp,
 				 const struct ibv_data_buf *buf_list)
 {
 	struct efa_cqdirect_qp *qp = &efa_qp->cqdirect_qp;
-	struct efa_io_tx_wqe *tx_wqe = qp->sq.curr_tx_wqe;
+	struct efa_io_tx_wqe *tx_wqe = &qp->sq.curr_tx_wqe;
 	uint32_t total_length = 0;
 	uint32_t length;
 	size_t i;
@@ -217,7 +173,7 @@ ENTRY_FUN void efa_cqdirect_wr_set_sge_list(struct efa_qp *efa_qp, size_t num_sg
 	if (unlikely(qp->wr_session_err))
 		return;
 
-	tx_wqe = sq->curr_tx_wqe;
+	tx_wqe = &sq->curr_tx_wqe;
 	op_type = EFA_GET(&tx_wqe->meta.ctrl1, EFA_IO_TX_META_DESC_OP_TYPE);
 	switch (op_type) {
 	case EFA_IO_SEND:
@@ -265,7 +221,7 @@ ENTRY_FUN void efa_cqdirect_wr_set_ud_addr(struct efa_qp *efaqp, struct ibv_ah *
 	if (unlikely(efaqp->cqdirect_qp.wr_session_err))
 		return;
 
-	tx_wqe = efaqp->cqdirect_qp.sq.curr_tx_wqe;
+	tx_wqe = &efaqp->cqdirect_qp.sq.curr_tx_wqe;
 
 	tx_wqe->meta.dest_qp_num = remote_qpn;
 	tx_wqe->meta.ah = ah->efa_ah;
@@ -282,6 +238,7 @@ ENTRY_FUN void efa_cqdirect_wr_start(struct efa_qp *qp)
 	// mmio_wc_spinlock(&qp->sq.wq.wqlock);
 	qp->cqdirect_qp.wr_session_err = 0;
 	qp->cqdirect_qp.sq.num_wqe_pending = 0;
+	mmio_wc_start();
 	// sq->phase_rb = qp->sq.wq.phase;
 }
 
