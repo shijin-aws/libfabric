@@ -445,7 +445,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	dlist_init(&rx_progressed_ep_list);
 
 	/* Call ibv_start_poll only once */
-	err = efaibv_start_poll(efa_cq, &poll_cq_attr);
+	err = ibv_start_poll(ibv_cq->ibv_cq_ex, &poll_cq_attr);
 	should_end_poll = !err;
 
 	while (!err) {
@@ -460,7 +460,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 					   pkt_entry->ope->total_len, pkt_entry->ope->cq_entry.tag,
 					   pkt_entry->ope->addr);
 #endif
-		opcode = efaibv_wc_read_opcode(efa_cq);
+		opcode = ibv_wc_read_opcode(ibv_cq->ibv_cq_ex);
 		if (ibv_cq->ibv_cq_ex->status) {
 			if (pkt_entry)
 				peer = efa_rdm_ep_get_peer(ep, pkt_entry->addr);
@@ -473,7 +473,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 				break;
 			case IBV_WC_RECV: /* fall through */
 			case IBV_WC_RECV_RDMA_WITH_IMM:
-				if (efaibv_wc_is_unsolicited(efa_cq)) {
+				if (efa_cq_wc_is_unsolicited(ibv_cq->ibv_cq_ex)) {
 					EFA_WARN(FI_LOG_CQ, "Receive error %s (%d) for unsolicited write recv",
 						efa_strerror(prov_errno), prov_errno);
 					efa_base_ep_write_eq_error(&ep->base_ep, to_fi_errno(prov_errno), prov_errno);
@@ -531,7 +531,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		 * ibv_next_poll MUST be call after the current WC is fully processed,
 		 * which prevents later calls on ibv_cq_ex from reading the wrong WC.
 		 */
-		err = efaibv_next_poll(efa_cq);
+		err = ibv_next_poll(ibv_cq->ibv_cq_ex);
 	}
 
 	if (err && err != ENOENT) {
@@ -548,7 +548,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	}
 
 	if (should_end_poll)
-		efaibv_end_poll(efa_cq);
+		ibv_end_poll(ibv_cq->ibv_cq_ex);
 
 	dlist_foreach_container_safe(
 		&rx_progressed_ep_list, struct efa_rdm_ep, ep, entry, tmp) {
