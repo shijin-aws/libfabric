@@ -222,29 +222,6 @@ int efa_cq_close(fid_t fid);
 const char *efa_cq_strerror(struct fid_cq *cq_fid, int prov_errno,
 			    const void *err_data, char *buf, size_t len);
 
-#if HAVE_CAPS_UNSOLICITED_WRITE_RECV
-/**
- * @brief Check whether a completion consumes recv buffer
- *
- * @param ibv_cq_ex extended ibv cq
- * @return true the wc consumes a recv buffer
- * @return false the wc doesn't consume a recv buffer
- */
-static inline
-bool efa_cq_wc_is_unsolicited(struct ibv_cq_ex *ibv_cq_ex)
-{
-	return efa_use_unsolicited_write_recv() && efadv_wc_is_unsolicited(efadv_cq_from_ibv_cq_ex(ibv_cq_ex));
-}
-
-#else
-
-static inline
-bool efa_cq_wc_is_unsolicited(struct ibv_cq_ex *ibv_cq_ex)
-{
-	return false;
-}
-
-#endif
 
 /**
  * @brief Write the error message and return its byte length
