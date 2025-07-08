@@ -52,12 +52,12 @@ int efa_cqdirect_cq_initialize( struct efa_cq *efa_cq);
 ENTRY_FUN int efa_cqdirect_post_recv(struct efa_qp *efaqp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad_wr);
 static inline int efaibv_post_recv(struct efa_qp *efaqp, struct ibv_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad_wr) {
 	int ret;
-	efa_cqdirect_timer_start(&efaqp->cqdirect_qp.recv_timing);	
+	//efa_cqdirect_timer_start(&efaqp->cqdirect_qp.recv_timing);	
 	if (efaqp->cqdirect_enabled)
 		ret = efa_cqdirect_post_recv(efaqp, wr, bad_wr);
 	else
 		ret = ibv_post_recv(qp, wr, bad_wr);
-	efa_cqdirect_timer_stop(&efaqp->cqdirect_qp.recv_timing);
+	//efa_cqdirect_timer_stop(&efaqp->cqdirect_qp.recv_timing);
 	return ret;
 }
 
@@ -75,7 +75,7 @@ ENTRY_FUN int efa_cqdirect_wr_complete(struct efa_qp *efaqp);
 static inline int efaibv_wr_complete(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx) {
 	int ret;
 	if(efaqp->cqdirect_enabled) { ret = efa_cqdirect_wr_complete(efaqp); } else { ret = ibv_wr_complete(ibvqpx ); }
-	efa_cqdirect_timer_stop(&efaqp->cqdirect_qp.send_timing);
+	//efa_cqdirect_timer_stop(&efaqp->cqdirect_qp.send_timing);
 	return ret;
 
 }
@@ -122,16 +122,16 @@ static inline void efaibv_wr_set_ud_addr(struct efa_qp *efaqp, struct ibv_qp_ex 
  
 ENTRY_FUN void efa_cqdirect_wr_start(struct efa_qp *efaqp);
 static inline void efaibv_wr_start(struct efa_qp *efaqp, struct ibv_qp_ex *ibvqpx) {
-	efa_cqdirect_timer_start(&efaqp->cqdirect_qp.send_timing);
+	//efa_cqdirect_timer_start(&efaqp->cqdirect_qp.send_timing);
 	EFADIRECT_SWITCH(wr_start)
 }
 
 ENTRY_FUN int efa_cqdirect_start_poll(struct efa_cq *efacq, struct ibv_poll_cq_attr *attr);
 static inline int efaibv_start_poll(struct efa_cq *efacq, struct ibv_poll_cq_attr *attr) {
 	int ret;
-	efa_cqdirect_timer_start(&efacq->cqdirect.timing);
+	//efa_cqdirect_timer_start(&efacq->cqdirect.timing);
 	if(efacq->cqdirect_enabled) { ret = efa_cqdirect_start_poll(efacq,attr); } else { ret = ibv_start_poll(efacq->ibv_cq.ibv_cq_ex,attr); }
-	efa_cqdirect_timer_stop(&efacq->cqdirect.timing);
+	//efa_cqdirect_timer_stop(&efacq->cqdirect.timing);
 	return ret;
 }
 
