@@ -102,7 +102,6 @@ struct efa_cqdirect_sq {
 	// size_t desc_ring_mmap_size;
 	size_t max_inline_data;
 	size_t max_wr_rdma_sge;
-	uint16_t max_batch_wr; //TODO: how?
 
 	/* Buffer for pending WR entries in the current session */
 	// uint8_t *local_queue;

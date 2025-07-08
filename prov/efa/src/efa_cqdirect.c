@@ -55,16 +55,12 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	direct_qp->sq.wq.phase = 0;
 	direct_qp->sq.wq.db = sq_attr.doorbell;
 	direct_qp->sq.num_wqe_pending = 0;
-	direct_qp->sq.max_batch_wr = 16; //TODO how do we get this number?
-	direct_qp->sq.max_batch_wr = MIN(direct_qp->sq.max_batch_wr, EFA_CQDIRECT_TX_WQE_MAX_CACHE);
 	direct_qp->sq.max_wr_rdma_sge = 1; // TODO how do we get this number?
 	direct_qp->sq.wq.max_sge = 2; // TODO how do we get this number?
 	direct_qp->sq.max_inline_data = 32; // TODO how do we get this number?
 
 	direct_qp->sq.wq.wqe_size = sq_attr.entry_size;
 	efa_cqdirect_wq_initialize(&direct_qp->sq.wq, sq_attr.num_entries);
-
-	// TODO: max_batch!
 
 	/* see efa_qp_init_indices */
 
