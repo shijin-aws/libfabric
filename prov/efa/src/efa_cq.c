@@ -574,7 +574,7 @@ int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 	(*cq_fid)->fid.ops = &efa_cq_fi_ops;
 	(*cq_fid)->ops = &efa_cq_ops;
 
-	// TODO make sure we set no cqdirect if macro branch is not taken
+	cq->cqdirect_enabled = false;
 #if HAVE_EFADV_QUERY_CQ
 	efa_cqdirect_cq_initialize( cq );
 #endif

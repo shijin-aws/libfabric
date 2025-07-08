@@ -35,8 +35,6 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	efa_cqdirect_timer_init(&efa_qp->cqdirect_qp.send_timing);
 	efa_cqdirect_timer_init(&efa_qp->cqdirect_qp.recv_timing);
 
-	efa_qp->cqdirect_enabled = 0;
-
 	ret = efadv_query_qp_wqs(efa_qp->ibv_qp,
 								&sq_attr,
 								&rq_attr,
@@ -52,7 +50,6 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	// TODO: while the desc_mask is just rq_desc_cnt - 1.  In practice only the mask matters.
 	rq_attr.num_entries = 32768; // TODO fix this hard-coded number!
 	efa_cqdirect_wq_initialize(&direct_qp->rq.wq, rq_attr.num_entries);
-	
 
 	direct_qp->sq.desc = sq_attr.buffer;
 	direct_qp->sq.wq.phase = 0;
@@ -66,7 +63,7 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 
 	direct_qp->sq.wq.wqe_size = sq_attr.entry_size;
 	efa_cqdirect_wq_initialize(&direct_qp->sq.wq, sq_attr.num_entries);
-	
+
 	// TODO: max_batch!
 
 	/* see efa_qp_init_indices */
@@ -82,17 +79,17 @@ int efa_cqdirect_cq_initialize( struct efa_cq *efa_cq) {
 
 	
 	memset(&efa_cq->cqdirect, 0, sizeof(efa_cq->cqdirect));
-	efa_cq->cqdirect_enabled = 0;
 
 	efa_cqdirect_timer_init(&efa_cq->cqdirect.timing);
 
-	if (!efa_env.efa_direct_cq_ops) {
+	/**
+	 * We cannot use direct cq when hardware is still using sub cq.
+	 * Also disable direct cq when it's specified by environment
+	 */
+	if (!efa_env.efa_direct_cq_ops || efa_device_use_sub_cq()) {
 		/* nothing to do.  Not using directcq.*/
-
 		return FI_SUCCESS;
 	}
-
-	// TODO: check for new enough hardware.
 
 	ret = efadv_query_cq(ibv_cq_ex_to_cq(efa_cq->ibv_cq.ibv_cq_ex), &attr, sizeof(attr));
 	if (ret != FI_SUCCESS) {

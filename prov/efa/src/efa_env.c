@@ -219,7 +219,7 @@ void efa_env_define()
 	fi_param_define(&efa_prov, "internal_rx_refill_threshold", FI_PARAM_SIZE_T,
 			"The threshold that EFA provider will refill the internal rx pkt pool. (Default: %zu)", efa_env.internal_rx_refill_threshold);
 	fi_param_define(&efa_prov, "direct_cq_ops", FI_PARAM_BOOL,
-			"The threshold that EFA provider will refill the internal rx pkt pool. (Default: %d)", efa_env.efa_direct_cq_ops);
+			"Use Direct CQ OPS. (Default: %d)", efa_env.efa_direct_cq_ops);
 }
 
 

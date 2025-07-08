@@ -252,33 +252,20 @@ int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex, 
 	}
 
 	(*qp)->ibv_qp_ex = ibv_qp_to_qp_ex((*qp)->ibv_qp);
+	/* Initialize it explicitly for safety */
+	(*qp)->cqdirect_enabled = false;
 	return FI_SUCCESS;
 }
 
 static
 int efa_base_ep_create_qp(struct efa_base_ep *base_ep,
-			  struct ibv_qp_init_attr_ex *init_attr_ex,
-			  struct ibv_cq_ex *tx_cq,
-			  struct ibv_cq_ex *rx_cq)
+			  struct ibv_qp_init_attr_ex *init_attr_ex)
 {
 	int ret;
-	struct efa_cq *scq, *rcq;
 
 	ret = efa_qp_create(&base_ep->qp, init_attr_ex, base_ep->info->tx_attr->tclass);
 	if (ret)
 		return ret;
-
-#if HAVE_CQDIRECT
-	/* Only enable direct QP when direct CQ is enabled */
-	scq = container_of(tx_cq, struct efa_cq, ibv_cq.ibv_cq_ex);
-	rcq = container_of(rx_cq, struct efa_cq, ibv_cq.ibv_cq_ex);
-	assert(scq->cqdirect_enabled == rcq->cqdirect_enabled);
-	if (scq->cqdirect_enabled) {
-		ret = efa_cqdirect_qp_initialize(base_ep->qp);
-		if (ret)
-			return ret;
-	}
-#endif
 
 	base_ep->qp->base_ep = base_ep;
 	return 0;
@@ -747,39 +734,50 @@ void efa_base_ep_remove_cntr_ibv_cq_poll_list(struct efa_base_ep *ep)
 int efa_base_ep_create_and_enable_qp(struct efa_base_ep *ep, bool create_user_recv_qp)
 {
 	struct ibv_qp_init_attr_ex attr_ex = { 0 };
-	struct efa_cq *scq, *rcq;
-	struct ibv_cq_ex *tx_ibv_cq, *rx_ibv_cq;
+	struct efa_cq *scq, *rcq, *txcq, *rxcq;
 	int err;
 
-	scq = efa_base_ep_get_tx_cq(ep);
-	rcq = efa_base_ep_get_rx_cq(ep);
+	txcq = efa_base_ep_get_tx_cq(ep);
+	rxcq = efa_base_ep_get_rx_cq(ep);
 
-	if (!scq && !rcq) {
+	if (!txcq && !rxcq) {
 		EFA_WARN(FI_LOG_EP_CTRL,
 			"Endpoint is not bound to a send or receive completion queue\n");
 		return -FI_ENOCQ;
 	}
 
-	if (!scq && ofi_needs_tx(ep->info->caps)) {
+	if (!txcq && ofi_needs_tx(ep->info->caps)) {
 		EFA_WARN(FI_LOG_EP_CTRL,
 			"Endpoint is not bound to a send completion queue when it has transmit capabilities enabled (FI_SEND).\n");
 		return -FI_ENOCQ;
 	}
 
-	if (!rcq && ofi_needs_rx(ep->info->caps)) {
+	if (!rxcq && ofi_needs_rx(ep->info->caps)) {
 		EFA_WARN(FI_LOG_EP_CTRL,
 			"Endpoint is not bound to a receive completion queue when it has receive capabilities enabled. (FI_RECV)\n");
 		return -FI_ENOCQ;
 	}
 
-	tx_ibv_cq = scq ? scq->ibv_cq.ibv_cq_ex : rcq->ibv_cq.ibv_cq_ex;
-	rx_ibv_cq = rcq ? rcq->ibv_cq.ibv_cq_ex : scq->ibv_cq.ibv_cq_ex;
+	scq = txcq ? txcq : rxcq;
+	rcq = rxcq ? rxcq : txcq;
 
-	efa_base_ep_construct_ibv_qp_init_attr_ex(ep, &attr_ex, tx_ibv_cq, rx_ibv_cq);
+	efa_base_ep_construct_ibv_qp_init_attr_ex(ep, &attr_ex, scq->ibv_cq.ibv_cq_ex, rcq->ibv_cq.ibv_cq_ex);
 
-	err = efa_base_ep_create_qp(ep, &attr_ex, tx_ibv_cq, rx_ibv_cq);
+	err = efa_base_ep_create_qp(ep, &attr_ex);
 	if (err)
 		return err;
+
+#if HAVE_CQDIRECT
+	/* Only enable direct QP when direct CQ is enabled */
+	assert(scq->cqdirect_enabled == rcq->cqdirect_enabled);
+	if (scq->cqdirect_enabled) {
+		err = efa_cqdirect_qp_initialize(ep->qp);
+		if (err) {
+			efa_base_ep_destruct_qp(ep);
+			return err;
+		}
+	}
+#endif
 
 	if (create_user_recv_qp) {
 		err = efa_qp_create(&ep->user_recv_qp, &attr_ex, ep->info->tx_attr->tclass);
