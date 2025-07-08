@@ -158,6 +158,11 @@ static inline void efaibv_end_poll(struct efa_cq *efacq) {
 	EFADIRECT_SWITCH_CQ(end_poll)
 }
 
+ENTRY_FUN uint32_t efa_cqdirect_wc_read_vendor_err(struct efa_cq *efacq);
+static inline uint32_t efaibv_wc_read_vendor_err(struct efa_cq *efacq) {
+	EFADIRECT_SWITCH_CQ_RETURNING(wc_read_vendor_err)
+}
+
 ENTRY_FUN uint32_t efa_cqdirect_wc_read_qp_num(struct efa_cq *efacq);
 static inline uint32_t efaibv_wc_read_qp_num(struct efa_cq *efacq) {
 	EFADIRECT_SWITCH_CQ_RETURNING(wc_read_qp_num)
@@ -247,6 +252,7 @@ ibv_end_poll
 
 ibv_wc_read_byte_len
 ibv_wc_read_wc_flags
+ibv_wc_read_vendor_err
 ibv_wc_read_imm_data
 ibv_wc_read_slid
 ibv_wc_read_src_qp

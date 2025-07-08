@@ -390,7 +390,7 @@ void efa_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		base_ep = efa_domain->qp_table[qpnum]->base_ep;
 		opcode = efaibv_wc_read_opcode(cq);
 		if (cq->ibv_cq.ibv_cq_ex->status) {
-			prov_errno = ibv_wc_read_vendor_err(cq->ibv_cq.ibv_cq_ex);
+			prov_errno = efa_cqdirect_wc_read_vendor_err(cq);
 			switch (opcode) {
 			case IBV_WC_SEND: /* fall through */
 			case IBV_WC_RDMA_WRITE: /* fall through */

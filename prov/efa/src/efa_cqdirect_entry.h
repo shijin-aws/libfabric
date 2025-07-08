@@ -242,6 +242,11 @@ ENTRY_FUN void efa_cqdirect_wr_start(struct efa_qp *qp)
 	// sq->phase_rb = qp->sq.wq.phase;
 }
 
+ENTRY_FUN uint32_t efa_cqdirect_wc_read_vendor_err(struct efa_cq *efa_cq)
+{
+	return efa_cq->cqdirect.cur_cqe->status;
+}
+
 ENTRY_FUN uint32_t efa_cqdirect_wc_read_byte_len(struct efa_cq *efa_cq)
 {
 	struct efa_io_cdesc_common *cqe;
