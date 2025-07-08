@@ -102,7 +102,13 @@ struct efa_cqdirect_sq {
 	// size_t desc_ring_mmap_size;
 	size_t max_inline_data;
 	size_t max_wr_rdma_sge;
+	uint16_t max_batch_wr; //TODO: how?
 
+	/* Buffer for pending WR entries in the current session */
+	// uint8_t *local_queue;
+	/* cqdirect change:  Number of WR entries we have accepted without ringing doorbell,
+	   however we copy each wqe as soon as we finish building it. */
+	uint32_t num_wqe_pending;
 	/* Phase before current session */
 	// int phase_rb;
 	
