@@ -66,11 +66,9 @@ ENTRY_FUN int efa_cqdirect_wr_complete(struct efa_qp *qp) {
 	
 	struct efa_cqdirect_sq *sq = &qp->cqdirect_qp.sq;
 
-
-	/* it should not be possible to get here with sq->num_wqe_pending==0 */
-	assert(sq->num_wqe_pending);
-
-	efa_cqdirect_send_wr_post_working(sq, true);
+	mmio_flush_writes();
+	efa_sq_ring_doorbell(sq, sq->wq.pc);
+	mmio_wc_start();
 
 	return qp->cqdirect_qp.wr_session_err;
 }
@@ -237,7 +235,6 @@ ENTRY_FUN void efa_cqdirect_wr_start(struct efa_qp *qp)
 
 	// mmio_wc_spinlock(&qp->sq.wq.wqlock);
 	qp->cqdirect_qp.wr_session_err = 0;
-	qp->cqdirect_qp.sq.num_wqe_pending = 0;
 	mmio_wc_start();
 	// sq->phase_rb = qp->sq.wq.phase;
 }

@@ -445,10 +445,8 @@ static inline void dump_sqe(struct efa_io_tx_wqe *sqe, int count) {
 #endif
 
 
-MAYBE_INLINE void efa_cqdirect_send_wr_post_working(struct efa_cqdirect_sq *sq, bool force_doorbell) {
+MAYBE_INLINE void efa_cqdirect_send_wr_post_working(struct efa_cqdirect_sq *sq) {
 	uint32_t sq_desc_idx;
-
-	uint32_t max_txbatch = sq->max_batch_wr;
 
 	sq_desc_idx = (sq->wq.pc-1) & sq->wq.desc_mask;
 #if PRINT_TRACE
@@ -459,13 +457,6 @@ MAYBE_INLINE void efa_cqdirect_send_wr_post_working(struct efa_cqdirect_sq *sq, 
 		(struct efa_io_tx_wqe *)sq->desc + sq_desc_idx,
 		&sq->curr_tx_wqe,
 		sizeof(struct efa_io_tx_wqe));
-	/* this routine only rings the doorbell if it must. */
-	if (force_doorbell || sq->num_wqe_pending == max_txbatch) {
-		mmio_flush_writes();
-		efa_sq_ring_doorbell(sq, sq->wq.pc);
-		mmio_wc_start();
-		sq->num_wqe_pending = 0;
-	}
 }
 
 
@@ -488,11 +479,6 @@ MAYBE_INLINE struct efa_io_tx_wqe* efa_cqdirect_send_wr_common(struct efa_qp *qp
 		return NULL;
 	}
 
-	/* MODIFIED: if any are pending, copy out the previous one first: */
-	if (sq->num_wqe_pending) {
-		efa_cqdirect_send_wr_post_working(sq, false);
-	}
-
 	memset(&sq->curr_tx_wqe, 0, sizeof(sq->curr_tx_wqe));
 
 	meta_desc = &sq->curr_tx_wqe.meta;
@@ -500,9 +486,9 @@ MAYBE_INLINE struct efa_io_tx_wqe* efa_cqdirect_send_wr_common(struct efa_qp *qp
 	meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq,
 							    ibvqpx->wr_id);
 
+	efa_cqdirect_send_wr_post_working(sq);
 	/* advance index and change phase */
 	efa_sq_advance_post_idx(sq);
-	sq->num_wqe_pending++;
 	return &sq->curr_tx_wqe;
 }
 
