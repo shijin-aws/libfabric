@@ -28,6 +28,7 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 
 	struct efadv_wq_attr sq_attr;
 	struct efadv_wq_attr rq_attr;
+	int ret = 0;
 
 	memset(&efa_qp->cqdirect_qp, 0, sizeof(efa_qp->cqdirect_qp));
 		
@@ -35,13 +36,8 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	efa_cqdirect_timer_init(&efa_qp->cqdirect_qp.recv_timing);
 
 	efa_qp->cqdirect_enabled = 0;
-	if (!efa_env.efa_direct_cq_ops) {
-		// TODO: probably need to make sure CQ and QP both have visibility to efa_qp->cqdirect_enabled
-		/* nothing to do.  Not using directcq.*/
-		return FI_SUCCESS;
-	}
 
-	int ret = efadv_query_qp_wqs(efa_qp->ibv_qp,
+	ret = efadv_query_qp_wqs(efa_qp->ibv_qp,
 								&sq_attr,
 								&rq_attr,
 								sizeof(rq_attr));

@@ -255,17 +255,29 @@ int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex, 
 	return FI_SUCCESS;
 }
 
+static
 int efa_base_ep_create_qp(struct efa_base_ep *base_ep,
-			  struct ibv_qp_init_attr_ex *init_attr_ex)
+			  struct ibv_qp_init_attr_ex *init_attr_ex,
+			  struct ibv_cq_ex *tx_cq,
+			  struct ibv_cq_ex *rx_cq)
 {
 	int ret;
+	struct efa_cq *scq, *rcq;
 
 	ret = efa_qp_create(&base_ep->qp, init_attr_ex, base_ep->info->tx_attr->tclass);
 	if (ret)
 		return ret;
 
 #if HAVE_CQDIRECT
-	ret = efa_cqdirect_qp_initialize(base_ep->qp);
+	/* Only enable direct QP when direct CQ is enabled */
+	scq = container_of(tx_cq, struct efa_cq, ibv_cq.ibv_cq_ex);
+	rcq = container_of(rx_cq, struct efa_cq, ibv_cq.ibv_cq_ex);
+	assert(scq->cqdirect_enabled == rcq->cqdirect_enabled);
+	if (scq->cqdirect_enabled) {
+		ret = efa_cqdirect_qp_initialize(base_ep->qp);
+		if (ret)
+			return ret;
+	}
 #endif
 
 	base_ep->qp->base_ep = base_ep;
@@ -765,7 +777,7 @@ int efa_base_ep_create_and_enable_qp(struct efa_base_ep *ep, bool create_user_re
 
 	efa_base_ep_construct_ibv_qp_init_attr_ex(ep, &attr_ex, tx_ibv_cq, rx_ibv_cq);
 
-	err = efa_base_ep_create_qp(ep, &attr_ex);
+	err = efa_base_ep_create_qp(ep, &attr_ex, tx_ibv_cq, rx_ibv_cq);
 	if (err)
 		return err;
 

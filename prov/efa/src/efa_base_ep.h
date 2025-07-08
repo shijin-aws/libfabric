@@ -125,9 +125,6 @@ int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex, 
 
 void efa_qp_destruct(struct efa_qp *qp);
 
-int efa_base_ep_create_qp(struct efa_base_ep *base_ep,
-			  struct ibv_qp_init_attr_ex *init_attr_ex);
-
 void efa_base_ep_close_util_ep(struct efa_base_ep *base_ep);
 
 int efa_base_ep_destruct_qp(struct efa_base_ep *base_ep);
