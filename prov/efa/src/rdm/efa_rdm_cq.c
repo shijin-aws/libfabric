@@ -450,7 +450,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 
 	while (!err) {
 		pkt_entry = (void *)(uintptr_t)ibv_cq->ibv_cq_ex->wr_id;
-		qp = efa_domain->qp_table[ibv_wc_read_qp_num(ibv_cq->ibv_cq_ex) & efa_domain->qp_table_sz_m1];
+		qp = efa_domain->qp_table[efaibv_wc_read_qp_num(efa_cq) & efa_domain->qp_table_sz_m1];
 		ep = container_of(qp->base_ep, struct efa_rdm_ep, base_ep);
 #if HAVE_LTTNG
 		efa_rdm_tracepoint(poll_cq, (size_t) ibv_cq->ibv_cq_ex->wr_id);
