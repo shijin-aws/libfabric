@@ -1,17 +1,12 @@
 #ifndef _EFA_CQDIRECT_INTERNAL_H
 #define _EFA_CQDIRECT_INTERNAL_H
 
-// #include "efa.h"
-// #include "efa_cqdirect.h"
-// #include "efa_cqdirect_structs.h"
-// #include "efa_cqdirect_efa_io_defs.h"
-// #include "efa_av.h"
-
-#define SIZEOF_LONG 8 // TODO: :ahhh: rdma-core's config.h is leaking into mmio.h!
-#include <util/mmio.h>
+#include "efa_mmio.h"
+#include "efa_cqdirect_structs.h"
 
 #define PRINT_TRACE 0
 
+#if HAVE_CQDIRECT
 
 MAYBE_INLINE void efa_cqdirect_rq_ring_doorbell(struct efa_cqdirect_rq *rq, uint16_t pc)
 {
@@ -87,29 +82,6 @@ MAYBE_INLINE enum ibv_wc_status to_ibv_status(enum efa_errno status)
 }
 
 
-MAYBE_INLINE enum ibv_wc_opcode efa_cqdirect_wc_read_opcode(struct efa_cq *efacq)
-{
-	enum efa_io_send_op_type op_type;
-	struct efa_io_cdesc_common *cqe;
-
-	cqe = efacq->cqdirect.cur_cqe;
-	op_type = EFA_GET(&cqe->flags, EFA_IO_CDESC_COMMON_OP_TYPE);
-
-	if (EFA_GET(&cqe->flags, EFA_IO_CDESC_COMMON_Q_TYPE) ==
-		    EFA_IO_SEND_QUEUE) {
-		if (op_type == EFA_IO_RDMA_WRITE)
-			return IBV_WC_RDMA_WRITE;
-
-		return IBV_WC_SEND;
-	}
-
-	if (op_type == EFA_IO_RDMA_WRITE)
-		return IBV_WC_RECV_RDMA_WITH_IMM;
-
-	return IBV_WC_RECV;
-}
-
-
 MAYBE_INLINE int efa_cqe_is_pending(struct efa_io_cdesc_common *cqe_common,
 			      int phase)
 {
@@ -151,61 +123,39 @@ efa_cqdirect_next_sub_cqe_get(struct efa_cqdirect_cq *cqdirect)
 	return NULL;
 }
 
-MAYBE_INLINE void efa_cqdirect_process_ex_cqe(struct efa_cq *efa_cq, struct efa_qp *qp)
+MAYBE_INLINE void efa_cqdirect_process_ex_cqe(struct efa_ibv_cq *ibv_cq, struct efa_qp *qp)
 {
-	struct ibv_cq_ex *ibvcqx = efa_cq->ibv_cq.ibv_cq_ex;
-	struct efa_io_cdesc_common *cqe = efa_cq->cqdirect.cur_cqe;
-	uint32_t wrid_idx;
+    struct ibv_cq_ex *ibvcqx = ibv_cq->ibv_cq_ex;
+    struct efa_io_cdesc_common *cqe = ibv_cq->cqdirect.cur_cqe;
+    uint32_t wrid_idx;
 
-	wrid_idx = cqe->req_id;
+    wrid_idx = cqe->req_id;
 
-	if (EFA_GET(&cqe->flags, EFA_IO_CDESC_COMMON_Q_TYPE) == EFA_IO_SEND_QUEUE) {
-		efa_cq->cqdirect.cur_wq = &qp->cqdirect_qp.sq.wq;
-		ibvcqx->wr_id = efa_cq->cqdirect.cur_wq->wrid[wrid_idx];
-		ibvcqx->status = to_ibv_status(cqe->status);
+    if (EFA_GET(&cqe->flags, EFA_IO_CDESC_COMMON_Q_TYPE) == EFA_IO_SEND_QUEUE) {
+        ibv_cq->cqdirect.cur_wq = &qp->cqdirect_qp.sq.wq;
+        ibvcqx->wr_id = ibv_cq->cqdirect.cur_wq->wrid[wrid_idx];
+        ibvcqx->status = to_ibv_status(cqe->status);
 
 #if PRINT_TRACE
-		printf("[cqdirect] Got completion for wrid_idx at %d (SQ).  status=%d\n", wrid_idx, ibvcqx->status);
+        printf("[cqdirect] Got completion for wrid_idx at %d (SQ).  status=%d\n", wrid_idx, ibvcqx->status);
 #endif
-		// rdma_tracepoint(rdma_core_efa, process_completion, cq->dev->name, ibvcqx->wr_id,
-		// 		ibvcqx->status, efa_wc_read_opcode(ibvcqx), cqe->qp_num,
-		// 		UINT32_MAX, UINT16_MAX, efa_wc_read_byte_len(ibvcqx));
-	} else {
-		efa_cq->cqdirect.cur_wq = &qp->cqdirect_qp.rq.wq;
-		ibvcqx->wr_id = !EFA_GET(&cqe->flags, EFA_IO_CDESC_COMMON_UNSOLICITED) ?
-			efa_cq->cqdirect.cur_wq->wrid[wrid_idx] : 0;
-		ibvcqx->status = to_ibv_status(cqe->status);
+        // rdma_tracepoint(rdma_core_efa, process_completion, cq->dev->name, ibvcqx->wr_id,
+        //         ibvcqx->status, efa_wc_read_opcode(ibvcqx), cqe->qp_num,
+        //         UINT32_MAX, UINT16_MAX, efa_wc_read_byte_len(ibvcqx));
+    } else {
+        ibv_cq->cqdirect.cur_wq = &qp->cqdirect_qp.rq.wq;
+        ibvcqx->wr_id = !EFA_GET(&cqe->flags, EFA_IO_CDESC_COMMON_UNSOLICITED) ?
+            ibv_cq->cqdirect.cur_wq->wrid[wrid_idx] : 0;
+        ibvcqx->status = to_ibv_status(cqe->status);
 
 #if PRINT_TRACE
-		printf("[cqdirect] Got completion for wrid_idx at %d (RQ).  status=%d\n", wrid_idx, ibvcqx->status);
+        printf("[cqdirect] Got completion for wrid_idx at %d (RQ).  status=%d\n", wrid_idx, ibvcqx->status);
 #endif
-		// rdma_tracepoint(rdma_core_efa, process_completion, cq->dev->name, ibvcqx->wr_id,
-		// 		ibvcqx->status, efa_wc_read_opcode(ibvcqx),
-		// 		efa_wc_read_src_qp(ibvcqx), cqe->qp_num, efa_wc_read_slid(ibvcqx),
-		// 		efa_wc_read_byte_len(ibvcqx));
-	}
-
-}
-
-MAYBE_INLINE uint32_t efa_cqdirect_wc_read_qp_num(struct efa_cq *efa_cq) {
-	return efa_cq->cqdirect.cur_cqe->qp_num;
-}
-
-
-
-MAYBE_INLINE int efa_cqdirect_start_poll( struct efa_cq *efa_cq, struct ibv_poll_cq_attr *attr)
-{
-	uint32_t qpn;
-	struct efa_domain *efa_domain;
-	efa_cq->cqdirect.cur_cqe = efa_cqdirect_next_sub_cqe_get(&efa_cq->cqdirect);
-	if (!efa_cq->cqdirect.cur_cqe)
-		return ENOENT;
-	qpn = efa_cq->cqdirect.cur_cqe->qp_num;
-	efa_domain = container_of(efa_cq->util_cq.domain, struct efa_domain, util_domain);
-	efa_cq->cqdirect.cur_qp = efa_domain->qp_table[qpn & efa_domain->qp_table_sz_m1];
-
-	efa_cqdirect_process_ex_cqe(efa_cq, efa_cq->cqdirect.cur_qp);
-	return 0;
+        // rdma_tracepoint(rdma_core_efa, process_completion, cq->dev->name, ibvcqx->wr_id,
+        //         ibvcqx->status, efa_wc_read_opcode(ibvcqx),
+        //         efa_wc_read_src_qp(ibvcqx), cqe->qp_num, efa_wc_read_slid(ibvcqx),
+        //         efa_wc_read_byte_len(ibvcqx));
+    }
 }
 
 
@@ -216,29 +166,6 @@ MAYBE_INLINE void efa_wq_put_wrid_idx(struct efa_cqdirect_wq *wq, uint32_t wrid_
 	wq->wrid_idx_pool[wq->wrid_idx_pool_next] = wrid_idx;
 	wq->wqe_completed++;
 	// pthread_spin_unlock(&wq->wqlock);
-}
-
-MAYBE_INLINE int efa_cqdirect_next_poll(struct efa_cq *efa_cq)
-{
-	struct efa_io_cdesc_common *cqe = efa_cq->cqdirect.cur_cqe;
-
-	if (!EFA_GET(&cqe->flags, EFA_IO_CDESC_COMMON_UNSOLICITED))
-		efa_wq_put_wrid_idx(efa_cq->cqdirect.cur_wq, cqe->req_id);
-	return efa_cqdirect_start_poll(efa_cq, NULL);
-}
-
-MAYBE_INLINE void efa_cqdirect_end_poll(struct efa_cq *efa_cq)
-{
-	struct efa_io_cdesc_common *cqe = efa_cq->cqdirect.cur_cqe;
-
-	if (cqe) {
-		if (!EFA_GET(&cqe->flags, EFA_IO_CDESC_COMMON_UNSOLICITED))
-			efa_wq_put_wrid_idx(efa_cq->cqdirect.cur_wq, cqe->req_id);
-		// if (efa_cq->cqdirect.db)
-		// 	efa_update_cq_doorbell(efa_cq, false);
-	}
-
-	// pthread_spin_unlock(&cq->lock);
 }
 
 MAYBE_INLINE int efa_cqdirect_wq_initialize(struct efa_cqdirect_wq *wq, uint32_t wqe_cnt )
@@ -308,7 +235,7 @@ MAYBE_INLINE void efa_post_send_sgl(struct efa_io_tx_buf_desc *tx_bufs,
 MAYBE_INLINE int efa_post_send_validate(struct efa_qp *qp,
 				  unsigned int wr_flags)
 {
-	// if (unlikely(qp->verbs_qp.qp.state != IBV_QPS_RTS &&
+	// if (OFI_UNLIKELY(qp->verbs_qp.qp.state != IBV_QPS_RTS &&
 	// 	     qp->verbs_qp.qp.state != IBV_QPS_SQD)) {
 	// 	verbs_err(verbs_get_ctx(qp->verbs_qp.qp.context),
 	// 		  "SQ[%u] is in invalid state\n",
@@ -316,14 +243,14 @@ MAYBE_INLINE int efa_post_send_validate(struct efa_qp *qp,
 	// 	return EINVAL;
 	// }
 
-	// if (unlikely(!(wr_flags & IBV_SEND_SIGNALED) && !qp->sq_sig_all)) {
+	// if (OFI_UNLIKELY(!(wr_flags & IBV_SEND_SIGNALED) && !qp->sq_sig_all)) {
 	// 	verbs_err(verbs_get_ctx(qp->verbs_qp.qp.context),
 	// 		  "SQ[%u] Non signaled WRs not supported\n",
 	// 		  qp->verbs_qp.qp.qp_num);
 	// 	return EINVAL;
 	// }
 
-	// if (unlikely(wr_flags & ~(IBV_SEND_SIGNALED | IBV_SEND_INLINE))) {
+	// if (OFI_UNLIKELY(wr_flags & ~(IBV_SEND_SIGNALED | IBV_SEND_INLINE))) {
 	// 	verbs_err(verbs_get_ctx(qp->verbs_qp.qp.context),
 	// 		  "SQ[%u] Unsupported wr_flags[%#x] supported[%#x]\n",
 	// 		  qp->verbs_qp.qp.qp_num, wr_flags,
@@ -331,7 +258,7 @@ MAYBE_INLINE int efa_post_send_validate(struct efa_qp *qp,
 	// 	return EINVAL;
 	// }
 
-	if (unlikely(qp->cqdirect_qp.sq.wq.wqe_posted - qp->cqdirect_qp.sq.wq.wqe_completed ==
+	if (OFI_UNLIKELY(qp->cqdirect_qp.sq.wq.wqe_posted - qp->cqdirect_qp.sq.wq.wqe_completed ==
 		     qp->cqdirect_qp.sq.wq.wqe_cnt)) {
 		EFA_DBG(FI_LOG_EP_DATA,
 			  "SQ[%u] is full wqe_posted[%u] wqe_completed[%u] wqe_cnt[%u]\n",
@@ -476,12 +403,12 @@ MAYBE_INLINE struct efa_io_tx_wqe* efa_cqdirect_send_wr_common(struct efa_qp *qp
 	struct efa_io_tx_meta_desc *meta_desc;
 	int err;
 
-	if (unlikely(cqd_qp->wr_session_err))
+	if (OFI_UNLIKELY(cqd_qp->wr_session_err))
 		return NULL;
 
 	// TODO: how is ibvqpx->wr_flags ever set?
 	err = efa_post_send_validate(qp, ibvqpx->wr_flags);
-	if (unlikely(err)) {
+	if (OFI_UNLIKELY(err)) {
 		cqd_qp->wr_session_err = err;
 		return NULL;
 	}
@@ -504,5 +431,5 @@ MAYBE_INLINE struct efa_io_tx_wqe* efa_cqdirect_send_wr_common(struct efa_qp *qp
 	return &sq->curr_tx_wqe;
 }
 
-
-#endif
+#endif /* end of HAVE_CQ_DIRECT */
+#endif /* end of _EFA_CQDIRECT_INTERNAL_H*/

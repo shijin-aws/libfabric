@@ -16,6 +16,32 @@
 
 #define HAVE_CQDIRECT (HAVE_EFADV_QUERY_QP_WQS && HAVE_EFADV_QUERY_CQ)
 
+/*** TODO: adjust CQ_INLINE_MODE and then refactor to remove efa_cqdirect_internal.h
+ * CQ_INLINE_MODE=0: not even inline hints are given.
+ * CQ_INLINE_MODE=1: typical "static inline" hint
+ * CQ_INLINE_MODE=2: __attribute__((always_inline)) forces the issue even at -O0.
+ *                   ALSO all CQ functions are inlined within libfabric, and defined before the entry functions.
+ * 
+*/
+#define CQ_INLINE_MODE 2
+
+#if CQ_INLINE_MODE == 0
+#define MAYBE_INLINE static
+#define ENTRY_FUN
+#include "efa_cqdirect_internal.h"
+#endif
+
+#if CQ_INLINE_MODE == 1
+#define MAYBE_INLINE static inline
+#define ENTRY_FUN
+#endif
+
+
+#if CQ_INLINE_MODE == 2
+#define MAYBE_INLINE __attribute__((always_inline)) static inline
+#define ENTRY_FUN static inline
+#endif
+
 // TODO: remove.  This is only for testing the timing
 #include <x86intrin.h>
 struct cqdirect_timer {

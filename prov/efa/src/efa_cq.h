@@ -12,9 +12,31 @@ enum ibv_cq_ex_type {
 	EFADV_CQ
 };
 
+struct efa_ibv_cq;
+struct efa_ibv_cq_ops {
+    int (*start_poll)(struct efa_ibv_cq *ibv_cq, struct ibv_poll_cq_attr *attr);
+    int (*next_poll)(struct efa_ibv_cq *ibv_cq);
+    enum ibv_wc_opcode (*wc_read_opcode)(struct efa_ibv_cq *ibv_cq);
+    void (*end_poll)(struct efa_ibv_cq *ibv_cq);
+    uint32_t (*wc_read_qp_num)(struct efa_ibv_cq *ibv_cq);
+    uint32_t (*wc_read_vendor_err)(struct efa_ibv_cq *ibv_cq);
+	uint32_t (*wc_read_src_qp)(struct efa_ibv_cq *ibv_cq);
+	uint32_t (*wc_read_slid)(struct efa_ibv_cq *ibv_cq);
+    uint32_t (*wc_read_byte_len)(struct efa_ibv_cq *ibv_cq);
+    unsigned int (*wc_read_wc_flags)(struct efa_ibv_cq *ibv_cq);
+    __be32 (*wc_read_imm_data)(struct efa_ibv_cq *ibv_cq);
+    bool (*wc_is_unsolicited)(struct efa_ibv_cq *ibv_cq);
+};
+
+
 struct efa_ibv_cq {
 	struct ibv_cq_ex *ibv_cq_ex;
 	enum ibv_cq_ex_type ibv_cq_ex_type;
+	struct efa_ibv_cq_ops *ops;
+	bool cqdirect_enabled;
+#if HAVE_EFADV_QUERY_CQ
+	struct efa_cqdirect_cq  cqdirect;
+#endif
 };
 
 struct efa_ibv_cq_poll_list_entry {
@@ -25,15 +47,80 @@ struct efa_ibv_cq_poll_list_entry {
 struct efa_cq {
 	struct util_cq		util_cq;
 	struct efa_ibv_cq	ibv_cq;
-	bool cqdirect_enabled;
-#if HAVE_EFADV_QUERY_CQ
-	struct efa_cqdirect_cq  cqdirect;
-#endif
 };
 
 extern struct fi_ops_cq efa_cq_ops;
 
 extern struct fi_ops efa_cq_fi_ops;
+
+/* Default ibv cq ops that use rdma-core */
+static inline int efa_ibv_start_poll(struct efa_ibv_cq *ibv_cq, struct ibv_poll_cq_attr *attr)
+{
+    return ibv_start_poll(ibv_cq->ibv_cq_ex, attr);
+}
+
+static inline int efa_ibv_next_poll(struct efa_ibv_cq *ibv_cq)
+{
+    return ibv_next_poll(ibv_cq->ibv_cq_ex);
+}
+
+static inline enum ibv_wc_opcode efa_ibv_wc_read_opcode(struct efa_ibv_cq *ibv_cq)
+{
+    return ibv_wc_read_opcode(ibv_cq->ibv_cq_ex);
+}
+
+static inline void efa_ibv_end_poll(struct efa_ibv_cq *ibv_cq)
+{
+    ibv_end_poll(ibv_cq->ibv_cq_ex);
+}
+
+static inline uint32_t efa_ibv_wc_read_qp_num(struct efa_ibv_cq *ibv_cq)
+{
+    return ibv_wc_read_qp_num(ibv_cq->ibv_cq_ex);
+}
+
+static inline uint32_t efa_ibv_wc_read_vendor_err(struct efa_ibv_cq *ibv_cq)
+{
+    return ibv_wc_read_vendor_err(ibv_cq->ibv_cq_ex);
+}
+
+static inline uint32_t efa_ibv_wc_read_slid(struct efa_ibv_cq *ibv_cq)
+{
+    return ibv_wc_read_slid(ibv_cq->ibv_cq_ex);
+}
+
+static inline uint32_t efa_ibv_wc_read_src_qp(struct efa_ibv_cq *ibv_cq)
+{
+    return ibv_wc_read_src_qp(ibv_cq->ibv_cq_ex);
+}
+
+static inline uint32_t efa_ibv_wc_read_byte_len(struct efa_ibv_cq *ibv_cq)
+{
+    return ibv_wc_read_byte_len(ibv_cq->ibv_cq_ex);
+}
+
+static inline unsigned int efa_ibv_wc_read_wc_flags(struct efa_ibv_cq *ibv_cq)
+{
+    return ibv_wc_read_wc_flags(ibv_cq->ibv_cq_ex);
+}
+
+static inline __be32 efa_ibv_wc_read_imm_data(struct efa_ibv_cq *ibv_cq)
+{
+    return ibv_wc_read_imm_data(ibv_cq->ibv_cq_ex);
+}
+
+#if HAVE_CAPS_UNSOLICITED_WRITE_RECV
+static inline bool efa_ibv_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq)
+{
+    return efadv_wc_is_unsolicited(efadv_cq_from_ibv_cq_ex(ibv_cq->ibv_cq_ex));
+}
+#else
+static inline bool efa_ibv_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq)
+{
+	return false;
+}
+#endif /* HAVE_CAPS_UNSOLICITED_WRITE_RECV */
+
 
 /*
  * Control header with completion data. CQ data length is static.
@@ -222,6 +309,29 @@ int efa_cq_close(fid_t fid);
 const char *efa_cq_strerror(struct fid_cq *cq_fid, int prov_errno,
 			    const void *err_data, char *buf, size_t len);
 
+#if HAVE_CAPS_UNSOLICITED_WRITE_RECV
+/**
+ * @brief Check whether a completion consumes recv buffer
+ *
+ * @param ibv_cq_ex extended ibv cq
+ * @return true the wc consumes a recv buffer
+ * @return false the wc doesn't consume a recv buffer
+ */
+static inline
+bool efa_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq)
+{
+	return efa_use_unsolicited_write_recv() && ibv_cq->ops->wc_is_unsolicited(ibv_cq);
+}
+
+#else
+
+static inline
+bool efa_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq)
+{
+	return false;
+}
+
+#endif
 
 /**
  * @brief Write the error message and return its byte length

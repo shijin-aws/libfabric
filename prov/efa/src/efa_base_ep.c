@@ -9,6 +9,20 @@
 #include "rdm/efa_rdm_protocol.h"
 #include "efa_cqdirect.h"
 
+struct efa_qp_ops ibv_qp_ops = {
+    .post_recv = efa_ibv_post_recv,
+    .wr_complete = efa_ibv_wr_complete,
+    .wr_rdma_read = efa_ibv_wr_rdma_read,
+    .wr_rdma_write = efa_ibv_wr_rdma_write,
+    .wr_rdma_write_imm = efa_ibv_wr_rdma_write_imm,
+    .wr_send = efa_ibv_wr_send,
+    .wr_send_imm = efa_ibv_wr_send_imm,
+    .wr_set_inline_data_list = efa_ibv_wr_set_inline_data_list,
+    .wr_set_sge_list = efa_ibv_wr_set_sge_list,
+    .wr_set_ud_addr = efa_ibv_wr_set_ud_addr,
+    .wr_start = efa_ibv_wr_start,
+};
+
 int efa_base_ep_bind_av(struct efa_base_ep *base_ep, struct efa_av *av)
 {
 	if (base_ep->domain != av->domain) {
@@ -254,6 +268,7 @@ int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex, 
 	(*qp)->ibv_qp_ex = ibv_qp_to_qp_ex((*qp)->ibv_qp);
 	/* Initialize it explicitly for safety */
 	(*qp)->cqdirect_enabled = false;
+	(*qp)->ops = &ibv_qp_ops;
 	return FI_SUCCESS;
 }
 
@@ -769,8 +784,8 @@ int efa_base_ep_create_and_enable_qp(struct efa_base_ep *ep, bool create_user_re
 
 #if HAVE_CQDIRECT
 	/* Only enable direct QP when direct CQ is enabled */
-	assert(scq->cqdirect_enabled == rcq->cqdirect_enabled);
-	if (scq->cqdirect_enabled) {
+	assert(scq->ibv_cq.cqdirect_enabled == rcq->ibv_cq.cqdirect_enabled);
+	if (scq->ibv_cq.cqdirect_enabled) {
 		err = efa_cqdirect_qp_initialize(ep->qp);
 		if (err) {
 			efa_base_ep_destruct_qp(ep);

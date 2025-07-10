@@ -10,7 +10,6 @@
 #include "efa_rdm_pke_utils.h"
 #include "efa_rdm_pke_nonreq.h"
 #include "efa_rdm_tracepoint.h"
-#include "efa_cqdirect.h"
 
 static
 const char *efa_rdm_cq_strerror(struct fid_cq *cq_fid, int prov_errno,
@@ -87,7 +86,7 @@ static struct fi_ops efa_rdm_cq_fi_ops = {
  */
 static
 void efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
-						       struct ibv_cq_ex *ibv_cq_ex,
+						       struct efa_ibv_cq *ibv_cq,
 						       uint64_t flags,
 						       struct efa_rdm_ep *ep,
 						       struct efa_rdm_pke *pkt_entry
@@ -97,14 +96,12 @@ void efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
 	int ret;
 	fi_addr_t src_addr;
 	struct efa_av *efa_av;
+	struct ibv_cq_ex *ibv_cq_ex = ibv_cq->ibv_cq_ex;
 	uint32_t imm_data = ibv_wc_read_imm_data(ibv_cq_ex);
-	uint32_t len;
-	struct efa_cq *efa_cq = efa_base_ep_get_rx_cq(&ep->base_ep);
+	uint32_t len = ibv_wc_read_byte_len(ibv_cq_ex);
 
 	target_cq = ep->base_ep.util_ep.rx_cq;
 	efa_av = ep->base_ep.av;
-
-	len = efaibv_wc_read_byte_len(efa_cq);
 
 	if (ep->base_ep.util_ep.caps & FI_SOURCE) {
 		src_addr = efa_av_reverse_lookup_rdm(efa_av,
@@ -129,7 +126,7 @@ void efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
 	 * For unsolicited wc, pkt_entry can be NULL, so we can only
 	 * access it for solicited wc.
 	 */
-	if (!efaibv_wc_is_unsolicited(efa_cq)) {
+	if (!efa_cq_wc_is_unsolicited(ibv_cq)) {
 		/**
 		 * Recv with immediate will consume a pkt_entry, but the pkt is not
 		 * filled, so free the pkt_entry and record we have one less posted
@@ -445,12 +442,12 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	dlist_init(&rx_progressed_ep_list);
 
 	/* Call ibv_start_poll only once */
-	err = efaibv_start_poll(efa_cq, &poll_cq_attr);
+	err = ibv_start_poll(ibv_cq->ibv_cq_ex, &poll_cq_attr);
 	should_end_poll = !err;
 
 	while (!err) {
 		pkt_entry = (void *)(uintptr_t)ibv_cq->ibv_cq_ex->wr_id;
-		qp = efa_domain->qp_table[efaibv_wc_read_qp_num(efa_cq) & efa_domain->qp_table_sz_m1];
+		qp = efa_domain->qp_table[ibv_wc_read_qp_num(ibv_cq->ibv_cq_ex) & efa_domain->qp_table_sz_m1];
 		ep = container_of(qp->base_ep, struct efa_rdm_ep, base_ep);
 #if HAVE_LTTNG
 		efa_rdm_tracepoint(poll_cq, (size_t) ibv_cq->ibv_cq_ex->wr_id);
@@ -460,7 +457,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 					   pkt_entry->ope->total_len, pkt_entry->ope->cq_entry.tag,
 					   pkt_entry->ope->addr);
 #endif
-		opcode = efaibv_wc_read_opcode(efa_cq);
+		opcode = ibv_wc_read_opcode(ibv_cq->ibv_cq_ex);
 		if (ibv_cq->ibv_cq_ex->status) {
 			if (pkt_entry)
 				peer = efa_rdm_ep_get_peer(ep, pkt_entry->addr);
@@ -473,7 +470,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 				break;
 			case IBV_WC_RECV: /* fall through */
 			case IBV_WC_RECV_RDMA_WITH_IMM:
-				if (efaibv_wc_is_unsolicited(efa_cq)) {
+				if (efa_cq_wc_is_unsolicited(ibv_cq)) {
 					EFA_WARN(FI_LOG_CQ, "Receive error %s (%d) for unsolicited write recv",
 						efa_strerror(prov_errno), prov_errno);
 					efa_base_ep_write_eq_error(&ep->base_ep, to_fi_errno(prov_errno), prov_errno);
@@ -510,7 +507,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 			break;
 		case IBV_WC_RECV_RDMA_WITH_IMM:
 			efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
-				ibv_cq->ibv_cq_ex,
+				ibv_cq,
 				FI_REMOTE_CQ_DATA | FI_RMA | FI_REMOTE_WRITE,
 				ep, pkt_entry);
 			break;
@@ -531,7 +528,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		 * ibv_next_poll MUST be call after the current WC is fully processed,
 		 * which prevents later calls on ibv_cq_ex from reading the wrong WC.
 		 */
-		err = efaibv_next_poll(efa_cq);
+		err = ibv_next_poll(ibv_cq->ibv_cq_ex);
 	}
 
 	if (err && err != ENOENT) {
@@ -548,7 +545,7 @@ void efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	}
 
 	if (should_end_poll)
-		efaibv_end_poll(efa_cq);
+		ibv_end_poll(ibv_cq->ibv_cq_ex);
 
 	dlist_foreach_container_safe(
 		&rx_progressed_ep_list, struct efa_rdm_ep, ep, entry, tmp) {

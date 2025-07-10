@@ -95,8 +95,12 @@ _efa_headers = \
 	prov/efa/src/efa_prov.h \
 	prov/efa/src/efa_env.h \
 	prov/efa/src/fi_ext_efa.h \
-	prov/efa/src/efa_cqdirect.h \
+	prov/efa/src/efa_cqdirect_efa_io_defs.h \
 	prov/efa/src/efa_cqdirect_structs.h \
+	prov/efa/src/efa_cqdirect_entry.h \
+	prov/efa/src/efa_cqdirect.h \
+	prov/efa/src/efa_cqdirect_internal.h \
+	prov/efa/src/efa_mmio.h \
 	prov/efa/src/rdm/efa_rdm_peer.h	\
 	prov/efa/src/rdm/efa_rdm_cq.h \
 	prov/efa/src/rdm/efa_rdm_ep.h \

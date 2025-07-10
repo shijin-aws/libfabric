@@ -10,15 +10,38 @@
 #include "efa_cqdirect_efa_io_defs.h"
 #include "efa_av.h"
 
-#if CQ_INLINE_MODE == 1
+#if HAVE_CQDIRECT
+
 #include "efa_cqdirect_entry.h"
-#endif
 
-#if CQ_INLINE_MODE == 0
-#include "efa_cqdirect_entry.h"
-#endif
+struct efa_ibv_cq_ops cqdirect_cq_ops = {
+    .start_poll = efa_cqdirect_start_poll,
+    .next_poll = efa_cqdirect_next_poll,
+    .wc_read_opcode = efa_cqdirect_wc_read_opcode,
+    .end_poll = efa_cqdirect_end_poll,
+    .wc_read_qp_num = efa_cqdirect_wc_read_qp_num,
+    .wc_read_vendor_err = efa_cqdirect_wc_read_vendor_err,
+	.wc_read_slid = efa_cqdirect_wc_read_slid,
+	.wc_read_src_qp = efa_cqdirect_wc_read_src_qp,
+    .wc_read_byte_len = efa_cqdirect_wc_read_byte_len,
+    .wc_read_wc_flags = efa_cqdirect_wc_read_wc_flags,
+    .wc_read_imm_data = efa_cqdirect_wc_read_imm_data,
+    .wc_is_unsolicited = efa_cqdirect_wc_is_unsolicited
+};
 
-
+struct efa_qp_ops cqdirect_qp_ops = {
+    .post_recv = efa_cqdirect_post_recv,
+    .wr_complete = efa_cqdirect_wr_complete,
+    .wr_rdma_read = efa_cqdirect_wr_rdma_read,
+    .wr_rdma_write = efa_cqdirect_wr_rdma_write,
+    .wr_rdma_write_imm = efa_cqdirect_wr_rdma_write_imm,
+    .wr_send = efa_cqdirect_wr_send,
+    .wr_send_imm = efa_cqdirect_wr_send_imm,
+    .wr_set_inline_data_list = efa_cqdirect_wr_set_inline_data_list,
+    .wr_set_sge_list = efa_cqdirect_wr_set_sge_list,
+    .wr_set_ud_addr = efa_cqdirect_wr_set_ud_addr,
+    .wr_start = efa_cqdirect_wr_start,
+};
 
 int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	/* Called during efa_base_ep_create_qp.
@@ -65,41 +88,45 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	/* see efa_qp_init_indices */
 
 	efa_qp->cqdirect_enabled = 1;
+	efa_qp->ops = &cqdirect_qp_ops;
 	return ret;
 	
 }
 
-int efa_cqdirect_cq_initialize( struct efa_cq *efa_cq) {
-	struct efadv_cq_attr attr = {0};
-	int ret;
+int efa_cqdirect_cq_initialize(struct efa_cq *efa_cq) {
+    struct efadv_cq_attr attr = {0};
+    struct efa_cqdirect_cq *cqdirect = &efa_cq->ibv_cq.cqdirect;
+    int ret;
 
-	
-	memset(&efa_cq->cqdirect, 0, sizeof(efa_cq->cqdirect));
+    memset(cqdirect, 0, sizeof(*cqdirect));
 
-	//efa_cqdirect_timer_init(&efa_cq->cqdirect.timing);
+    //efa_cqdirect_timer_init(&cqdirect->timing);
 
-	/**
-	 * We cannot use direct cq when hardware is still using sub cq.
-	 * Also disable direct cq when it's specified by environment
-	 */
-	if (!efa_env.efa_direct_cq_ops || efa_device_use_sub_cq()) {
-		/* nothing to do.  Not using directcq.*/
-		return FI_SUCCESS;
-	}
+    /**
+     * We cannot use direct cq when hardware is still using sub cq.
+     * Also disable direct cq when it's specified by environment
+     */
+    if (!efa_env.efa_direct_cq_ops || efa_device_use_sub_cq()) {
+        /* nothing to do.  Not using directcq.*/
+        return FI_SUCCESS;
+    }
 
-	ret = efadv_query_cq(ibv_cq_ex_to_cq(efa_cq->ibv_cq.ibv_cq_ex), &attr, sizeof(attr));
-	if (ret != FI_SUCCESS) {
-		return ret;
-	}
-	efa_cq->cqdirect_enabled = 1;
-	efa_cq->cqdirect.buffer = attr.buffer;
-	efa_cq->cqdirect.entry_size = attr.entry_size;
-	efa_cq->cqdirect.num_entries = attr.num_entries;
+    ret = efadv_query_cq(ibv_cq_ex_to_cq(efa_cq->ibv_cq.ibv_cq_ex), &attr, sizeof(attr));
+    if (ret != FI_SUCCESS) {
+        return ret;
+    }
 
-	efa_cq->cqdirect.phase = 1;
-	efa_cq->cqdirect.consumed_cnt = 0;
-	efa_cq->cqdirect.qmask = efa_cq->cqdirect.num_entries - 1;
+    efa_cq->ibv_cq.cqdirect_enabled = 1;
+	efa_cq->ibv_cq.ops = &cqdirect_cq_ops;
+    cqdirect->buffer = attr.buffer;
+    cqdirect->entry_size = attr.entry_size;
+    cqdirect->num_entries = attr.num_entries;
 
-	return FI_SUCCESS;
+    cqdirect->phase = 1;
+    cqdirect->consumed_cnt = 0;
+    cqdirect->qmask = cqdirect->num_entries - 1;
 
+    return FI_SUCCESS;
 }
+
+#endif /* end of HAVE_CQDIRECT */
