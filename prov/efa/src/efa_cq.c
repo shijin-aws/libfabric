@@ -395,6 +395,99 @@ struct efa_ibv_cq_ops ibv_cq_ops = {
     .wc_read_wc_flags = efa_ibv_wc_read_wc_flags
 };
 
+/**
+ * @brief Create ibv_cq_ex by calling efadv_create_cq or ibv_create_cq_ex
+ *
+ * @param[in] attr Completion queue attributes
+ * @param[in] ibv_ctx Pointer to ibv_context
+ * @param[in,out] ibv_cq_ex Pointer to newly created ibv_cq_ex
+ * @param[in,out] ibv_cq_ex_type enum indicating if efadv_create_cq or ibv_create_cq_ex was used
+ * @param[in] efa_cq_init_attr Pointer to fi_efa_cq_init_attr containing attributes for efadv_create_cq
+ * @return Return 0 on success, error code otherwise
+ */
+#if HAVE_EFADV_CQ_EX
+int efa_cq_open_ibv_cq(struct fi_cq_attr *attr,
+			struct ibv_context *ibv_ctx,
+			struct efa_ibv_cq *ibv_cq,
+			struct fi_efa_cq_init_attr *efa_cq_init_attr)
+{
+	struct ibv_cq_init_attr_ex init_attr_ex = {
+		.cqe = attr->size ? attr->size : EFA_DEF_CQ_SIZE,
+		.cq_context = NULL,
+		.channel = NULL,
+		.comp_vector = 0,
+		/* EFA requires these values for wc_flags and comp_mask.
+		 * See `efa_create_cq_ex` in rdma-core.
+		 */
+		.wc_flags = IBV_WC_STANDARD_FLAGS,
+		.comp_mask = 0,
+	};
+
+	struct efadv_cq_init_attr efadv_cq_init_attr = {
+		.comp_mask = 0,
+		.wc_flags = EFADV_WC_EX_WITH_SGID,
+	};
+
+#if HAVE_CAPS_UNSOLICITED_WRITE_RECV
+	if (efa_use_unsolicited_write_recv())
+		efadv_cq_init_attr.wc_flags |= EFADV_WC_EX_WITH_IS_UNSOLICITED;
+#endif
+
+#if HAVE_CAPS_CQ_WITH_EXT_MEM_DMABUF
+	efadv_cq_init_attr.flags = efa_cq_init_attr->flags;
+	efadv_cq_init_attr.ext_mem_dmabuf.buffer = efa_cq_init_attr->ext_mem_dmabuf.buffer;
+	efadv_cq_init_attr.ext_mem_dmabuf.length = efa_cq_init_attr->ext_mem_dmabuf.length;
+	efadv_cq_init_attr.ext_mem_dmabuf.offset = efa_cq_init_attr->ext_mem_dmabuf.offset;
+	efadv_cq_init_attr.ext_mem_dmabuf.fd = efa_cq_init_attr->ext_mem_dmabuf.fd;
+#endif
+
+	ibv_cq->cqdirect_enabled = 0;
+	ibv_cq->ops = &ibv_cq_ops;
+	ibv_cq->ibv_cq_ex = efadv_create_cq(ibv_ctx, &init_attr_ex,
+				     &efadv_cq_init_attr,
+				     sizeof(efadv_cq_init_attr));
+
+	if (!ibv_cq->ibv_cq_ex) {
+#if HAVE_CAPS_CQ_WITH_EXT_MEM_DMABUF
+		if (efa_cq_init_attr->flags & FI_EFA_CQ_INIT_FLAGS_EXT_MEM_DMABUF) {
+			EFA_WARN(FI_LOG_CQ,
+				 "efadv_create_cq failed on external memory. "
+				 "errno: %s\n", strerror(errno));
+			return (errno == EOPNOTSUPP) ? -FI_EOPNOTSUPP : -FI_EINVAL;
+		}
+#endif
+		/* This could be due to old EFA kernel module versions */
+		/* Fallback to ibv_create_cq_ex */
+		return efa_cq_open_ibv_cq_with_ibv_create_cq_ex(
+			&init_attr_ex, ibv_ctx, &ibv_cq->ibv_cq_ex, &ibv_cq->ibv_cq_ex_type);
+	}
+
+	ibv_cq->ibv_cq_ex_type = EFADV_CQ;
+	return 0;
+}
+#else
+int efa_cq_open_ibv_cq(struct fi_cq_attr *attr,
+			struct ibv_context *ibv_ctx,
+			struct efa_ibv_cq *ibv_cq,
+			struct fi_efa_cq_init_attr *efa_cq_init_attr)
+{
+	struct ibv_cq_init_attr_ex init_attr_ex = {
+		.cqe = attr->size ? attr->size : EFA_DEF_CQ_SIZE,
+		.cq_context = NULL,
+		.channel = NULL,
+		.comp_vector = 0,
+		/* EFA requires these values for wc_flags and comp_mask.
+		 * See `efa_create_cq_ex` in rdma-core.
+		 */
+		.wc_flags = IBV_WC_STANDARD_FLAGS,
+		.comp_mask = 0,
+	};
+
+	return efa_cq_open_ibv_cq_with_ibv_create_cq_ex(
+		&init_attr_ex, ibv_ctx, &ibv_cq->ibv_cq_ex, &ibv_cq->ibv_cq_ex_type);
+}
+#endif
+
 void efa_cq_progress(struct util_cq *cq)
 {
 	struct efa_cq *efa_cq = container_of(cq, struct efa_cq, util_cq);
@@ -467,10 +560,9 @@ int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 
 	efa_domain = container_of(cq->util_cq.domain, struct efa_domain,
 				  util_domain);
-	err = efa_cq_ibv_cq_ex_open(attr, efa_domain->device->ibv_ctx,
-				    &cq->ibv_cq.ibv_cq_ex,
-				    &cq->ibv_cq.ibv_cq_ex_type,
-				    &efa_cq_init_attr);
+	err = efa_cq_open_ibv_cq(attr, efa_domain->device->ibv_ctx,
+				 &cq->ibv_cq,
+				 &efa_cq_init_attr);
 	if (err) {
 		EFA_WARN(FI_LOG_CQ, "Unable to create extended CQ: %s\n", fi_strerror(err));
 		goto err_free_util_cq;
@@ -482,8 +574,6 @@ int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 	(*cq_fid)->fid.ops = &efa_cq_fi_ops;
 	(*cq_fid)->ops = &efa_cq_ops;
 
-	cq->ibv_cq.cqdirect_enabled = false;
-	cq->ibv_cq.ops = &ibv_cq_ops;
 #if HAVE_CQDIRECT
 	efa_cqdirect_cq_initialize( cq );
 #endif
