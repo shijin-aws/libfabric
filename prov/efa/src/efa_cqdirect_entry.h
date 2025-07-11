@@ -16,11 +16,17 @@ ENTRY_FUN int efa_cqdirect_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, 
 	struct efa_cqdirect_wq *wq = &qp->cqdirect_qp.rq.wq;
 	uint32_t rq_desc_offset;
 	uint32_t i;
+	int err = 0;
 
 	// TODO: unlike rdma-core, this method directly writes to the
 	// TODO: write-combining memory of the RQ.  This might be sub-optimal.
 
 	while (wr) {
+		err = efa_post_recv_validate(qp, wr);
+		if (err) {
+			*bad = wr;
+			goto ring_db;
+		}
 
 		rq_desc_offset = (wq->pc & wq->desc_mask) *
 					 sizeof(*rx_buf);
@@ -31,8 +37,6 @@ ENTRY_FUN int efa_cqdirect_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, 
 		wq->pc++;
 		if (!(wq->pc & wq->desc_mask))
 			wq->phase++;
-
-		// err = efa_post_recv_validate(qp, wr); // TODO: validate?
 
 		rx_buf->req_id = efa_wq_get_next_wrid_idx(wq, wr->wr_id);
 		wq->wqe_posted++;
@@ -60,8 +64,9 @@ ENTRY_FUN int efa_cqdirect_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, 
 		wr = wr->next;
 	}
 
+ring_db:
 	efa_cqdirect_rq_ring_doorbell(&qp->cqdirect_qp.rq, wq->pc);
-	return FI_SUCCESS;
+	return err;
 }
 
 ENTRY_FUN int efa_cqdirect_wr_complete(struct efa_qp *qp) {
@@ -214,6 +219,10 @@ ENTRY_FUN void efa_cqdirect_wr_set_sge_list(struct efa_qp *efa_qp, size_t num_sg
 ENTRY_FUN void efa_cqdirect_wr_set_ud_addr(struct efa_qp *efaqp, struct ibv_ah *ibvah, uint32_t remote_qpn, uint32_t remote_qkey)
 {
 	/* TODO: This is terrible abstraction breakage to get efa_ah using container_of!!!!*/
+	/* Fixing this requires further refactor on the send path's abstraction to move the
+	 * branching level from rdma-core API to the whole wqe preparation level, so we do not
+	 * need to derive ah from ibvah
+	 */
 	struct efa_ah {
 		struct ibv_ah ibvah;
 		uint16_t efa_ah;

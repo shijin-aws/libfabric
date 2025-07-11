@@ -244,6 +244,30 @@ MAYBE_INLINE int efa_post_send_validate(struct efa_qp *qp,
 	return 0;
 }
 
+MAYBE_INLINE int efa_post_recv_validate(struct efa_qp *qp,
+				  struct ibv_recv_wr *wr)
+{
+
+	if (OFI_UNLIKELY(wr->num_sge > qp->cqdirect_qp.rq.wq.max_sge)) {
+		EFA_WARN(FI_LOG_EP_DATA,
+			  "RQ[%u] WR num_sge %d > %zu\n",
+			  qp->ibv_qp->qp_num, wr->num_sge,
+			  qp->cqdirect_qp.rq.wq.max_sge);
+		return EINVAL;
+	}
+
+	if (OFI_UNLIKELY(qp->cqdirect_qp.rq.wq.wqe_posted - qp->cqdirect_qp.rq.wq.wqe_completed ==
+		     qp->cqdirect_qp.rq.wq.wqe_cnt)) {
+		EFA_WARN(FI_LOG_EP_DATA,
+			  "RQ[%u] is full wqe_posted[%u] wqe_completed[%u] wqe_cnt[%u]\n",
+			  qp->ibv_qp->qp_num, qp->cqdirect_qp.rq.wq.wqe_posted,
+			  qp->cqdirect_qp.rq.wq.wqe_completed, qp->cqdirect_qp.rq.wq.wqe_cnt);
+		return ENOMEM;
+	}
+
+	return 0;
+}
+
 MAYBE_INLINE void efa_set_common_ctrl_flags(struct efa_io_tx_meta_desc *desc,
 				      struct efa_cqdirect_sq *sq,
 				      enum efa_io_send_op_type op_type)
