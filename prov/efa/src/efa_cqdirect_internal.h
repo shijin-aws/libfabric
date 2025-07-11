@@ -186,12 +186,9 @@ MAYBE_INLINE int efa_cqdirect_wq_initialize(struct efa_cqdirect_wq *wq, uint32_t
 		return ENOMEM;
 	}
 	
-
 	/* Initialize the wrid free indexes pool. */
 	for (i = 0; i < wqe_cnt; i++)
 		wq->wrid_idx_pool[i] = i;
-
-	wq->sub_cq_idx = 0; // TODO: sub CQ idx?
 
 	return 0;
 }

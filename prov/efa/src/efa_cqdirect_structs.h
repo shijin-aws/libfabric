@@ -92,7 +92,6 @@ struct efa_cqdirect_wq {
 	pthread_spinlock_t wqlock;
 
 	uint32_t *db;
-	uint16_t sub_cq_idx;
 };
 
 struct efa_cqdirect_cq {
