@@ -232,29 +232,6 @@ MAYBE_INLINE void efa_post_send_sgl(struct efa_io_tx_buf_desc *tx_bufs,
 MAYBE_INLINE int efa_post_send_validate(struct efa_qp *qp,
 				  unsigned int wr_flags)
 {
-	// if (OFI_UNLIKELY(qp->verbs_qp.qp.state != IBV_QPS_RTS &&
-	// 	     qp->verbs_qp.qp.state != IBV_QPS_SQD)) {
-	// 	verbs_err(verbs_get_ctx(qp->verbs_qp.qp.context),
-	// 		  "SQ[%u] is in invalid state\n",
-	// 		  qp->verbs_qp.qp.qp_num);
-	// 	return EINVAL;
-	// }
-
-	// if (OFI_UNLIKELY(!(wr_flags & IBV_SEND_SIGNALED) && !qp->sq_sig_all)) {
-	// 	verbs_err(verbs_get_ctx(qp->verbs_qp.qp.context),
-	// 		  "SQ[%u] Non signaled WRs not supported\n",
-	// 		  qp->verbs_qp.qp.qp_num);
-	// 	return EINVAL;
-	// }
-
-	// if (OFI_UNLIKELY(wr_flags & ~(IBV_SEND_SIGNALED | IBV_SEND_INLINE))) {
-	// 	verbs_err(verbs_get_ctx(qp->verbs_qp.qp.context),
-	// 		  "SQ[%u] Unsupported wr_flags[%#x] supported[%#x]\n",
-	// 		  qp->verbs_qp.qp.qp_num, wr_flags,
-	// 		  ~(IBV_SEND_SIGNALED | IBV_SEND_INLINE));
-	// 	return EINVAL;
-	// }
-
 	if (OFI_UNLIKELY(qp->cqdirect_qp.sq.wq.wqe_posted - qp->cqdirect_qp.sq.wq.wqe_completed ==
 		     qp->cqdirect_qp.sq.wq.wqe_cnt)) {
 		EFA_DBG(FI_LOG_EP_DATA,

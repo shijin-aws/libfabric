@@ -140,14 +140,13 @@ ENTRY_FUN void efa_cqdirect_wr_set_inline_data_list(struct efa_qp *efa_qp,
 	if (OFI_UNLIKELY(qp->wr_session_err))
 		return;
 
-	// TODO: list_total_bytes needs implementation
 	if (OFI_UNLIKELY(efa_buf_list_total_bytes(buf_list, num_buf) >
 		     qp->sq.max_inline_data)) {
-		// verbs_err(verbs_get_ctx(qp->verbs_qp.qp.context),
-		// 	  "SQ[%u] WR inline length %zu > %zu\n",
-		// 	  ibvqpx->qp_base.qp_num,
-		// 	  efa_buf_list_total_bytes(buf_list, num_buf),
-		// 	  qp->sq.max_inline_data);
+		EFA_WARN(FI_LOG_EP_DATA,
+			"SQ[%u] WR inline length %zu > %zu\n",
+			efa_qp->ibv_qp->qp_num,
+			efa_buf_list_total_bytes(buf_list, num_buf),
+			qp->sq.max_inline_data);
 		qp->wr_session_err = EINVAL;
 		return;
 	}
@@ -181,10 +180,10 @@ ENTRY_FUN void efa_cqdirect_wr_set_sge_list(struct efa_qp *efa_qp, size_t num_sg
 	switch (op_type) {
 	case EFA_IO_SEND:
 		if (OFI_UNLIKELY(num_sge > sq->wq.max_sge)) {
-			// verbs_err(verbs_get_ctx(qp->verbs_qp.qp.context),
-			// 	  "SQ[%u] num_sge[%zu] > max_sge[%u]\n",
-			// 	  ibvqpx->qp_base.qp_num, num_sge,
-			// 	  sq->wq.max_sge);
+			EFA_WARN(FI_LOG_EP_DATA,
+				"SQ[%u] num_sge[%zu] > max_sge[%zu]\n",
+				efa_qp->ibv_qp->qp_num, num_sge,
+				sq->wq.max_sge);
 			qp->wr_session_err = EINVAL;
 			return;
 		}
@@ -193,10 +192,10 @@ ENTRY_FUN void efa_cqdirect_wr_set_sge_list(struct efa_qp *efa_qp, size_t num_sg
 	case EFA_IO_RDMA_READ:
 	case EFA_IO_RDMA_WRITE:
 		if (OFI_UNLIKELY(num_sge > sq->max_wr_rdma_sge)) {
-			// verbs_err(verbs_get_ctx(qp->verbs_qp.qp.context),
-			// 	  "SQ[%u] num_sge[%zu] > max_rdma_sge[%zu]\n",
-			// 	  ibvqpx->qp_base.qp_num, num_sge,
-			// 	  sq->max_wr_rdma_sge);
+			EFA_WARN(FI_LOG_EP_DATA,
+				"SQ[%u] num_sge[%zu] > max_rdma_sge[%zu]\n",
+				efa_qp->ibv_qp->qp_num, num_sge,
+				sq->max_wr_rdma_sge);
 			qp->wr_session_err = EINVAL;
 			return;
 		}

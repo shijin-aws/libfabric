@@ -87,7 +87,7 @@ struct efa_cqdirect_wq {
 	uint16_t desc_mask;
 	/* wrid_idx_pool_next: Index of the next entry to use in wrid_idx_pool. */
 	uint16_t wrid_idx_pool_next;
-	int max_sge;
+	size_t max_sge;
 	int phase;
 	pthread_spinlock_t wqlock;
 
@@ -123,18 +123,12 @@ struct efa_cqdirect_sq {
 	/* see efa_sq in rdma-core/providers/efa/efa.h */
 	struct efa_cqdirect_wq wq;
 	uint8_t *desc; // this is the "buf" for the sq.
-	// uint32_t desc_offset;
-	// size_t desc_ring_mmap_size;
 	size_t max_inline_data;
 	size_t max_wr_rdma_sge;
 
-	/* Buffer for pending WR entries in the current session */
-	// uint8_t *local_queue;
 	/* cqdirect change:  Number of WR entries we have accepted without ringing doorbell,
 	   however we copy each wqe as soon as we finish building it. */
 	uint32_t num_wqe_pending;
-	/* Phase before current session */
-	// int phase_rb;
 	
 	/* Current wqe being built. */
 	struct efa_io_tx_wqe curr_tx_wqe;
@@ -142,16 +136,9 @@ struct efa_cqdirect_sq {
 };
 
 struct efa_cqdirect_qp {
-	// struct efadv_wq_attr sq_attr;
-	// struct efadv_wq_attr rq_attr;
-
-	// struct verbs_qp verbs_qp;
 	struct efa_cqdirect_sq sq;
 	struct efa_cqdirect_rq rq;
-	// int page_size;
-	// int sq_sig_all;
 	int wr_session_err;
-	// struct ibv_device *dev;
 
 	struct cqdirect_timer send_timing;
 	struct cqdirect_timer recv_timing;
