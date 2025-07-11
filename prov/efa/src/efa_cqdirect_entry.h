@@ -145,17 +145,6 @@ ENTRY_FUN void efa_cqdirect_wr_set_inline_data_list(struct efa_qp *efa_qp,
 	if (OFI_UNLIKELY(qp->wr_session_err))
 		return;
 
-	if (OFI_UNLIKELY(efa_buf_list_total_bytes(buf_list, num_buf) >
-		     qp->sq.max_inline_data)) {
-		EFA_WARN(FI_LOG_EP_DATA,
-			"SQ[%u] WR inline length %zu > %zu\n",
-			efa_qp->ibv_qp->qp_num,
-			efa_buf_list_total_bytes(buf_list, num_buf),
-			qp->sq.max_inline_data);
-		qp->wr_session_err = EINVAL;
-		return;
-	}
-
 	for (i = 0; i < num_buf; i++) {
 		length = buf_list[i].length;
 
@@ -184,26 +173,10 @@ ENTRY_FUN void efa_cqdirect_wr_set_sge_list(struct efa_qp *efa_qp, size_t num_sg
 	op_type = EFA_GET(&tx_wqe->meta.ctrl1, EFA_IO_TX_META_DESC_OP_TYPE);
 	switch (op_type) {
 	case EFA_IO_SEND:
-		if (OFI_UNLIKELY(num_sge > sq->wq.max_sge)) {
-			EFA_WARN(FI_LOG_EP_DATA,
-				"SQ[%u] num_sge[%zu] > max_sge[%zu]\n",
-				efa_qp->ibv_qp->qp_num, num_sge,
-				sq->wq.max_sge);
-			qp->wr_session_err = EINVAL;
-			return;
-		}
 		efa_post_send_sgl(tx_wqe->data.sgl, sg_list, num_sge);
 		break;
 	case EFA_IO_RDMA_READ:
 	case EFA_IO_RDMA_WRITE:
-		if (OFI_UNLIKELY(num_sge > sq->max_wr_rdma_sge)) {
-			EFA_WARN(FI_LOG_EP_DATA,
-				"SQ[%u] num_sge[%zu] > max_rdma_sge[%zu]\n",
-				efa_qp->ibv_qp->qp_num, num_sge,
-				sq->max_wr_rdma_sge);
-			qp->wr_session_err = EINVAL;
-			return;
-		}
 		rdma_req = &tx_wqe->data.rdma_req;
 		rdma_req->remote_mem.length = efa_sge_total_bytes(sg_list,
 								  num_sge);

@@ -68,7 +68,6 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	direct_qp->rq.buf = rq_attr.buffer;
 	direct_qp->rq.wq.db = rq_attr.doorbell;
 	direct_qp->rq.wq.wqe_size = rq_attr.entry_size;
-	direct_qp->rq.wq.max_sge = 3;
 	// TODO: in rdma-core, the wqe_cnt is set to rq_desc_cnt / qp->rq.wq.max_sge,
 	// TODO: while the desc_mask is just rq_desc_cnt - 1.  In practice only the mask matters.
 	rq_attr.num_entries = 32768; // TODO fix this hard-coded number!
@@ -78,9 +77,6 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	direct_qp->sq.wq.phase = 0;
 	direct_qp->sq.wq.db = sq_attr.doorbell;
 	direct_qp->sq.num_wqe_pending = 0;
-	direct_qp->sq.max_wr_rdma_sge = 1; // TODO how do we get this number?
-	direct_qp->sq.wq.max_sge = 2; // TODO how do we get this number?
-	direct_qp->sq.max_inline_data = 32; // TODO how do we get this number?
 
 	direct_qp->sq.wq.wqe_size = sq_attr.entry_size;
 	efa_cqdirect_wq_initialize(&direct_qp->sq.wq, sq_attr.num_entries);

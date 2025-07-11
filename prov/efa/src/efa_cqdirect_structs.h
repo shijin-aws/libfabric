@@ -87,7 +87,6 @@ struct efa_cqdirect_wq {
 	uint16_t desc_mask;
 	/* wrid_idx_pool_next: Index of the next entry to use in wrid_idx_pool. */
 	uint16_t wrid_idx_pool_next;
-	size_t max_sge;
 	int phase;
 	pthread_spinlock_t wqlock;
 
@@ -123,8 +122,6 @@ struct efa_cqdirect_sq {
 	/* see efa_sq in rdma-core/providers/efa/efa.h */
 	struct efa_cqdirect_wq wq;
 	uint8_t *desc; // this is the "buf" for the sq.
-	size_t max_inline_data;
-	size_t max_wr_rdma_sge;
 
 	/* cqdirect change:  Number of WR entries we have accepted without ringing doorbell,
 	   however we copy each wqe as soon as we finish building it. */

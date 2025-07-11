@@ -247,15 +247,6 @@ MAYBE_INLINE int efa_post_send_validate(struct efa_qp *qp,
 MAYBE_INLINE int efa_post_recv_validate(struct efa_qp *qp,
 				  struct ibv_recv_wr *wr)
 {
-
-	if (OFI_UNLIKELY(wr->num_sge > qp->cqdirect_qp.rq.wq.max_sge)) {
-		EFA_WARN(FI_LOG_EP_DATA,
-			  "RQ[%u] WR num_sge %d > %zu\n",
-			  qp->ibv_qp->qp_num, wr->num_sge,
-			  qp->cqdirect_qp.rq.wq.max_sge);
-		return EINVAL;
-	}
-
 	if (OFI_UNLIKELY(qp->cqdirect_qp.rq.wq.wqe_posted - qp->cqdirect_qp.rq.wq.wqe_completed ==
 		     qp->cqdirect_qp.rq.wq.wqe_cnt)) {
 		EFA_WARN(FI_LOG_EP_DATA,
