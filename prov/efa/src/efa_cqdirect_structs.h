@@ -42,32 +42,6 @@
 #define ENTRY_FUN static inline
 #endif
 
-// TODO: remove.  This is only for testing the timing
-#include <x86intrin.h>
-struct cqdirect_timer {
-	uint64_t count;
-	uint64_t cycles;
-	uint64_t tic;
-};
-static inline void efa_cqdirect_timer_init(struct cqdirect_timer *tt) {
-	tt->count = 0;
-	tt->cycles = 0;
-	tt->tic = 0;
-}
-static inline void efa_cqdirect_timer_start(struct cqdirect_timer *tt) {
-	tt->tic = __rdtsc();
-	asm volatile("" ::: "memory");
-}
-static inline void efa_cqdirect_timer_stop(struct cqdirect_timer *tt) {
-	asm volatile("" ::: "memory");
-	tt->cycles += __rdtsc() - tt->tic;
-	tt->count++;
-}
-static inline void efa_cqdirect_timer_report(const char* prefix, struct cqdirect_timer *tt) {
-	uint64_t avg_cycles = tt->cycles / tt->count;
-	printf("Timer Report: %s: Count: %ld, Avg Cycles: %ld\n", prefix, tt->count, avg_cycles);
-}
-
 
 struct efa_cqdirect_wq {
 	/* see `struct efa_wq` in rdma-core/providers/efa/efa.h */
@@ -106,8 +80,6 @@ struct efa_cqdirect_cq {
 	int phase;
 	int qmask;
 	uint16_t consumed_cnt;
-
-	struct cqdirect_timer timing;
 };
 
 struct efa_cqdirect_rq {
@@ -136,9 +108,6 @@ struct efa_cqdirect_qp {
 	struct efa_cqdirect_sq sq;
 	struct efa_cqdirect_rq rq;
 	int wr_session_err;
-
-	struct cqdirect_timer send_timing;
-	struct cqdirect_timer recv_timing;
 };
 
 #endif

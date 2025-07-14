@@ -55,9 +55,6 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 
 	memset(&efa_qp->cqdirect_qp, 0, sizeof(efa_qp->cqdirect_qp));
 		
-	//efa_cqdirect_timer_init(&efa_qp->cqdirect_qp.send_timing);
-	//efa_cqdirect_timer_init(&efa_qp->cqdirect_qp.recv_timing);
-
 	ret = efadv_query_qp_wqs(efa_qp->ibv_qp,
 								&sq_attr,
 								&rq_attr,
@@ -92,8 +89,6 @@ int efa_cqdirect_cq_initialize(struct efa_cq *efa_cq) {
     int ret;
 
     memset(cqdirect, 0, sizeof(*cqdirect));
-
-    //efa_cqdirect_timer_init(&cqdirect->timing);
 
     /**
      * We cannot use direct cq when hardware is still using sub cq.

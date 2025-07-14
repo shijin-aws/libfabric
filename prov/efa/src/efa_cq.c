@@ -515,9 +515,6 @@ int efa_cq_close(fid_t fid)
 		cq->ibv_cq.ibv_cq_ex = NULL;
 	}
 
-	//efa_cqdirect_timer_report("CQ Polling", &cq->cqdirect.timing);
-	// printf("CQ poll stats: total_polls: %ld, nonempty_polls: %ld\n",cq->cqdirect.total_polls,cq->cqdirect.nonempty_polls);
-
 	ret = ofi_cq_cleanup(&cq->util_cq);
 	if (ret)
 		return ret;
