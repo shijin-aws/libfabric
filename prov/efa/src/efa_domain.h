@@ -11,6 +11,7 @@
 #include "ofi_hmem.h"
 #include "ofi_util.h"
 #include "ofi_lock.h"
+#include "fi_ext_efa.h"
 
 enum efa_domain_info_type {
 	EFA_INFO_RDM,

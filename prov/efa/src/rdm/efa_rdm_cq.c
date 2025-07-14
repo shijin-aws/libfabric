@@ -87,7 +87,7 @@ static struct fi_ops efa_rdm_cq_fi_ops = {
  */
 static
 void efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
-						       struct ibv_cq_ex *ibv_cq_ex,
+						       struct efa_ibv_cq *ibv_cq,
 						       uint64_t flags,
 						       struct efa_rdm_ep *ep,
 						       struct efa_rdm_pke *pkt_entry
@@ -97,6 +97,7 @@ void efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
 	int ret;
 	fi_addr_t src_addr;
 	struct efa_av *efa_av;
+	struct ibv_cq_ex *ibv_cq_ex = ibv_cq->ibv_cq_ex;
 	uint32_t imm_data = ibv_wc_read_imm_data(ibv_cq_ex);
 	uint32_t len = ibv_wc_read_byte_len(ibv_cq_ex);
 
@@ -126,7 +127,7 @@ void efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
 	 * For unsolicited wc, pkt_entry can be NULL, so we can only
 	 * access it for solicited wc.
 	 */
-	if (!efa_cq_wc_is_unsolicited(ibv_cq_ex)) {
+	if (!efa_cq_wc_is_unsolicited(ibv_cq)) {
 		/**
 		 * Recv with immediate will consume a pkt_entry, but the pkt is not
 		 * filled, so free the pkt_entry and record we have one less posted
@@ -384,7 +385,7 @@ int efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 				break;
 			case IBV_WC_RECV: /* fall through */
 			case IBV_WC_RECV_RDMA_WITH_IMM:
-				if (efa_cq_wc_is_unsolicited(ibv_cq->ibv_cq_ex)) {
+				if (efa_cq_wc_is_unsolicited(ibv_cq)) {
 					EFA_WARN(FI_LOG_CQ, "Receive error %s (%d) for unsolicited write recv",
 						efa_strerror(prov_errno), prov_errno);
 					efa_base_ep_write_eq_error(&ep->base_ep, to_fi_errno(prov_errno), prov_errno);
@@ -419,7 +420,7 @@ int efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 			break;
 		case IBV_WC_RECV_RDMA_WITH_IMM:
 			efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
-				ibv_cq->ibv_cq_ex,
+				ibv_cq,
 				FI_REMOTE_CQ_DATA | FI_RMA | FI_REMOTE_WRITE,
 				ep, pkt_entry);
 			break;
@@ -595,9 +596,9 @@ int efa_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 	if (ret)
 		goto free;
 
-	ret = efa_cq_ibv_cq_ex_open(
-		attr, efa_domain->device->ibv_ctx, &cq->efa_cq.ibv_cq.ibv_cq_ex,
-		&cq->efa_cq.ibv_cq.ibv_cq_ex_type, &efa_cq_init_attr);
+	ret = efa_cq_open_ibv_cq(
+		attr, efa_domain->device->ibv_ctx, &cq->efa_cq.ibv_cq,
+		&efa_cq_init_attr);
 	if (ret) {
 		EFA_WARN(FI_LOG_CQ, "Unable to create extended CQ: %s\n", fi_strerror(ret));
 		goto close_util_cq;
