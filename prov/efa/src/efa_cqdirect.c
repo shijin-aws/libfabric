@@ -83,6 +83,19 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	
 }
 
+/**
+ * @brief Clean up the resources created for direct qp
+ * called during efa_qp_destruct
+ * @param efa_qp ptr to efa_qp
+ */
+void efa_cqdirect_qp_finalize( struct efa_qp *efa_qp) {
+    struct efa_cqdirect_qp *direct_qp = &efa_qp->cqdirect_qp;
+
+    efa_cqdirect_wq_finalize(&direct_qp->sq.wq);
+    efa_cqdirect_wq_finalize(&direct_qp->rq.wq);
+}
+
+
 int efa_cqdirect_cq_initialize(struct efa_cq *efa_cq) {
     struct efadv_cq_attr attr = {0};
     struct efa_cqdirect_cq *cqdirect = &efa_cq->ibv_cq.cqdirect;
