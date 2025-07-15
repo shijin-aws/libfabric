@@ -37,7 +37,7 @@ static void efa_cq_construct_cq_entry(struct efa_ibv_cq* cq,
 {
 	struct ibv_cq_ex *ibv_cqx = cq->ibv_cq_ex;
 
-	if (!cq->ops->wc_is_unsolicited(cq) && ibv_cqx->wr_id) {
+	if (!efa_cq_wc_is_unsolicited(cq) && ibv_cqx->wr_id) {
 		entry->op_context = (void *)ibv_cqx->wr_id;
 		entry->flags = (opcode == IBV_WC_RECV_RDMA_WITH_IMM) ? efa_cq_opcode_to_fi_flags(opcode): ((struct efa_context *) ibv_cqx->wr_id)->completion_flags;
 	} else {
