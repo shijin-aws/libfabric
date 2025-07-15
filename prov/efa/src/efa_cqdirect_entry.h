@@ -74,12 +74,17 @@ ENTRY_FUN int efa_cqdirect_wr_complete(struct efa_qp *qp) {
 	
 	struct efa_cqdirect_sq *sq = &qp->cqdirect_qp.sq;
 
-
+	if (OFI_UNLIKELY(qp->cqdirect_qp.wr_session_err)) {
+		sq->wq.wqe_posted -= sq->num_wqe_pending;
+		sq->wq.pc -= sq->num_wqe_pending;
+		goto out;
+	}
 	/* it should not be possible to get here with sq->num_wqe_pending==0 */
 	assert(sq->num_wqe_pending);
 
 	efa_cqdirect_send_wr_post_working(sq, true);
 
+out:
 	return qp->cqdirect_qp.wr_session_err;
 }
 
