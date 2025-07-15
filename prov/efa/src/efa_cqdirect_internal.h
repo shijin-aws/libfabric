@@ -161,14 +161,14 @@ MAYBE_INLINE void efa_cqdirect_process_ex_cqe(struct efa_ibv_cq *ibv_cq, struct 
 
 MAYBE_INLINE void efa_wq_put_wrid_idx(struct efa_cqdirect_wq *wq, uint32_t wrid_idx)
 {
-	// pthread_spin_lock(&wq->wqlock);
+	ofi_genlock_lock(wq->wqlock);
 	wq->wrid_idx_pool_next--;
 	wq->wrid_idx_pool[wq->wrid_idx_pool_next] = wrid_idx;
 	wq->wqe_completed++;
-	// pthread_spin_unlock(&wq->wqlock);
+	ofi_genlock_unlock(wq->wqlock);
 }
 
-MAYBE_INLINE int efa_cqdirect_wq_initialize(struct efa_cqdirect_wq *wq, uint32_t wqe_cnt )
+MAYBE_INLINE int efa_cqdirect_wq_initialize(struct efa_cqdirect_wq *wq, uint32_t wqe_cnt, struct ofi_genlock *wqlock)
 {
 	int i;
 
@@ -190,6 +190,7 @@ MAYBE_INLINE int efa_cqdirect_wq_initialize(struct efa_cqdirect_wq *wq, uint32_t
 	for (i = 0; i < wqe_cnt; i++)
 		wq->wrid_idx_pool[i] = i;
 
+	wq->wqlock = wqlock;
 	return 0;
 }
 

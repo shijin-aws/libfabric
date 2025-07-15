@@ -48,6 +48,7 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	 * See also rdma-core/providers/efa/verbs.c: efa_setup_qp
 	 */
 	struct efa_cqdirect_qp *direct_qp = &efa_qp->cqdirect_qp;
+    struct efa_base_ep *base_ep = efa_qp->base_ep;
 
 	struct efadv_wq_attr sq_attr;
 	struct efadv_wq_attr rq_attr;
@@ -65,7 +66,7 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	direct_qp->rq.buf = rq_attr.buffer;
 	direct_qp->rq.wq.db = rq_attr.doorbell;
 	direct_qp->rq.wq.wqe_size = rq_attr.entry_size;
-	efa_cqdirect_wq_initialize(&direct_qp->rq.wq, rq_attr.num_entries);
+	efa_cqdirect_wq_initialize(&direct_qp->rq.wq, rq_attr.num_entries, &base_ep->util_ep.lock);
 
 	direct_qp->sq.desc = sq_attr.buffer;
 	direct_qp->sq.wq.phase = 0;
@@ -73,7 +74,7 @@ int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp) {
 	direct_qp->sq.num_wqe_pending = 0;
 
 	direct_qp->sq.wq.wqe_size = sq_attr.entry_size;
-	efa_cqdirect_wq_initialize(&direct_qp->sq.wq, sq_attr.num_entries);
+	efa_cqdirect_wq_initialize(&direct_qp->sq.wq, sq_attr.num_entries, &base_ep->util_ep.lock);
 
 	/* see efa_qp_init_indices */
 

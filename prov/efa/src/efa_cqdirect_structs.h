@@ -62,7 +62,7 @@ struct efa_cqdirect_wq {
 	/* wrid_idx_pool_next: Index of the next entry to use in wrid_idx_pool. */
 	uint16_t wrid_idx_pool_next;
 	int phase;
-	pthread_spinlock_t wqlock;
+	struct ofi_genlock *wqlock;
 
 	uint32_t *db;
 };
