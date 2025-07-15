@@ -12,5 +12,5 @@
 
 int efa_cqdirect_qp_initialize( struct efa_qp *efa_qp);
 int efa_cqdirect_cq_initialize( struct efa_cq *efa_cq);
-
+void efa_cqdirect_qp_finalize(struct efa_qp *efa_qp);
 #endif

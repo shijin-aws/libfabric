@@ -331,6 +331,8 @@ void efa_qp_destruct(struct efa_qp *qp)
 	err = -ibv_destroy_qp(qp->ibv_qp);
 	if (err)
 		EFA_INFO(FI_LOG_CORE, "destroy qp[%u] failed, err: %s\n", qp->qp_num, fi_strerror(-err));
+	if (qp->cqdirect_enabled)
+		efa_cqdirect_qp_finalize(qp);
 	free(qp);
 }
 

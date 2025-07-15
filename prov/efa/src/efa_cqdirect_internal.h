@@ -194,6 +194,20 @@ MAYBE_INLINE int efa_cqdirect_wq_initialize(struct efa_cqdirect_wq *wq, uint32_t
 }
 
 
+MAYBE_INLINE void efa_cqdirect_wq_finalize(struct efa_cqdirect_wq *wq)
+{
+	if(wq->wrid) {
+		free(wq->wrid);
+		wq->wrid = NULL;
+	}
+
+	if(wq->wrid_idx_pool) {
+		free(wq->wrid_idx_pool);
+		wq->wrid_idx_pool = NULL;
+	}
+}
+
+
 MAYBE_INLINE size_t efa_sge_total_bytes(const struct ibv_sge *sg_list, int num_sge)
 {
 	size_t bytes = 0;
