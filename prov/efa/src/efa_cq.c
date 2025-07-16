@@ -126,6 +126,19 @@ static void efa_cq_handle_error(struct efa_base_ep *base_ep,
 	}
 }
 
+#if HAVE_LTTNG
+static void efa_cq_trace_completion(uint64_t fi_flags, void *context)
+{
+	if (fi_flags & FI_SEND)
+		efa_tracepoint(send_end, (size_t) context, 0);
+	else if (fi_flags & FI_RECV)
+		efa_tracepoint(recv_end, (size_t) context, 0);
+	else if (fi_flags & FI_WRITE)
+		efa_tracepoint(write_end, (size_t) context, 0);
+	else if (fi_flags & FI_READ)
+		efa_tracepoint(read_end, (size_t) context, 0);
+	}
+#endif
 /**
  * @brief handle the event that a TX request has been completed
  *
@@ -145,6 +158,9 @@ static void efa_cq_handle_tx_completion(struct efa_base_ep *base_ep,
 	if (!ibv_cq_ex->wr_id)
 		return;
 
+#if HAVE_LTTNG
+	efa_cq_trace_completion(cq_entry->flags, cq_entry->op_context);
+#endif
 	/* TX completions should not send peer address to util_cq */
 	if (base_ep->util_ep.caps & FI_SOURCE)
 		ret = ofi_cq_write_src(tx_cq, cq_entry->op_context,
@@ -185,6 +201,9 @@ static void efa_cq_handle_rx_completion(struct efa_base_ep *base_ep,
 	if (!ibv_cq_ex->wr_id)
 		return;
 
+#if HAVE_LTTNG
+	efa_cq_trace_completion(cq_entry->flags, cq_entry->op_context);
+#endif
 	if (base_ep->util_ep.caps & FI_SOURCE) {
 		src_addr = efa_av_reverse_lookup(base_ep->av,
 						 ibv_wc_read_slid(ibv_cq_ex),
