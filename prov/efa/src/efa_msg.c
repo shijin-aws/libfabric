@@ -138,6 +138,7 @@ static inline ssize_t efa_post_recv(struct efa_base_ep *base_ep, const struct fi
 out:
 	ofi_genlock_unlock(&base_ep->util_ep.lock);
 
+	efa_tracepoint(recv_return, (size_t) msg->context, (size_t) msg->addr);
 	return err;
 
 out_err:
@@ -285,6 +286,7 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 
 out_err:
 	ofi_genlock_unlock(&base_ep->util_ep.lock);
+	efa_tracepoint(send_return, (size_t) msg->context, (size_t) msg->addr);
 	return ret;
 }
 

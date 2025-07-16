@@ -109,6 +109,7 @@ static inline ssize_t efa_rma_post_read(struct efa_base_ep *base_ep,
 
 out_err:
 	ofi_genlock_unlock(&base_ep->util_ep.lock);
+	efa_tracepoint(read_return, (size_t) msg->context, (size_t) msg->addr);
 	return err;
 }
 
@@ -262,6 +263,7 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 
 out_err:
 	ofi_genlock_unlock(&base_ep->util_ep.lock);
+	efa_tracepoint(write_return, (size_t) msg->context, (size_t) msg->addr);
 	return err;
 }
 
