@@ -48,7 +48,7 @@ void efa_mock_ibv_wr_set_sge_list_no_op(struct efa_qp *qp,
 					size_t num_sge,
 					const struct ibv_sge *sge_list);
 
-void efa_mock_ibv_wr_set_ud_addr_no_op(struct efa_qp *qp, struct ibv_ah *ah,
+void efa_mock_ibv_wr_set_ud_addr_no_op(struct efa_qp *qp, struct efa_ah *ah,
 				       uint32_t remote_qpn, uint32_t remote_qkey);
 
 int efa_mock_ibv_wr_complete_no_op(struct efa_qp *qp);

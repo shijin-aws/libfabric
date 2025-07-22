@@ -271,7 +271,7 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 		qp->wr_set_sge_list(qp, msg->iov_count, sg_list);
 	}
 
-	qp->wr_set_ud_addr(qp, conn->ah->ibv_ah, conn->ep_addr->qpn,
+	qp->wr_set_ud_addr(qp, conn->ah, conn->ep_addr->qpn,
 			   conn->ep_addr->qkey);
 
 	efa_tracepoint(post_send, qp->ibv_qp_ex->wr_id, (uintptr_t)msg->context);

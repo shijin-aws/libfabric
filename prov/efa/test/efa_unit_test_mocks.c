@@ -106,7 +106,7 @@ void efa_mock_ibv_wr_set_sge_list_no_op(struct efa_qp *qp,
 {
 }
 
-void efa_mock_ibv_wr_set_ud_addr_no_op(struct efa_qp *qp, struct ibv_ah *ah,
+void efa_mock_ibv_wr_set_ud_addr_no_op(struct efa_qp *qp, struct efa_ah *ah,
 				       uint32_t remote_qpn, uint32_t remote_qkey)
 {
 }

@@ -67,7 +67,7 @@ struct efa_qp {
 					const struct ibv_data_buf *buf_list);
 	void (*wr_set_sge_list)(struct efa_qp *efaqp, size_t num_sge,
 				const struct ibv_sge *sg_list);
-	void (*wr_set_ud_addr)(struct efa_qp *efaqp, struct ibv_ah *ah,
+	void (*wr_set_ud_addr)(struct efa_qp *efaqp, struct efa_ah *ah,
 			       uint32_t remote_qpn, uint32_t remote_qkey);
 	void (*wr_start)(struct efa_qp *efaqp);
 };
@@ -110,8 +110,8 @@ static inline void efa_ibv_wr_set_sge_list(struct efa_qp *efaqp, size_t num_sge,
     ibv_wr_set_sge_list(efaqp->ibv_qp_ex, num_sge, sg_list);
 }
 
-static inline void efa_ibv_wr_set_ud_addr(struct efa_qp *efaqp, struct ibv_ah *ah, uint32_t remote_qpn, uint32_t remote_qkey) {
-    ibv_wr_set_ud_addr(efaqp->ibv_qp_ex, ah, remote_qpn, remote_qkey);
+static inline void efa_ibv_wr_set_ud_addr(struct efa_qp *efaqp, struct efa_ah *ah, uint32_t remote_qpn, uint32_t remote_qkey) {
+    ibv_wr_set_ud_addr(efaqp->ibv_qp_ex, ah->ibv_ah, remote_qpn, remote_qkey);
 }
 
 static inline void efa_ibv_wr_start(struct efa_qp *efaqp) {

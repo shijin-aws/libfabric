@@ -207,20 +207,10 @@ ENTRY_FUN void efa_cqdirect_wr_set_sge_list(struct efa_qp *efa_qp,
 }
 
 ENTRY_FUN void efa_cqdirect_wr_set_ud_addr(struct efa_qp *efaqp,
-					   struct ibv_ah *ibvah,
+					   struct efa_ah *ah,
 					   uint32_t remote_qpn,
 					   uint32_t remote_qkey)
 {
-	/* TODO: This is terrible abstraction breakage to get efa_ah using
-	 * container_of!!!!*/
-	/* Fixing this requires further refactor on the send path's abstraction
-	 * to move the branching level from rdma-core API to the whole wqe
-	 * preparation level, so we do not need to derive ah from ibvah
-	 */
-	struct efa_ah {
-		struct ibv_ah ibvah;
-		uint16_t efa_ah;
-	} *ah = container_of(ibvah, struct efa_ah, ibvah);
 	struct efa_io_tx_wqe *tx_wqe;
 
 	if (OFI_UNLIKELY(efaqp->cqdirect_qp.wr_session_err))
@@ -229,7 +219,7 @@ ENTRY_FUN void efa_cqdirect_wr_set_ud_addr(struct efa_qp *efaqp,
 	tx_wqe = &efaqp->cqdirect_qp.sq.curr_tx_wqe;
 
 	tx_wqe->meta.dest_qp_num = remote_qpn;
-	tx_wqe->meta.ah = ah->efa_ah;
+	tx_wqe->meta.ah = ah->ahn;
 	tx_wqe->meta.qkey = remote_qkey;
 }
 

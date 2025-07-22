@@ -95,7 +95,7 @@ static inline ssize_t efa_rma_post_read(struct efa_base_ep *base_ep,
 
 	conn = efa_av_addr_to_conn(base_ep->av, msg->addr);
 	assert(conn && conn->ep_addr);
-	qp->wr_set_ud_addr(qp, conn->ah->ibv_ah, conn->ep_addr->qpn,
+	qp->wr_set_ud_addr(qp, conn->ah, conn->ep_addr->qpn,
 			   conn->ep_addr->qkey);
 
 	efa_tracepoint(post_read, qp->ibv_qp_ex->wr_id, (uintptr_t)msg->context);
@@ -248,7 +248,7 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 
 	conn = efa_av_addr_to_conn(base_ep->av, msg->addr);
 	assert(conn && conn->ep_addr);
-	qp->wr_set_ud_addr(qp, conn->ah->ibv_ah, conn->ep_addr->qpn,
+	qp->wr_set_ud_addr(qp, conn->ah, conn->ep_addr->qpn,
 			   conn->ep_addr->qkey);
 
 	efa_tracepoint(post_write, qp->ibv_qp_ex->wr_id, (uintptr_t)msg->context);

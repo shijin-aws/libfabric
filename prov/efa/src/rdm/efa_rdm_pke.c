@@ -453,10 +453,10 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 
 		if (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP) {
 			assert(peer->extra_info[0] & EFA_RDM_EXTRA_FEATURE_REQUEST_USER_RECV_QP);
-			qp->wr_set_ud_addr(qp, conn->ah->ibv_ah,
+			qp->wr_set_ud_addr(qp, conn->ah,
 				   peer->user_recv_qp.qpn, peer->user_recv_qp.qkey);
 		} else {
-			qp->wr_set_ud_addr(qp, conn->ah->ibv_ah,
+			qp->wr_set_ud_addr(qp, conn->ah,
 				   conn->ep_addr->qpn, conn->ep_addr->qkey);
 		}
 
@@ -529,12 +529,12 @@ int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 
 	qp->wr_set_sge_list(qp, 1, &sge);
 	if (txe->peer == NULL) {
-		qp->wr_set_ud_addr(qp, ep->base_ep.self_ah->ibv_ah,
+		qp->wr_set_ud_addr(qp, ep->base_ep.self_ah,
 				   qp->qp_num, qp->qkey);
 	} else {
 		conn = pkt_entry->peer->conn;
 		assert(conn && conn->ep_addr);
-		qp->wr_set_ud_addr(qp, conn->ah->ibv_ah,
+		qp->wr_set_ud_addr(qp, conn->ah,
 				   conn->ep_addr->qpn, conn->ep_addr->qkey);
 	}
 
@@ -631,12 +631,12 @@ int efa_rdm_pke_write(struct efa_rdm_pke *pkt_entry)
 		   For now, each WR contains only one sge. */
 	qp->wr_set_sge_list(qp, 1, &sge);
 	if (self_comm) {
-		qp->wr_set_ud_addr(qp, ep->base_ep.self_ah->ibv_ah,
+		qp->wr_set_ud_addr(qp, ep->base_ep.self_ah,
 				   qp->qp_num, qp->qkey);
 	} else {
 		conn = pkt_entry->peer->conn;
 		assert(conn && conn->ep_addr);
-		qp->wr_set_ud_addr(qp, conn->ah->ibv_ah,
+		qp->wr_set_ud_addr(qp, conn->ah,
 				   conn->ep_addr->qpn, conn->ep_addr->qkey);
 	}
 
