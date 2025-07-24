@@ -1433,14 +1433,21 @@ void test_efa_cq_cqdirect_status_with_device_support(struct efa_resource **state
 	struct efa_resource *resource = *state;
 	struct efa_cq *efa_cq;
 	uint32_t vendor_id_orig = g_efa_selected_device_list[0].ibv_attr.vendor_id;
+	struct fid_cq *cq;
+	struct fi_cq_attr cq_attr = {
+		.format = FI_CQ_FORMAT_DATA
+	};
+
+	efa_unit_test_resource_construct(resource, FI_EP_RDM, EFA_DIRECT_FABRIC_NAME);
 
 	/* mock the vendor part id */
 	g_efa_selected_device_list[0].ibv_attr.vendor_part_id = vendor_part_id;
-	efa_unit_test_resource_construct(resource, FI_EP_RDM, EFA_DIRECT_FABRIC_NAME);
 
-	efa_cq = container_of(resource->cq, struct efa_cq, util_cq.cq_fid);
+	assert_int_equal(fi_cq_open(resource->domain, &cq_attr, &cq, NULL), 0);
+	efa_cq = container_of(cq, struct efa_cq, util_cq.cq_fid);
 
 	assert_true(efa_cq->ibv_cq.cqdirect_enabled == cqdirect_enabled);
+	assert_int_equal(fi_close(&cq->fid), 0);
 
 	/* Recover the mocked vendor_id */
 	g_efa_selected_device_list[0].ibv_attr.vendor_part_id = vendor_id_orig;
