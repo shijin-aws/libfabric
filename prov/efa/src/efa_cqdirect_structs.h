@@ -38,8 +38,10 @@ static inline void efa_cqdirect_timer_stop(struct cqdirect_timer *tt) {
 	tt->count++;
 }
 static inline void efa_cqdirect_timer_report(const char* prefix, struct cqdirect_timer *tt) {
-	uint64_t avg_cycles = tt->cycles / tt->count;
-	printf("Timer Report: %s: Count: %ld, Avg Cycles: %ld\n", prefix, tt->count, avg_cycles);
+	if (tt->count) {
+		uint64_t avg_cycles = tt->cycles / tt->count;
+		printf("Timer Report: %s: Count: %ld, Avg Cycles: %ld\n", prefix, tt->count, avg_cycles);
+	}
 }
 
 
