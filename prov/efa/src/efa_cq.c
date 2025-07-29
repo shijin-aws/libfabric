@@ -275,9 +275,7 @@ int efa_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	struct ibv_poll_cq_attr poll_cq_attr = {.comp_mask = 0};
 
 	/* Call ibv_start_poll only once */
-	efa_cqdirect_timer_start(&ibv_cq->cqdirect.timing);
 	err = ibv_cq->start_poll(ibv_cq, &poll_cq_attr);
-	efa_cqdirect_timer_stop(&ibv_cq->cqdirect.timing);
 	should_end_poll = !err;
 
 	while (!err) {
@@ -523,8 +521,6 @@ int efa_cq_close(fid_t fid)
 		}
 		cq->ibv_cq.ibv_cq_ex = NULL;
 	}
-
-	efa_cqdirect_timer_report("CQ Polling", &cq->ibv_cq.cqdirect.timing);
 
 	ret = ofi_cq_cleanup(&cq->util_cq);
 	if (ret)
