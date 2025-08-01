@@ -1,0 +1,282 @@
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
+
+#ifndef EFA_WRAPPERS_H
+#define EFA_WRAPPERS_H
+
+#include <infiniband/verbs.h>
+#include <infiniband/efadv.h>
+
+/* Forward declarations to avoid cyclic dependencies */
+#include "efa_base_ep.h"
+#include "efa_cq.h"
+
+#if HAVE_EFA_CQ_DIRECT
+#include "efa_cqdirect_entry.h"
+#endif
+
+/* QP wrapper functions */
+static inline int efa_qp_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (qp->cqdirect_enabled)
+		return efa_cqdirect_post_recv(qp, wr, bad);
+#endif
+	return ibv_post_recv(qp->ibv_qp, wr, bad);
+}
+
+static inline int efa_qp_wr_complete(struct efa_qp *efaqp)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (efaqp->cqdirect_enabled)
+		return efa_cqdirect_wr_complete(efaqp);
+#endif
+	return ibv_wr_complete(efaqp->ibv_qp_ex);
+}
+
+static inline void efa_qp_wr_rdma_read(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (efaqp->cqdirect_enabled) {
+		efa_cqdirect_wr_rdma_read(efaqp, rkey, remote_addr);
+		return;
+	}
+#endif
+	ibv_wr_rdma_read(efaqp->ibv_qp_ex, rkey, remote_addr);
+}
+
+static inline void efa_qp_wr_rdma_write(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (efaqp->cqdirect_enabled) {
+		efa_cqdirect_wr_rdma_write(efaqp, rkey, remote_addr);
+		return;
+	}
+#endif
+	ibv_wr_rdma_write(efaqp->ibv_qp_ex, rkey, remote_addr);
+}
+
+static inline void efa_qp_wr_rdma_write_imm(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr, __be32 imm_data)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (efaqp->cqdirect_enabled) {
+		efa_cqdirect_wr_rdma_write_imm(efaqp, rkey, remote_addr, imm_data);
+		return;
+	}
+#endif
+	ibv_wr_rdma_write_imm(efaqp->ibv_qp_ex, rkey, remote_addr, imm_data);
+}
+
+static inline void efa_qp_wr_send(struct efa_qp *efaqp)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (efaqp->cqdirect_enabled) {
+		efa_cqdirect_wr_send(efaqp);
+		return;
+	}
+#endif
+	ibv_wr_send(efaqp->ibv_qp_ex);
+}
+
+static inline void efa_qp_wr_send_imm(struct efa_qp *efaqp, __be32 imm_data)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (efaqp->cqdirect_enabled) {
+		efa_cqdirect_wr_send_imm(efaqp, imm_data);
+		return;
+	}
+#endif
+	ibv_wr_send_imm(efaqp->ibv_qp_ex, imm_data);
+}
+
+static inline void efa_qp_wr_set_inline_data_list(struct efa_qp *efaqp, size_t num_buf, const struct ibv_data_buf *buf_list)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (efaqp->cqdirect_enabled) {
+		efa_cqdirect_wr_set_inline_data_list(efaqp, num_buf, buf_list);
+		return;
+	}
+#endif
+	ibv_wr_set_inline_data_list(efaqp->ibv_qp_ex, num_buf, buf_list);
+}
+
+static inline void efa_qp_wr_set_sge_list(struct efa_qp *efaqp, size_t num_sge, const struct ibv_sge *sg_list)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (efaqp->cqdirect_enabled) {
+		efa_cqdirect_wr_set_sge_list(efaqp, num_sge, sg_list);
+		return;
+	}
+#endif
+	ibv_wr_set_sge_list(efaqp->ibv_qp_ex, num_sge, sg_list);
+}
+
+static inline void efa_qp_wr_set_ud_addr(struct efa_qp *efaqp, struct efa_ah *ah, uint32_t remote_qpn, uint32_t remote_qkey)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (efaqp->cqdirect_enabled) {
+		efa_cqdirect_wr_set_ud_addr(efaqp, ah, remote_qpn, remote_qkey);
+		return;
+	}
+#endif
+	ibv_wr_set_ud_addr(efaqp->ibv_qp_ex, ah->ibv_ah, remote_qpn, remote_qkey);
+}
+
+static inline void efa_qp_wr_start(struct efa_qp *efaqp)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (efaqp->cqdirect_enabled) {
+		efa_cqdirect_wr_start(efaqp);
+		return;
+	}
+#endif
+	ibv_wr_start(efaqp->ibv_qp_ex);
+}
+
+/* CQ wrapper functions */
+static inline int efa_ibv_cq_start_poll(struct efa_ibv_cq *ibv_cq, struct ibv_poll_cq_attr *attr)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_start_poll(ibv_cq, attr);
+#endif
+	return ibv_start_poll(ibv_cq->ibv_cq_ex, attr);
+}
+
+static inline int efa_ibv_cq_next_poll(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_next_poll(ibv_cq);
+#endif
+	return ibv_next_poll(ibv_cq->ibv_cq_ex);
+}
+
+static inline enum ibv_wc_opcode efa_ibv_cq_read_opcode(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_wc_read_opcode(ibv_cq);
+#endif
+	return ibv_wc_read_opcode(ibv_cq->ibv_cq_ex);
+}
+
+static inline void efa_ibv_cq_end_poll(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled) {
+		efa_cqdirect_end_poll(ibv_cq);
+		return;
+	}
+#endif
+	ibv_end_poll(ibv_cq->ibv_cq_ex);
+}
+
+static inline uint32_t efa_ibv_cq_read_qp_num(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_wc_read_qp_num(ibv_cq);
+#endif
+	return ibv_wc_read_qp_num(ibv_cq->ibv_cq_ex);
+}
+
+static inline uint32_t efa_ibv_cq_read_vendor_err(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_wc_read_vendor_err(ibv_cq);
+#endif
+	return ibv_wc_read_vendor_err(ibv_cq->ibv_cq_ex);
+}
+
+static inline uint32_t efa_ibv_cq_read_src_qp(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_wc_read_src_qp(ibv_cq);
+#endif
+	return ibv_wc_read_src_qp(ibv_cq->ibv_cq_ex);
+}
+
+static inline uint32_t efa_ibv_cq_read_slid(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_wc_read_slid(ibv_cq);
+#endif
+	return ibv_wc_read_slid(ibv_cq->ibv_cq_ex);
+}
+
+static inline uint32_t efa_ibv_cq_read_byte_len(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_wc_read_byte_len(ibv_cq);
+#endif
+	return ibv_wc_read_byte_len(ibv_cq->ibv_cq_ex);
+}
+
+static inline unsigned int efa_ibv_cq_read_wc_flags(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_wc_read_wc_flags(ibv_cq);
+#endif
+	return ibv_wc_read_wc_flags(ibv_cq->ibv_cq_ex);
+}
+
+static inline __be32 efa_ibv_cq_read_imm_data(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_wc_read_imm_data(ibv_cq);
+#endif
+	return ibv_wc_read_imm_data(ibv_cq->ibv_cq_ex);
+}
+
+
+static inline bool efa_ibv_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_wc_is_unsolicited(ibv_cq);
+#endif
+#if HAVE_CAPS_UNSOLICITED_WRITE_RECV
+	return efadv_wc_is_unsolicited(efadv_cq_from_ibv_cq_ex(ibv_cq->ibv_cq_ex));
+#else
+	return false;
+#endif
+}
+
+/**
+ * @brief Check whether a completion consumes recv buffer
+ *
+ * @param ibv_cq_ex extended ibv cq
+ * @return true the wc consumes a recv buffer
+ * @return false the wc doesn't consume a recv buffer
+ */
+static inline
+bool efa_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq)
+{
+	return efa_use_unsolicited_write_recv() && efa_ibv_cq_wc_is_unsolicited(ibv_cq);
+}
+
+
+
+static inline int efa_ibv_cq_read_sgid(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid)
+{
+#if HAVE_EFA_CQ_DIRECT
+	if (ibv_cq->cqdirect_enabled)
+		return efa_cqdirect_wc_read_sgid(ibv_cq, sgid);
+#endif
+
+#if HAVE_EFADV_CQ_EX
+	return efadv_wc_read_sgid(efadv_cq_from_ibv_cq_ex(ibv_cq->ibv_cq_ex), sgid);
+#else
+	return false;
+#endif
+}
+
+
+#endif /* EFA_WRAPPERS_H */

@@ -7,6 +7,10 @@
 
 #include "efa_cqdirect_structs.h"
 #include "efa_mmio.h"
+#include "efa_errno.h"
+#include "efa_cq.h"
+#include "efa_base_ep.h"
+
 
 MAYBE_INLINE void efa_cqdirect_rq_ring_doorbell(struct efa_cqdirect_rq *rq,
 						uint16_t pc)

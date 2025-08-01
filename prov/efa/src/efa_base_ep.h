@@ -52,71 +52,8 @@ struct efa_qp {
 #if HAVE_EFA_CQ_DIRECT
 	struct efa_cqdirect_qp cqdirect_qp;
 #endif
-	int (*post_recv)(struct efa_qp *efaqp, struct ibv_recv_wr *wr,
-			 struct ibv_recv_wr **bad_wr);
-	int (*wr_complete)(struct efa_qp *efaqp);
-	void (*wr_rdma_read)(struct efa_qp *efaqp, uint32_t rkey,
-			     uint64_t remote_addr);
-	void (*wr_rdma_write)(struct efa_qp *efaqp, uint32_t rkey,
-			      uint64_t remote_addr);
-	void (*wr_rdma_write_imm)(struct efa_qp *efaqp, uint32_t rkey,
-				  uint64_t remote_addr, __be32 imm_data);
-	void (*wr_send)(struct efa_qp *efaqp);
-	void (*wr_send_imm)(struct efa_qp *efaqp, __be32 imm_data);
-	void (*wr_set_inline_data_list)(struct efa_qp *efaqp, size_t num_buf,
-					const struct ibv_data_buf *buf_list);
-	void (*wr_set_sge_list)(struct efa_qp *efaqp, size_t num_sge,
-				const struct ibv_sge *sg_list);
-	void (*wr_set_ud_addr)(struct efa_qp *efaqp, struct efa_ah *ah,
-			       uint32_t remote_qpn, uint32_t remote_qkey);
-	void (*wr_start)(struct efa_qp *efaqp);
+
 };
-
-static inline
-int efa_ibv_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad)
-{
-	return ibv_post_recv(qp->ibv_qp, wr, bad);
-}
-
-static inline int efa_ibv_wr_complete(struct efa_qp *efaqp) {
-    return ibv_wr_complete(efaqp->ibv_qp_ex);
-}
-
-static inline void efa_ibv_wr_rdma_read(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr) {
-    ibv_wr_rdma_read(efaqp->ibv_qp_ex, rkey, remote_addr);
-}
-
-static inline void efa_ibv_wr_rdma_write(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr) {
-    ibv_wr_rdma_write(efaqp->ibv_qp_ex, rkey, remote_addr);
-}
-
-static inline void efa_ibv_wr_rdma_write_imm(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr, __be32 imm_data) {
-    ibv_wr_rdma_write_imm(efaqp->ibv_qp_ex, rkey, remote_addr, imm_data);
-}
-
-static inline void efa_ibv_wr_send(struct efa_qp *efaqp) {
-    ibv_wr_send(efaqp->ibv_qp_ex);
-}
-
-static inline void efa_ibv_wr_send_imm(struct efa_qp *efaqp, __be32 imm_data) {
-    ibv_wr_send_imm(efaqp->ibv_qp_ex, imm_data);
-}
-
-static inline void efa_ibv_wr_set_inline_data_list(struct efa_qp *efaqp, size_t num_buf, const struct ibv_data_buf *buf_list) {
-    ibv_wr_set_inline_data_list(efaqp->ibv_qp_ex, num_buf, buf_list);
-}
-
-static inline void efa_ibv_wr_set_sge_list(struct efa_qp *efaqp, size_t num_sge, const struct ibv_sge *sg_list) {
-    ibv_wr_set_sge_list(efaqp->ibv_qp_ex, num_sge, sg_list);
-}
-
-static inline void efa_ibv_wr_set_ud_addr(struct efa_qp *efaqp, struct efa_ah *ah, uint32_t remote_qpn, uint32_t remote_qkey) {
-    ibv_wr_set_ud_addr(efaqp->ibv_qp_ex, ah->ibv_ah, remote_qpn, remote_qkey);
-}
-
-static inline void efa_ibv_wr_start(struct efa_qp *efaqp) {
-    ibv_wr_start(efaqp->ibv_qp_ex);
-}
 
 struct efa_av;
 

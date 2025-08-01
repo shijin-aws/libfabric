@@ -5,6 +5,8 @@
 #ifndef _EFA_CQDIRECT_ENTRY_H
 #define _EFA_CQDIRECT_ENTRY_H
 
+#include "config.h"
+
 #if HAVE_EFA_CQ_DIRECT
 
 #include "efa_cqdirect_internal.h"

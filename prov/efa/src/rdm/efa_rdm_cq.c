@@ -3,6 +3,7 @@
 
 #include "efa.h"
 #include "efa_rdm_cq.h"
+#include "efa_wrappers.h"
 #include "ofi_util.h"
 #include "efa_av.h"
 #include "efa_cntr.h"
@@ -97,8 +98,8 @@ void efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
 	int ret;
 	fi_addr_t src_addr;
 	struct efa_av *efa_av;
-	uint32_t imm_data = ibv_cq->read_imm_data(ibv_cq);
-	uint32_t len = ibv_cq->read_byte_len(ibv_cq);
+	uint32_t imm_data = efa_ibv_cq_read_imm_data(ibv_cq);
+	uint32_t len = efa_ibv_cq_read_byte_len(ibv_cq);
 
 	target_cq = ep->base_ep.util_ep.rx_cq;
 	efa_av = ep->base_ep.av;
@@ -107,8 +108,8 @@ void efa_rdm_cq_proc_ibv_recv_rdma_with_imm_completion(
 
 		/* Only check the explicit AV when writing completions */
 		src_addr = efa_av_reverse_lookup_rdm(efa_av,
-						ibv_cq->read_slid(ibv_cq),
-						ibv_cq->read_src_qp(ibv_cq),
+						efa_ibv_cq_read_slid(ibv_cq),
+						efa_ibv_cq_read_src_qp(ibv_cq),
 						NULL);
 		ret = ofi_cq_write_src(target_cq, NULL, flags, len, NULL, imm_data, 0, src_addr);
 	} else {
@@ -159,7 +160,7 @@ static inline int efa_rdm_cq_populate_src_efa_ep_addr(
 	ep = pkt_entry->ep;
 	assert(ep);
 
-	efa_ep_addr->qpn = ibv_cq->read_src_qp(ibv_cq);
+	efa_ep_addr->qpn = efa_ibv_cq_read_src_qp(ibv_cq);
 
 	if (pkt_entry->alloc_type == EFA_RDM_PKE_FROM_USER_RX_POOL) {
 		/* Receive packet posted in the zero-copy path does not have a
@@ -216,7 +217,7 @@ static inline int efa_rdm_cq_populate_src_efa_ep_addr(
 	}
 
 	/* Attempt to read sgid from EFA firmware */
-	if (ibv_cq->read_sgid(ibv_cq, &gid) < 0) {
+	if (efa_ibv_cq_read_sgid(ibv_cq, &gid) < 0) {
 		/* Return code is negative if the peer AH is known */
 		return FI_EADDRNOTAVAIL;
 	}
@@ -310,8 +311,8 @@ efa_rdm_cq_get_peer_for_pkt_entry(struct efa_rdm_ep *ep,
 	uint32_t gid;
 	uint32_t qpn;
 
-	gid = efa_ibv_cq->read_slid(efa_ibv_cq);
-	qpn = efa_ibv_cq->read_src_qp(efa_ibv_cq);
+	gid = efa_ibv_cq_read_slid(efa_ibv_cq);
+	qpn = efa_ibv_cq_read_src_qp(efa_ibv_cq);
 
 	EFA_DBG(FI_LOG_CQ,
 		"Attempting to retrieve peer for packet from peer with gid %d "
@@ -418,10 +419,10 @@ static void efa_rdm_cq_handle_recv_completion(struct efa_ibv_cq *ibv_cq, struct 
 		ep->efa_rx_pkts_posted--;
 	}
 
-	pkt_entry->pkt_size = ibv_cq->read_byte_len(ibv_cq);
-	if (ibv_cq->read_wc_flags(ibv_cq) & IBV_WC_WITH_IMM) {
+	pkt_entry->pkt_size = efa_ibv_cq_read_byte_len(ibv_cq);
+	if (efa_ibv_cq_read_wc_flags(ibv_cq) & IBV_WC_WITH_IMM) {
 		has_imm_data = true;
-		imm_data = ibv_cq->read_imm_data(ibv_cq);
+		imm_data = efa_ibv_cq_read_imm_data(ibv_cq);
 	}
 
 	pkt_entry->peer = efa_rdm_cq_get_peer_for_pkt_entry(ep, ibv_cq, pkt_entry);
@@ -467,7 +468,7 @@ static void efa_rdm_cq_handle_recv_completion(struct efa_ibv_cq *ibv_cq, struct 
 	if (pkt_entry->alloc_type == EFA_RDM_PKE_FROM_USER_RX_POOL) {
 		assert(ep->base_ep.user_recv_qp);
 		/* User recv pkts are only posted to the user recv qp */
-		assert(ibv_cq->read_qp_num(ibv_cq) == ep->base_ep.user_recv_qp->qp_num);
+		assert(efa_ibv_cq_read_qp_num(ibv_cq) == ep->base_ep.user_recv_qp->qp_num);
 		return efa_rdm_pke_proc_received_no_hdr(pkt_entry, has_imm_data, imm_data);
 	}
 
@@ -531,7 +532,7 @@ static void efa_rdm_cq_handle_recv_completion(struct efa_ibv_cq *ibv_cq, struct 
  * error reporting
  */
 static int efa_rdm_cq_get_prov_errno(struct efa_ibv_cq *ibv_cq, struct efa_rdm_peer *peer) {
-	uint32_t vendor_err = ibv_cq->read_vendor_err(ibv_cq);
+	uint32_t vendor_err = efa_ibv_cq_read_vendor_err(ibv_cq);
 
 	if (OFI_UNLIKELY(!peer)) {
 		return vendor_err;
@@ -588,12 +589,12 @@ int efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	dlist_init(&rx_progressed_ep_list);
 
 	/* Call ibv_start_poll only once */
-	err = ibv_cq->start_poll(ibv_cq, &poll_cq_attr);
+	err = efa_ibv_cq_start_poll(ibv_cq, &poll_cq_attr);
 	should_end_poll = !err;
 
 	while (!err) {
 		pkt_entry = (void *)(uintptr_t)ibv_cq->ibv_cq_ex->wr_id;
-		qp = efa_domain->qp_table[ibv_cq->read_qp_num(ibv_cq) & efa_domain->qp_table_sz_m1];
+		qp = efa_domain->qp_table[efa_ibv_cq_read_qp_num(ibv_cq) & efa_domain->qp_table_sz_m1];
 		ep = container_of(qp->base_ep, struct efa_rdm_ep, base_ep);
 #if HAVE_LTTNG
 		efa_rdm_tracepoint(poll_cq, (size_t) ibv_cq->ibv_cq_ex->wr_id);
@@ -603,7 +604,7 @@ int efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 					   pkt_entry->ope->total_len, pkt_entry->ope->cq_entry.tag,
 					   pkt_entry->ope->peer->conn->fi_addr);
 #endif
-		opcode = ibv_cq->read_opcode(ibv_cq);
+		opcode = efa_ibv_cq_read_opcode(ibv_cq);
 		if (ibv_cq->ibv_cq_ex->status) {
 			if (pkt_entry)
 				peer = pkt_entry->peer;
@@ -672,12 +673,12 @@ int efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 		 * ibv_next_poll MUST be call after the current WC is fully processed,
 		 * which prevents later calls on ibv_cq_ex from reading the wrong WC.
 		 */
-		err = ibv_cq->next_poll(ibv_cq);
+		err = efa_ibv_cq_next_poll(ibv_cq);
 	}
 
 	if (err && err != ENOENT) {
 		err = err > 0 ? err : -err;
-		prov_errno = ibv_cq->read_vendor_err(ibv_cq);
+		prov_errno = efa_ibv_cq_read_vendor_err(ibv_cq);
 		EFA_WARN(FI_LOG_CQ, "Unexpected error when polling ibv cq, err: %s (%d) prov_errno: %s (%d)\n", fi_strerror(err), err, efa_strerror(prov_errno), prov_errno);
 		efa_show_help(prov_errno);
 		err_entry = (struct fi_cq_err_entry) {
@@ -689,7 +690,7 @@ int efa_rdm_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	}
 
 	if (should_end_poll)
-		ibv_cq->end_poll(ibv_cq);
+		efa_ibv_cq_end_poll(ibv_cq);
 
 	dlist_foreach_container_safe(
 		&rx_progressed_ep_list, struct efa_rdm_ep, ep, entry, tmp) {

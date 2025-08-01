@@ -9,21 +9,6 @@
 #include "rdm/efa_rdm_protocol.h"
 #include "efa_cqdirect.h"
 
-static void efa_qp_fill_ibv_pfns(struct efa_qp *qp)
-{
-	qp->post_recv = efa_ibv_post_recv;
-	qp->wr_complete = efa_ibv_wr_complete;
-	qp->wr_rdma_read = efa_ibv_wr_rdma_read;
-	qp->wr_rdma_write = efa_ibv_wr_rdma_write;
-	qp->wr_rdma_write_imm = efa_ibv_wr_rdma_write_imm;
-	qp->wr_send = efa_ibv_wr_send;
-	qp->wr_send_imm = efa_ibv_wr_send_imm;
-	qp->wr_set_inline_data_list = efa_ibv_wr_set_inline_data_list;
-	qp->wr_set_sge_list = efa_ibv_wr_set_sge_list;
-	qp->wr_set_ud_addr = efa_ibv_wr_set_ud_addr;
-	qp->wr_start = efa_ibv_wr_start;
-};
-
 int efa_base_ep_bind_av(struct efa_base_ep *base_ep, struct efa_av *av)
 {
 	if (base_ep->domain != av->domain) {
@@ -269,7 +254,6 @@ int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex, 
 	(*qp)->ibv_qp_ex = ibv_qp_to_qp_ex((*qp)->ibv_qp);
 	/* Initialize it explicitly for safety */
 	(*qp)->cqdirect_enabled = false;
-	efa_qp_fill_ibv_pfns(*qp);
 	return FI_SUCCESS;
 }
 

@@ -14,37 +14,9 @@
 
 #include "efa_cqdirect_entry.h"
 
-static void efa_cq_fill_cqdirect_pfns(struct efa_ibv_cq *ibv_cq)
-{
-	ibv_cq->start_poll = efa_cqdirect_start_poll;
-	ibv_cq->next_poll = efa_cqdirect_next_poll;
-	ibv_cq->end_poll = efa_cqdirect_end_poll;
-	ibv_cq->wc_is_unsolicited = efa_cqdirect_wc_is_unsolicited;
-	ibv_cq->read_byte_len = efa_cqdirect_wc_read_byte_len;
-	ibv_cq->read_imm_data = efa_cqdirect_wc_read_imm_data;
-	ibv_cq->read_opcode = efa_cqdirect_wc_read_opcode;
-	ibv_cq->read_slid = efa_cqdirect_wc_read_slid;
-	ibv_cq->read_src_qp = efa_cqdirect_wc_read_src_qp;
-	ibv_cq->read_qp_num = efa_cqdirect_wc_read_qp_num;
-	ibv_cq->read_vendor_err = efa_cqdirect_wc_read_vendor_err;
-	ibv_cq->read_wc_flags = efa_cqdirect_wc_read_wc_flags;
-	ibv_cq->read_sgid = efa_cqdirect_wc_read_sgid;
-};
 
-static void efa_qp_fill_cqdirect_pfns(struct efa_qp *qp)
-{
-	qp->post_recv = efa_cqdirect_post_recv;
-	qp->wr_complete = efa_cqdirect_wr_complete;
-	qp->wr_rdma_read = efa_cqdirect_wr_rdma_read;
-	qp->wr_rdma_write = efa_cqdirect_wr_rdma_write;
-	qp->wr_rdma_write_imm = efa_cqdirect_wr_rdma_write_imm;
-	qp->wr_send = efa_cqdirect_wr_send;
-	qp->wr_send_imm = efa_cqdirect_wr_send_imm;
-	qp->wr_set_inline_data_list = efa_cqdirect_wr_set_inline_data_list;
-	qp->wr_set_sge_list = efa_cqdirect_wr_set_sge_list;
-	qp->wr_set_ud_addr = efa_cqdirect_wr_set_ud_addr;
-	qp->wr_start = efa_cqdirect_wr_start;
-};
+
+
 
 int efa_cqdirect_qp_initialize(struct efa_qp *efa_qp)
 {
@@ -83,7 +55,6 @@ int efa_cqdirect_qp_initialize(struct efa_qp *efa_qp)
 	/* see efa_qp_init_indices */
 
 	efa_qp->cqdirect_enabled = 1;
-	efa_qp_fill_cqdirect_pfns(efa_qp);
 	return ret;
 }
 
@@ -124,7 +95,6 @@ int efa_cqdirect_cq_initialize(struct efa_cq *efa_cq)
 	}
 
 	efa_cq->ibv_cq.cqdirect_enabled = 1;
-	efa_cq_fill_cqdirect_pfns(&efa_cq->ibv_cq);
 	cqdirect->buffer = attr.buffer;
 	cqdirect->entry_size = attr.entry_size;
 	cqdirect->num_entries = attr.num_entries;
