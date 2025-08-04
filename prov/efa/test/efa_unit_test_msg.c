@@ -11,13 +11,15 @@ static void test_efa_msg_recv_prep(struct efa_resource *resource,
 {
 	struct efa_ep_addr raw_addr;
 	struct efa_base_ep *base_ep;
+	struct ibv_qp_ex *ibv_qpx;
 	size_t raw_addr_len = sizeof(raw_addr);
 	int ret;
 
 	efa_unit_test_resource_construct(resource, FI_EP_RDM, EFA_DIRECT_FABRIC_NAME);
 
 	base_ep = container_of(resource->ep, struct efa_base_ep, util_ep.ep_fid);
-	base_ep->qp->post_recv = &efa_mock_ibv_post_recv;
+	ibv_qpx = base_ep->qp->ibv_qp_ex;
+	base_ep->qp->ibv_qp->context->ops.post_recv = &efa_mock_ibv_post_recv;
 	will_return(efa_mock_ibv_post_recv, 0);
 
 	ret = fi_getname(&resource->ep->fid, &raw_addr, &raw_addr_len);
@@ -100,12 +102,14 @@ static void test_efa_msg_send_prep(struct efa_resource *resource,
 {
 	struct efa_ep_addr raw_addr;
 	struct efa_base_ep *base_ep;
+	struct ibv_qp_ex *ibv_qpx;
 	size_t raw_addr_len = sizeof(raw_addr);
 	int ret;
 
 	efa_unit_test_resource_construct(resource, FI_EP_RDM, EFA_DIRECT_FABRIC_NAME);
 
 	base_ep = container_of(resource->ep, struct efa_base_ep, util_ep.ep_fid);
+	ibv_qpx = base_ep->qp->ibv_qp_ex;
 
 	ret = fi_getname(&resource->ep->fid, &raw_addr, &raw_addr_len);
 	assert_int_equal(ret, 0);
@@ -115,19 +119,19 @@ static void test_efa_msg_send_prep(struct efa_resource *resource,
 			   NULL /* context */);
 	assert_int_equal(ret, 1);
 
-	base_ep->qp->post_recv = &efa_mock_ibv_post_recv;
-	base_ep->qp->wr_complete = &efa_mock_ibv_wr_complete_no_op;
-	base_ep->qp->wr_rdma_read = &efa_mock_ibv_wr_rdma_read_save_wr;
-	base_ep->qp->wr_rdma_write = &efa_mock_ibv_wr_rdma_write_save_wr;
-	base_ep->qp->wr_rdma_write_imm =
+	base_ep->qp->ibv_qp->context->ops.post_recv = &efa_mock_ibv_post_recv;
+	ibv_qpx->wr_complete = &efa_mock_ibv_wr_complete_no_op;
+	ibv_qpx->wr_rdma_read = &efa_mock_ibv_wr_rdma_read_save_wr;
+	ibv_qpx->wr_rdma_write = &efa_mock_ibv_wr_rdma_write_save_wr;
+	ibv_qpx->wr_rdma_write_imm =
 		&efa_mock_ibv_wr_rdma_write_imm_save_wr;
-	base_ep->qp->wr_send = &efa_mock_ibv_wr_send_save_wr;
-	base_ep->qp->wr_send_imm = &efa_mock_ibv_wr_send_imm_save_wr;
-	base_ep->qp->wr_set_inline_data_list =
+	ibv_qpx->wr_send = &efa_mock_ibv_wr_send_save_wr;
+	ibv_qpx->wr_send_imm = &efa_mock_ibv_wr_send_imm_save_wr;
+	ibv_qpx->wr_set_inline_data_list =
 		&efa_mock_ibv_wr_set_inline_data_list_no_op;
-	base_ep->qp->wr_set_sge_list = &efa_mock_ibv_wr_set_sge_list_no_op;
-	base_ep->qp->wr_set_ud_addr = &efa_mock_ibv_wr_set_ud_addr_no_op;
-	base_ep->qp->wr_start = &efa_mock_ibv_wr_start_no_op;
+	ibv_qpx->wr_set_sge_list = &efa_mock_ibv_wr_set_sge_list_no_op;
+	ibv_qpx->wr_set_ud_addr = &efa_mock_ibv_wr_set_ud_addr_no_op;
+	ibv_qpx->wr_start = &efa_mock_ibv_wr_start_no_op;
 }
 
 void test_efa_msg_fi_send(struct efa_resource **state)
