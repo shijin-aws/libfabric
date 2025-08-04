@@ -3,12 +3,12 @@
  * Copyright 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#ifndef _EFA_IO_H_
-#define _EFA_IO_H_
+#ifndef _EFA_IO_DEFS_H_
+#define _EFA_IO_DEFS_H_
 
 #include "config.h"
 
-#if HAVE_EFA_CQ_DIRECT
+#if HAVE_EFA_DATA_PATH_DIRECT
 
 #define EFA_IO_TX_DESC_NUM_BUFS	       2
 #define EFA_IO_TX_DESC_NUM_RDMA_BUFS   1
@@ -539,5 +539,5 @@ static inline void mmio_wc_spinunlock(pthread_spinlock_t *lock)
 
 #define min(a, b) ((a) < (b) ? (a) : (b));
 
-#endif /* HAVE_EFA_CQ_DIRECT */
-#endif /* _EFA_IO_H_ */
+#endif /* HAVE_EFA_DATA_PATH_DIRECT */
+#endif /* _EFA_IO_DEFS_H_ */

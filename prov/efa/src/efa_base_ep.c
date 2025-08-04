@@ -7,7 +7,7 @@
 #include "efa_cq.h"
 #include "efa_cntr.h"
 #include "rdm/efa_rdm_protocol.h"
-#include "efa_cqdirect.h"
+#include "efa_data_path_direct.h"
 
 int efa_base_ep_bind_av(struct efa_base_ep *base_ep, struct efa_av *av)
 {
@@ -253,7 +253,7 @@ int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex, 
 
 	(*qp)->ibv_qp_ex = ibv_qp_to_qp_ex((*qp)->ibv_qp);
 	/* Initialize it explicitly for safety */
-	(*qp)->cqdirect_enabled = false;
+	(*qp)->data_path_direct_enabled = false;
 	return FI_SUCCESS;
 }
 
@@ -313,15 +313,15 @@ void efa_qp_destruct(struct efa_qp *qp)
 {
 	int err;
 
-	efa_cqdirect_timer_report("SQ (Start to Complete)", &qp->cqdirect_qp.send_timing);
-	efa_cqdirect_timer_report("RQ (post_recv)        ", &qp->cqdirect_qp.recv_timing);
+	efa_data_path_timer_report("SQ (Start to Complete)", &qp->data_path_direct_qp.send_timing);
+	efa_data_path_timer_report("RQ (post_recv)        ", &qp->data_path_direct_qp.recv_timing);
 
 	err = -ibv_destroy_qp(qp->ibv_qp);
 	if (err)
 		EFA_INFO(FI_LOG_CORE, "destroy qp[%u] failed, err: %s\n", qp->qp_num, fi_strerror(-err));
-#if HAVE_EFA_CQ_DIRECT
-	if (qp->cqdirect_enabled)
-		efa_cqdirect_qp_finalize(qp);
+#if HAVE_EFA_DATA_PATH_DIRECT
+	if (qp->data_path_direct_enabled)
+		efa_data_path_direct_qp_finalize(qp);
 #endif
 	free(qp);
 }
@@ -770,11 +770,11 @@ int efa_base_ep_create_and_enable_qp(struct efa_base_ep *ep, bool create_user_re
 	if (err)
 		return err;
 
-#if HAVE_EFA_CQ_DIRECT
+#if HAVE_EFA_DATA_PATH_DIRECT
 	/* Only enable direct QP when direct CQ is enabled */
-	assert(scq->ibv_cq.cqdirect_enabled == rcq->ibv_cq.cqdirect_enabled);
-	if (scq->ibv_cq.cqdirect_enabled) {
-		err = efa_cqdirect_qp_initialize(ep->qp);
+	assert(scq->ibv_cq.data_path_direct_enabled == rcq->ibv_cq.data_path_direct_enabled);
+	if (scq->ibv_cq.data_path_direct_enabled) {
+		err = efa_data_path_direct_qp_initialize(ep->qp);
 		if (err) {
 			efa_base_ep_destruct_qp(ep);
 			return err;

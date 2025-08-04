@@ -4,7 +4,7 @@
 #include "efa_unit_tests.h"
 #include "rdm/efa_rdm_cq.h"
 #include "efa_av.h"
-#include "efa_cqdirect_entry.h"
+#include "efa_data_path_direct_entry.h"
 
 /**
  * @brief implementation of test cases for fi_cq_read() works with empty device CQ for given endpoint type
@@ -1422,13 +1422,13 @@ void test_efa_cq_recv_rdma_with_imm_failure(struct efa_resource **state)
 }
 
 /**
- * @brief check efa cq's cqdirect status for different device generation
+ * @brief check efa cq's data_path_direct status for different device generation
  * This test is against efa-direct fabric
  *
  * @param state unit test resources
  */
 static
-void test_efa_cq_cqdirect_status_with_device_support(struct efa_resource **state, uint32_t vendor_part_id, bool cqdirect_enabled)
+void test_efa_cq_data_path_direct_status_with_device_support(struct efa_resource **state, uint32_t vendor_part_id, bool data_path_direct_enabled)
 {
 	struct efa_resource *resource = *state;
 	struct efa_cq *efa_cq;
@@ -1446,56 +1446,56 @@ void test_efa_cq_cqdirect_status_with_device_support(struct efa_resource **state
 	assert_int_equal(fi_cq_open(resource->domain, &cq_attr, &cq, NULL), 0);
 	efa_cq = container_of(cq, struct efa_cq, util_cq.cq_fid);
 
-	assert_true(efa_cq->ibv_cq.cqdirect_enabled == cqdirect_enabled);
+	assert_true(efa_cq->ibv_cq.data_path_direct_enabled == data_path_direct_enabled);
 	assert_int_equal(fi_close(&cq->fid), 0);
 
 	/* Recover the mocked vendor_id */
 	g_efa_selected_device_list[0].ibv_attr.vendor_part_id = vendor_id_orig;
 }
 
-#if HAVE_EFA_CQ_DIRECT
+#if HAVE_EFA_DATA_PATH_DIRECT
 /**
- * @brief Make sure cqdirect is disabled when user specifies
+ * @brief Make sure data_path_direct is disabled when user specifies
  * This test is against efa-direct fabric
  *
  * @param state unit test resources
  */
-void test_efa_cq_cqdirect_disabled_by_env(struct efa_resource **state)
+void test_efa_cq_data_path_direct_disabled_by_env(struct efa_resource **state)
 {
 	struct efa_resource *resource = *state;
 	struct efa_cq *efa_cq;
-	bool use_direct_cq_ops_orig = efa_env.use_direct_cq_ops;
+	bool use_data_path_direct_orig = efa_env.use_data_path_direct;
 
-	efa_env.use_direct_cq_ops = 0;
+	efa_env.use_data_path_direct = 0;
 	efa_unit_test_resource_construct(resource, FI_EP_RDM, EFA_DIRECT_FABRIC_NAME);
 	efa_cq = container_of(resource->cq, struct efa_cq, util_cq.cq_fid);
 
 	/* cq direct should be disabled when env disabled it */
-	assert_false(efa_cq->ibv_cq.cqdirect_enabled);
+	assert_false(efa_cq->ibv_cq.data_path_direct_enabled);
 
 	/* recover the env */
-	efa_env.use_direct_cq_ops = use_direct_cq_ops_orig;
+	efa_env.use_data_path_direct = use_data_path_direct_orig;
 }
 
 /**
- * @brief Make sure cqdirect is enabled when device is new enough
+ * @brief Make sure data_path_direct is enabled when device is new enough
  * This test is against efa-direct fabric
  *
  * @param state unit test resources
  */
-void test_efa_cq_cqdirect_disabled_with_old_device(struct efa_resource **state)
+void test_efa_cq_data_path_direct_disabled_with_old_device(struct efa_resource **state)
 {
-	test_efa_cq_cqdirect_status_with_device_support(state, 0xefa0, false);
+	test_efa_cq_data_path_direct_status_with_device_support(state, 0xefa0, false);
 }
 
-void test_efa_cq_cqdirect_enabled_with_new_device(struct efa_resource **state)
+void test_efa_cq_data_path_direct_enabled_with_new_device(struct efa_resource **state)
 {
-	test_efa_cq_cqdirect_status_with_device_support(state, 0xefa1, true);
+	test_efa_cq_data_path_direct_status_with_device_support(state, 0xefa1, true);
 }
 
 #else
 
-void test_efa_cq_cqdirect_disabled_by_env(struct efa_resource **state)
+void test_efa_cq_data_path_direct_disabled_by_env(struct efa_resource **state)
 {
 	struct efa_resource *resource = *state;
 	struct efa_cq *efa_cq;
@@ -1504,30 +1504,30 @@ void test_efa_cq_cqdirect_disabled_by_env(struct efa_resource **state)
 	efa_cq = container_of(resource->cq, struct efa_cq, util_cq.cq_fid);
 
 	/* cq direct should always be disabled */
-	assert_false(efa_cq->ibv_cq.cqdirect_enabled);
+	assert_false(efa_cq->ibv_cq.data_path_direct_enabled);
 }
 
-void test_efa_cq_cqdirect_disabled_with_old_device(struct efa_resource **state)
+void test_efa_cq_data_path_direct_disabled_with_old_device(struct efa_resource **state)
 {
 	/* cq direct should always be disabled */
-	test_efa_cq_cqdirect_status_with_device_support(state, 0xefa0, false);
+	test_efa_cq_data_path_direct_status_with_device_support(state, 0xefa0, false);
 }
 
-void test_efa_cq_cqdirect_enabled_with_new_device(struct efa_resource **state)
+void test_efa_cq_data_path_direct_enabled_with_new_device(struct efa_resource **state)
 {
 	/* cq direct should always be disabled */
-	test_efa_cq_cqdirect_status_with_device_support(state, 0xefa1, false);
+	test_efa_cq_data_path_direct_status_with_device_support(state, 0xefa1, false);
 }
 
 #endif /* HAVE_EFA_DIRECT_CQ */
 
 /**
- * @brief Test cq cqdirect status for efa-rdm
+ * @brief Test cq data_path_direct status for efa-rdm
  * This test is against efa fabric
- * Currently, cqdirect should always be disabled by efa-rdm.
+ * Currently, data_path_direct should always be disabled by efa-rdm.
  * @param state pointer of efa_resource
  */
-void test_efa_rdm_cq_cqdirect_disabled(struct efa_resource **state)
+void test_efa_rdm_cq_data_path_direct_disabled(struct efa_resource **state)
 {
 	struct efa_resource *resource = *state;
 	struct efa_cq *efa_cq;
@@ -1536,5 +1536,5 @@ void test_efa_rdm_cq_cqdirect_disabled(struct efa_resource **state)
 
 	efa_cq = container_of(resource->cq, struct efa_cq, util_cq.cq_fid);
 
-	assert_false(efa_cq->ibv_cq.cqdirect_enabled);
+	assert_false(efa_cq->ibv_cq.data_path_direct_enabled);
 }

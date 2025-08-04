@@ -7,8 +7,8 @@
 #include <ofi_iov.h>
 #include "efa.h"
 #include "efa_av.h"
-#include "efa_wrappers.h"
-#include "efa_cqdirect.h"
+#include "efa_data_path_ops.h"
+#include "efa_data_path_direct.h"
 
 /**
  * @brief check whether endpoint was configured with FI_RMA capability

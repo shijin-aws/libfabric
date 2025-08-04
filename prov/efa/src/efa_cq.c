@@ -10,9 +10,9 @@
 #include "efa_av.h"
 #include "efa_cntr.h"
 #include "efa_cq.h"
-#include "efa_wrappers.h"
+#include "efa_data_path_ops.h"
 #include <infiniband/verbs.h>
-#include "efa_cqdirect.h"
+#include "efa_data_path_direct.h"
 
 
 static inline uint64_t efa_cq_opcode_to_fi_flags(enum ibv_wc_opcode opcode) {
@@ -276,9 +276,9 @@ int efa_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	struct ibv_poll_cq_attr poll_cq_attr = {.comp_mask = 0};
 
 	/* Call ibv_start_poll only once */
-	efa_cqdirect_timer_start(&ibv_cq->cqdirect.timing);
+	efa_data_path_timer_start(&ibv_cq->data_path_direct.timing);
 	err = efa_ibv_cq_start_poll(ibv_cq, &poll_cq_attr);
-	efa_cqdirect_timer_stop(&ibv_cq->cqdirect.timing);
+	efa_data_path_timer_stop(&ibv_cq->data_path_direct.timing);
 	
 	should_end_poll = !err;
 	if (!err)
@@ -439,7 +439,7 @@ int efa_cq_open_ibv_cq(struct fi_cq_attr *attr,
 	efadv_cq_init_attr.ext_mem_dmabuf.fd = efa_cq_init_attr->ext_mem_dmabuf.fd;
 #endif
 
-	ibv_cq->cqdirect_enabled = 0;
+	ibv_cq->data_path_direct_enabled = 0;
 	ibv_cq->ibv_cq_ex = efadv_create_cq(ibv_ctx, &init_attr_ex,
 				     &efadv_cq_init_attr,
 				     sizeof(efadv_cq_init_attr));
@@ -480,7 +480,7 @@ int efa_cq_open_ibv_cq(struct fi_cq_attr *attr,
 		.comp_mask = 0,
 	};
 
-	ibv_cq->cqdirect_enabled = 0;
+	ibv_cq->data_path_direct_enabled = 0;
 
 	return efa_cq_open_ibv_cq_with_ibv_create_cq_ex(
 		&init_attr_ex, ibv_ctx, &ibv_cq->ibv_cq_ex, &ibv_cq->ibv_cq_ex_type);
@@ -510,7 +510,7 @@ int efa_cq_close(fid_t fid)
 		cq->ibv_cq.ibv_cq_ex = NULL;
 	}
 
-	efa_cqdirect_timer_report("CQ Polling", &cq->ibv_cq.cqdirect.timing);
+	efa_data_path_timer_report("CQ Polling", &cq->ibv_cq.data_path_direct.timing);
 
 	ret = ofi_cq_cleanup(&cq->util_cq);
 	if (ret)
@@ -570,8 +570,8 @@ int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 	(*cq_fid)->fid.ops = &efa_cq_fi_ops;
 	(*cq_fid)->ops = &efa_cq_ops;
 
-#if HAVE_EFA_CQ_DIRECT
-	efa_cqdirect_cq_initialize( cq );
+#if HAVE_EFA_DATA_PATH_DIRECT
+	efa_data_path_direct_cq_initialize( cq );
 #endif
 
 	return 0;

@@ -227,10 +227,10 @@ AC_DEFUN([FI_EFA_CONFIGURE],[
 		[$have_efadv_query_cq],
 		[Indicates if efadv_query_cq is available])
 	AS_IF([test "$have_efadv_query_qp_wqs" = "1" -a "$have_efadv_query_cq" = "1"],
-		[have_efa_cq_direct=1],
-		[have_efa_cq_direct=0])
-	AC_DEFINE_UNQUOTED([HAVE_EFA_CQ_DIRECT],
-		[$have_efa_cq_direct],
+		[have_efa_data_path_direct=1],
+		[have_efa_data_path_direct=0])
+	AC_DEFINE_UNQUOTED([HAVE_EFA_DATA_PATH_DIRECT],
+		[$have_efa_data_path_direct],
 		[Indicates if CQ Direct is available (requires both QUERY_QP_WQS and QUERY_CQ)])
 
 

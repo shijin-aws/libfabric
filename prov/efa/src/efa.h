@@ -310,6 +310,62 @@ bool efa_use_unsolicited_write_recv()
 	return efa_env.use_unsolicited_write_recv && efa_device_support_unsolicited_write_recv();
 }
 
+#include <x86intrin.h>
+
+/**
+ * @struct efa_data_path_timer
+ * @brief High-resolution performance timing utility
+ *
+ * Provides cycle-accurate timing measurements for profiling direct completion
+ * queue operations. Uses x86 RDTSC instruction for minimal overhead timing.
+ */
+struct efa_data_path_timer {
+	uint64_t count;  /**< Number of timing measurements taken */
+	uint64_t cycles; /**< Total CPU cycles accumulated across all measurements */
+	uint64_t tic;    /**< Timestamp of current measurement start */
+};
+
+/**
+ * @brief Initialize a performance timer
+ * @param tt Pointer to timer structure to initialize
+ */
+static inline void efa_data_path_timer_init(struct efa_data_path_timer *tt) {
+	tt->count = 0;
+	tt->cycles = 0;
+	tt->tic = 0;
+}
+
+/**
+ * @brief Start a timing measurement
+ * @param tt Pointer to timer structure
+ */
+static inline void efa_data_path_timer_start(struct efa_data_path_timer *tt) {
+	tt->tic = __rdtsc();
+	asm volatile("" ::: "memory"); /* Compiler barrier */
+}
+
+/**
+ * @brief Stop a timing measurement and accumulate results
+ * @param tt Pointer to timer structure
+ */
+static inline void efa_data_path_timer_stop(struct efa_data_path_timer *tt) {
+	asm volatile("" ::: "memory"); /* Compiler barrier */
+	tt->cycles += __rdtsc() - tt->tic;
+	tt->count++;
+}
+
+/**
+ * @brief Print timing statistics
+ * @param prefix String prefix for the report
+ * @param tt Pointer to timer structure
+ */
+static inline void efa_data_path_timer_report(const char* prefix, struct efa_data_path_timer *tt) {
+	if (tt->count) {
+		uint64_t avg_cycles = tt->cycles / tt->count;
+		printf("Timer Report: %s: Count: %ld, Avg Cycles: %ld\n", prefix, tt->count, avg_cycles);
+	}
+}
+
 /**
  * Convenience macro for setopt with an enforced threshold
  */

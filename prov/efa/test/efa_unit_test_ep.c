@@ -4,7 +4,7 @@
 #include "efa_unit_tests.h"
 #include "rdm/efa_rdm_cq.h"
 #include "efa_rdm_pke_utils.h"
-#include "efa_cqdirect_entry.h"
+#include "efa_data_path_direct_entry.h"
 
 /**
  * @brief Verify the EFA RDM endpoint correctly parses the host id string
@@ -1742,10 +1742,10 @@ void test_efa_ep_bind_and_enable(struct efa_resource **state)
 	assert_true(efa_ep->user_recv_qp == NULL);
 }
 
-#if HAVE_EFA_CQ_DIRECT
+#if HAVE_EFA_DATA_PATH_DIRECT
 
 /**
- * @brief qp's cqdirect status should be consistent
+ * @brief qp's data_path_direct status should be consistent
  * with cq's status
  *
  * This test is against efa-direct fabric
@@ -1753,11 +1753,11 @@ void test_efa_ep_bind_and_enable(struct efa_resource **state)
  * @param state unit test resources
  */
 static
-void test_efa_ep_cqdirect_equal_to_cq_cqdirect_impl(struct efa_resource **state, bool cqdirect_enabled)
+void test_efa_ep_data_path_direct_equal_to_cq_data_path_direct_impl(struct efa_resource **state, bool data_path_direct_enabled)
 {
 	struct efa_resource *resource = *state;
 	struct efa_cq *efa_cq;
-	bool cqdirect_enabled_orig;
+	bool data_path_direct_enabled_orig;
 	struct fid_ep *ep;
 	struct efa_base_ep *efa_ep;
 
@@ -1765,8 +1765,8 @@ void test_efa_ep_cqdirect_equal_to_cq_cqdirect_impl(struct efa_resource **state,
 	efa_cq = container_of(resource->cq, struct efa_cq, util_cq.cq_fid);
 
 	/* recover the cq boolean */
-	cqdirect_enabled_orig = efa_cq->ibv_cq.cqdirect_enabled;
-	efa_cq->ibv_cq.cqdirect_enabled = cqdirect_enabled;
+	data_path_direct_enabled_orig = efa_cq->ibv_cq.data_path_direct_enabled;
+	efa_cq->ibv_cq.data_path_direct_enabled = data_path_direct_enabled;
 
 	/* open a test ep */
 	assert_int_equal(fi_endpoint(resource->domain, resource->info, &ep, NULL), 0);
@@ -1774,33 +1774,33 @@ void test_efa_ep_cqdirect_equal_to_cq_cqdirect_impl(struct efa_resource **state,
 	assert_int_equal(fi_ep_bind(ep, &resource->cq->fid, FI_SEND | FI_RECV), 0);
 	assert_int_equal(fi_enable(ep), 0);
 
-	assert_true(efa_ep->qp->cqdirect_enabled == cqdirect_enabled);
+	assert_true(efa_ep->qp->data_path_direct_enabled == data_path_direct_enabled);
 
 	assert_int_equal(fi_close(&ep->fid), 0);
 
 	/* recover the mocked boolean */
-	efa_cq->ibv_cq.cqdirect_enabled = cqdirect_enabled_orig;
+	efa_cq->ibv_cq.data_path_direct_enabled = data_path_direct_enabled_orig;
 }
 
-void test_efa_ep_cqdirect_equal_to_cq_cqdirect_happy(struct efa_resource **state)
+void test_efa_ep_data_path_direct_equal_to_cq_data_path_direct_happy(struct efa_resource **state)
 {
-	test_efa_ep_cqdirect_equal_to_cq_cqdirect_impl(state, true);
+	test_efa_ep_data_path_direct_equal_to_cq_data_path_direct_impl(state, true);
 }
 
-void test_efa_ep_cqdirect_equal_to_cq_cqdirect_unhappy(struct efa_resource **state)
+void test_efa_ep_data_path_direct_equal_to_cq_data_path_direct_unhappy(struct efa_resource **state)
 {
-	test_efa_ep_cqdirect_equal_to_cq_cqdirect_impl(state, false);
+	test_efa_ep_data_path_direct_equal_to_cq_data_path_direct_impl(state, false);
 }
 #else
 
-/* No value to test this, already covered by test_efa_rdm_ep_cqdirect_ops */
-void test_efa_ep_cqdirect_equal_to_cq_cqdirect_happy(struct efa_resource **state)
+/* No value to test this, already covered by test_efa_rdm_ep_data_path_direct_ops */
+void test_efa_ep_data_path_direct_equal_to_cq_data_path_direct_happy(struct efa_resource **state)
 {
 	skip();
 }
 
-/* No value to test this, already covered by test_efa_rdm_ep_cqdirect_ops */
-void test_efa_ep_cqdirect_equal_to_cq_cqdirect_unhappy(struct efa_resource **state)
+/* No value to test this, already covered by test_efa_rdm_ep_data_path_direct_ops */
+void test_efa_ep_data_path_direct_equal_to_cq_data_path_direct_unhappy(struct efa_resource **state)
 {
 	skip();
 }
@@ -1809,12 +1809,12 @@ void test_efa_ep_cqdirect_equal_to_cq_cqdirect_unhappy(struct efa_resource **sta
 
 
 /**
- * @brief Test qp's cqdirect status for efa-rdm ep
- * Currently, cqdirect should always be disabled by efa-rdm.
+ * @brief Test qp's data_path_direct status for efa-rdm ep
+ * Currently, data_path_direct should always be disabled by efa-rdm.
  *
  * @param state pointer of efa_resource
  */
-void test_efa_rdm_ep_cqdirect_disabled(struct efa_resource **state)
+void test_efa_rdm_ep_data_path_direct_disabled(struct efa_resource **state)
 {
 	struct efa_resource *resource = *state;
 	struct efa_base_ep *efa_ep;
@@ -1823,5 +1823,5 @@ void test_efa_rdm_ep_cqdirect_disabled(struct efa_resource **state)
 
 	efa_ep = container_of(resource->ep, struct efa_base_ep, util_ep.ep_fid);
 
-	assert_false(efa_ep->qp->cqdirect_enabled);
+	assert_false(efa_ep->qp->data_path_direct_enabled);
 }

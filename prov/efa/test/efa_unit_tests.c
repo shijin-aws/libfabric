@@ -162,9 +162,9 @@ int main(void)
 		cmocka_unit_test_setup_teardown(test_efa_ep_setopt_hmem_p2p, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
 		cmocka_unit_test_setup_teardown(test_efa_ep_setopt_rnr_retry, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
 		cmocka_unit_test_setup_teardown(test_efa_ep_setopt_sizes, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
-		cmocka_unit_test_setup_teardown(test_efa_ep_cqdirect_equal_to_cq_cqdirect_happy, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
-		cmocka_unit_test_setup_teardown(test_efa_ep_cqdirect_equal_to_cq_cqdirect_unhappy, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
-		cmocka_unit_test_setup_teardown(test_efa_rdm_ep_cqdirect_disabled, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
+		cmocka_unit_test_setup_teardown(test_efa_ep_data_path_direct_equal_to_cq_data_path_direct_happy, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
+		cmocka_unit_test_setup_teardown(test_efa_ep_data_path_direct_equal_to_cq_data_path_direct_unhappy, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
+		cmocka_unit_test_setup_teardown(test_efa_rdm_ep_data_path_direct_disabled, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
 
 		/* end efa_unit_test_ep.c */
 
@@ -201,10 +201,10 @@ int main(void)
 		cmocka_unit_test_setup_teardown(test_efa_cq_read_send_failure, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
 		cmocka_unit_test_setup_teardown(test_efa_cq_read_recv_failure, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
 		cmocka_unit_test_setup_teardown(test_efa_cq_recv_rdma_with_imm_failure, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
-		cmocka_unit_test_setup_teardown(test_efa_cq_cqdirect_disabled_by_env, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
-		cmocka_unit_test_setup_teardown(test_efa_cq_cqdirect_disabled_with_old_device, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
-		cmocka_unit_test_setup_teardown(test_efa_cq_cqdirect_enabled_with_new_device, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
-		cmocka_unit_test_setup_teardown(test_efa_rdm_cq_cqdirect_disabled, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
+		cmocka_unit_test_setup_teardown(test_efa_cq_data_path_direct_disabled_by_env, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
+		cmocka_unit_test_setup_teardown(test_efa_cq_data_path_direct_disabled_with_old_device, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
+		cmocka_unit_test_setup_teardown(test_efa_cq_data_path_direct_enabled_with_new_device, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
+		cmocka_unit_test_setup_teardown(test_efa_rdm_cq_data_path_direct_disabled, efa_unit_test_mocks_setup, efa_unit_test_mocks_teardown),
 		/* end efa_unit_test_cq.c */
 
 		/* begin efa_unit_test_info.c */

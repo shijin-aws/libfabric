@@ -57,7 +57,7 @@
 
 #include "config.h"
 
-#if HAVE_EFA_CQ_DIRECT
+#if HAVE_EFA_DATA_PATH_DIRECT
 
 #include <linux/types.h>
 #include <stdatomic.h>
@@ -242,5 +242,5 @@ MAKE_READ(mmio_read64, 64)
 #undef MAKE_WRITE
 #undef MAKE_READ
 
-#endif /* HAVE_EFA_CQ_DIRECT */
+#endif /* HAVE_EFA_DATA_PATH_DIRECT */
 #endif /* __EFA_MMIO_H */

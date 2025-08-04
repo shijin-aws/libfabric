@@ -3,7 +3,7 @@
 
 #include "efa.h"
 #include "efa_rdm_cq.h"
-#include "efa_wrappers.h"
+#include "efa_data_path_ops.h"
 #include "ofi_util.h"
 #include "efa_av.h"
 #include "efa_cntr.h"

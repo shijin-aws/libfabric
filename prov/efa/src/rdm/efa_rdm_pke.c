@@ -10,7 +10,7 @@
 
 #include "efa.h"
 #include "efa_av.h"
-#include "efa_wrappers.h"
+#include "efa_data_path_ops.h"
 #include "efa_tp.h"
 
 #include "efa_rdm_msg.h"

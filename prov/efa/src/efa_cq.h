@@ -6,7 +6,7 @@
 
 #include "efa.h"
 
-#include "efa_cqdirect_structs.h"
+#include "efa_data_path_direct_structs.h"
 enum ibv_cq_ex_type {
 	IBV_CQ,
 	EFADV_CQ
@@ -16,9 +16,9 @@ struct efa_ibv_cq {
 	struct ibv_cq_ex *ibv_cq_ex;
 	enum ibv_cq_ex_type ibv_cq_ex_type;
 	struct efa_ibv_cq_ops *ops;
-	bool cqdirect_enabled;
+	bool data_path_direct_enabled;
 #if HAVE_EFADV_QUERY_CQ
-	struct efa_cqdirect_cq cqdirect;
+	struct efa_data_path_direct_cq data_path_direct;
 #endif
 
 };

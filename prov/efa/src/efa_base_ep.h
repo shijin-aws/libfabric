@@ -12,7 +12,7 @@
 #include "ofi_util.h"
 #include "efa_av.h"
 #include "rdm/efa_rdm_protocol.h"
-#include "efa_cqdirect_structs.h"
+#include "efa_data_path_direct_structs.h"
 
 #define EFA_QP_DEFAULT_SERVICE_LEVEL 0
 #define EFA_QP_LOW_LATENCY_SERVICE_LEVEL 8
@@ -48,9 +48,9 @@ struct efa_qp {
 	uint32_t qp_num;
 	uint32_t qkey;
 
-	bool cqdirect_enabled;
-#if HAVE_EFA_CQ_DIRECT
-	struct efa_cqdirect_qp cqdirect_qp;
+	bool data_path_direct_enabled;
+#if HAVE_EFA_DATA_PATH_DIRECT
+	struct efa_data_path_direct_qp data_path_direct_qp;
 #endif
 
 };
