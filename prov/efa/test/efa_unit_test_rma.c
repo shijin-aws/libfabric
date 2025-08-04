@@ -11,30 +11,28 @@ static void test_efa_rma_prep(struct efa_resource *resource, fi_addr_t *addr)
 {
 	struct efa_ep_addr raw_addr;
 	struct efa_base_ep *base_ep;
-	struct ibv_qp_ex *ibv_qpx;
 	size_t raw_addr_len = sizeof(raw_addr);
 	int ret;
 
 	efa_unit_test_resource_construct(resource, FI_EP_RDM, EFA_DIRECT_FABRIC_NAME);
 
 	base_ep = container_of(resource->ep, struct efa_base_ep, util_ep.ep_fid);
-	ibv_qpx = base_ep->qp->ibv_qp_ex;
 	/* Add rma caps explicitly to ep->info to allow local test */
 	base_ep->info->caps |= FI_RMA;
 	/* Set up the mock operations */
-	base_ep->qp->ibv_qp->context->ops.post_recv = &efa_mock_ibv_post_recv;
-	ibv_qpx->wr_complete = &efa_mock_ibv_wr_complete_no_op;
-	ibv_qpx->wr_rdma_read = &efa_mock_ibv_wr_rdma_read_save_wr;
-	ibv_qpx->wr_rdma_write = &efa_mock_ibv_wr_rdma_write_save_wr;
-	ibv_qpx->wr_rdma_write_imm =
-		&efa_mock_ibv_wr_rdma_write_imm_save_wr;
-	ibv_qpx->wr_send = &efa_mock_ibv_wr_send_save_wr;
-	ibv_qpx->wr_send_imm = &efa_mock_ibv_wr_send_imm_save_wr;
-	ibv_qpx->wr_set_inline_data_list =
-		&efa_mock_ibv_wr_set_inline_data_list_no_op;
-	ibv_qpx->wr_set_sge_list = &efa_mock_ibv_wr_set_sge_list_no_op;
-	ibv_qpx->wr_set_ud_addr = &efa_mock_ibv_wr_set_ud_addr_no_op;
-	ibv_qpx->wr_start = &efa_mock_ibv_wr_start_no_op;
+	g_efa_unit_test_mocks.efa_qp_post_recv = &efa_mock_efa_qp_post_recv_return_mock;
+	g_efa_unit_test_mocks.efa_qp_wr_complete = &efa_mock_efa_qp_wr_complete_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_rdma_read = &efa_mock_efa_qp_wr_rdma_read_save_wr;
+	g_efa_unit_test_mocks.efa_qp_wr_rdma_write = &efa_mock_efa_qp_wr_rdma_write_save_wr;
+	g_efa_unit_test_mocks.efa_qp_wr_rdma_write_imm =
+		&efa_mock_efa_qp_wr_rdma_write_imm_save_wr;
+	g_efa_unit_test_mocks.efa_qp_wr_send = &efa_mock_efa_qp_wr_send_save_wr;
+	g_efa_unit_test_mocks.efa_qp_wr_send_imm = &efa_mock_efa_qp_wr_send_imm_save_wr;
+	g_efa_unit_test_mocks.efa_qp_wr_set_inline_data_list =
+		&efa_mock_efa_qp_wr_set_inline_data_list_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_set_sge_list = &efa_mock_efa_qp_wr_set_sge_list_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_set_ud_addr = &efa_mock_efa_qp_wr_set_ud_addr_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_start = &efa_mock_efa_qp_wr_start_no_op;
 
 	ret = fi_getname(&resource->ep->fid, &raw_addr, &raw_addr_len);
 	assert_int_equal(ret, 0);

@@ -412,6 +412,7 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 		efa_qp_wr_start(qp);
 		ep->base_ep.is_wr_started = true;
 	}
+	printf("ok after wr start\n");
 	for (pkt_idx = 0; pkt_idx < pkt_entry_cnt; ++pkt_idx) {
 		pkt_entry = pkt_entry_vec[pkt_idx];
 		assert(pkt_entry->peer == peer);
@@ -425,6 +426,7 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 		} else {
 			efa_qp_wr_send(qp);
 		}
+		printf("ok after wr_send\n");
 		if (pkt_entry->pkt_size <= efa_rdm_ep_domain(ep)->device->efa_attr.inline_buf_size &&
 	            !efa_mr_is_hmem((struct efa_mr *)pkt_entry->payload_mr)) {
 			iov_cnt = 1;
@@ -452,6 +454,7 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 			efa_qp_wr_set_sge_list(qp, iov_cnt, sg_list);
 		}
 
+		printf("ok after sge\n");
 		if (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP) {
 			assert(peer->extra_info[0] & EFA_RDM_EXTRA_FEATURE_REQUEST_USER_RECV_QP);
 			efa_qp_wr_set_ud_addr(qp, conn->ah,
@@ -461,6 +464,7 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 				   conn->ep_addr->qpn, conn->ep_addr->qkey);
 		}
 
+		printf("ok after ud addr\n");
 #if ENABLE_DEBUG
 		dlist_insert_tail(&pkt_entry->dbg_entry, &ep->tx_pkt_list);
 #ifdef ENABLE_EFA_RDM_PKE_DUMP
@@ -474,10 +478,12 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 	}
 
 	if (!(flags & FI_MORE)) {
+		printf("ok before wr complete\n");
 		ret = efa_qp_wr_complete(qp);
 		ep->base_ep.is_wr_started = false;
 	}
 
+	printf("ok after wr complete\n");
 	if (OFI_UNLIKELY(ret)) {
 		return (ret == ENOMEM) ? -FI_EAGAIN : -ret;
 	}

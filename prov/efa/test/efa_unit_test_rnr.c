@@ -10,7 +10,6 @@ void test_efa_rnr_queue_and_resend_impl(struct efa_resource **state, uint32_t op
 	struct efa_unit_test_buff send_buff;
 	struct efa_ep_addr raw_addr;
 	struct efa_rdm_ep *efa_rdm_ep;
-	struct ibv_qp_ex *ibv_qpx;
 	struct efa_rdm_ope *txe;
 	struct efa_rdm_pke *pkt_entry;
 	size_t raw_addr_len = sizeof(raw_addr);
@@ -30,18 +29,19 @@ void test_efa_rnr_queue_and_resend_impl(struct efa_resource **state, uint32_t op
 	assert_int_equal(ret, 1);
 
 	efa_rdm_ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);
-	ibv_qpx = efa_rdm_ep->base_ep.qp->ibv_qp_ex;
-	ibv_qpx->wr_start = &efa_mock_ibv_wr_start_no_op;
-	ibv_qpx->wr_send = &efa_mock_ibv_wr_send_save_wr;
-	ibv_qpx->wr_set_ud_addr = &efa_mock_ibv_wr_set_ud_addr_no_op;
-	ibv_qpx->wr_set_sge_list = &efa_mock_ibv_wr_set_sge_list_no_op;
-	ibv_qpx->wr_complete = &efa_mock_ibv_wr_complete_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_start = &efa_mock_efa_qp_wr_start_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_send = &efa_mock_efa_qp_wr_send_save_wr;
+	g_efa_unit_test_mocks.efa_qp_wr_set_ud_addr = &efa_mock_efa_qp_wr_set_ud_addr_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_set_sge_list = &efa_mock_efa_qp_wr_set_sge_list_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_complete = &efa_mock_efa_qp_wr_complete_no_op;
 	assert_true(dlist_empty(&efa_rdm_ep->txe_list));
 
+	printf("ok before fi_send\n");
 	if (op == ofi_op_msg)
 		ret = fi_send(resource->ep, send_buff.buff, send_buff.size, fi_mr_desc(send_buff.mr), peer_addr, NULL /* context */);
 	else
 		ret = fi_tsend(resource->ep, send_buff.buff, send_buff.size, fi_mr_desc(send_buff.mr), peer_addr, 1234, NULL /* context */);
+	printf("ok after fi_send\n");
 	assert_int_equal(ret, 0);
 	assert_false(dlist_empty(&efa_rdm_ep->txe_list));
 	assert_int_equal(g_ibv_submitted_wr_id_cnt, 1);

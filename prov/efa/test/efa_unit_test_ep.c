@@ -106,14 +106,11 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	struct efa_resource *resource = *state;
 	struct efa_unit_test_handshake_pkt_attr pkt_attr = {0};
 	struct fi_cq_data_entry cq_entry;
-	struct efa_qp *efa_qp;
-	struct ibv_qp_ex *ibv_qpx;
 	struct efa_rdm_ep *efa_rdm_ep;
 	struct efa_rdm_pke *pkt_entry;
 	uint64_t actual_peer_host_id = UINT64_MAX;
 	struct efa_rdm_cq *efa_rdm_cq;
 	struct efa_ibv_cq *ibv_cq;
-	struct ibv_cq_ex *ibv_cqx;
 
 	g_efa_unit_test_mocks.local_host_id = local_host_id;
 	g_efa_unit_test_mocks.peer_host_id = peer_host_id;
@@ -126,7 +123,6 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	efa_rdm_ep = container_of(resource->ep, struct efa_rdm_ep, base_ep.util_ep.ep_fid);
 	efa_rdm_cq = container_of(resource->cq, struct efa_rdm_cq, efa_cq.util_cq.cq_fid.fid);
 	ibv_cq = &(efa_rdm_cq->efa_cq.ibv_cq);
-	ibv_cqx = ibv_cq->ibv_cq_ex;
 
 	efa_rdm_ep->host_id = g_efa_unit_test_mocks.local_host_id;
 
@@ -161,52 +157,51 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	pkt_attr.device_version = 0xefa0;
 	efa_unit_test_handshake_pkt_construct(pkt_entry, &pkt_attr);
 
-	efa_qp = efa_rdm_ep->base_ep.qp;
-	ibv_qpx = efa_qp->ibv_qp_ex;
-	ibv_qpx->wr_start = &efa_mock_ibv_wr_start_no_op;
+	/* Setup QP mocks */
+	g_efa_unit_test_mocks.efa_qp_wr_start = &efa_mock_efa_qp_wr_start_no_op;
 	/* this mock will save the send work request (wr) in a global array */
-	ibv_qpx->wr_send = &efa_mock_ibv_wr_send_verify_handshake_pkt_local_host_id_and_save_wr;
-	ibv_qpx->wr_set_inline_data_list = &efa_mock_ibv_wr_set_inline_data_list_no_op;
-	ibv_qpx->wr_set_sge_list = &efa_mock_ibv_wr_set_sge_list_no_op;
-	ibv_qpx->wr_set_ud_addr = &efa_mock_ibv_wr_set_ud_addr_no_op;
-	ibv_qpx->wr_complete = &efa_mock_ibv_wr_complete_no_op;
-	expect_function_call(efa_mock_ibv_wr_send_verify_handshake_pkt_local_host_id_and_save_wr);
+	g_efa_unit_test_mocks.efa_qp_wr_send = &efa_mock_efa_qp_wr_send_verify_handshake_pkt_local_host_id_and_save_wr;
+	g_efa_unit_test_mocks.efa_qp_wr_set_inline_data_list = &efa_mock_efa_qp_wr_set_inline_data_list_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_set_sge_list = &efa_mock_efa_qp_wr_set_sge_list_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_set_ud_addr = &efa_mock_efa_qp_wr_set_ud_addr_no_op;
+	g_efa_unit_test_mocks.efa_qp_wr_complete = &efa_mock_efa_qp_wr_complete_no_op;
+	expect_function_call(efa_mock_efa_qp_wr_send_verify_handshake_pkt_local_host_id_and_save_wr);
 
-	/* Setup CQ */
-	ibv_cqx->end_poll = &efa_mock_ibv_end_poll_check_mock;
-	ibv_cqx->next_poll = &efa_mock_ibv_next_poll_check_function_called_and_return_mock;
-	ibv_cqx->read_byte_len = &efa_mock_ibv_read_byte_len_return_mock;
-	ibv_cqx->read_opcode = &efa_mock_ibv_read_opcode_return_mock;
-	ibv_cqx->read_slid = &efa_mock_ibv_read_slid_return_mock;
-	ibv_cqx->read_src_qp = &efa_mock_ibv_read_src_qp_return_mock;
-	ibv_cqx->read_qp_num = &efa_mock_ibv_read_qp_num_return_mock;
-	ibv_cqx->read_wc_flags = &efa_mock_ibv_read_wc_flags_return_mock;
-	ibv_cqx->read_vendor_err = &efa_mock_ibv_read_vendor_err_return_mock;
-	ibv_cqx->start_poll = &efa_mock_ibv_start_poll_return_mock;
-	ibv_cqx->status = IBV_WC_SUCCESS;
-	ibv_cqx->wr_id = (uintptr_t)pkt_entry;
-	expect_function_call(efa_mock_ibv_next_poll_check_function_called_and_return_mock);
+	/* Setup CQ mocks */
+	g_efa_unit_test_mocks.efa_ibv_cq_end_poll = &efa_mock_efa_ibv_cq_end_poll_check_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_next_poll = &efa_mock_efa_ibv_cq_next_poll_return_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_read_byte_len = &efa_mock_efa_ibv_cq_read_byte_len_return_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_read_opcode = &efa_mock_efa_ibv_cq_read_opcode_return_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_read_slid = &efa_mock_efa_ibv_cq_read_slid_return_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_read_src_qp = &efa_mock_efa_ibv_cq_read_src_qp_return_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_read_qp_num = &efa_mock_efa_ibv_cq_read_qp_num_return_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_read_wc_flags = &efa_mock_efa_ibv_cq_read_wc_flags_return_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_read_vendor_err = &efa_mock_efa_ibv_cq_read_vendor_err_return_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_start_poll = &efa_mock_efa_ibv_cq_start_poll_return_mock;
+	ibv_cq->ibv_cq_ex->status = IBV_WC_SUCCESS;
+	ibv_cq->ibv_cq_ex->wr_id = (uintptr_t)pkt_entry;
+	expect_function_call(efa_mock_efa_ibv_cq_next_poll_return_mock);
 
 	/* Receive handshake packet */
-	will_return(efa_mock_ibv_end_poll_check_mock, NULL);
-	will_return(efa_mock_ibv_next_poll_check_function_called_and_return_mock, ENOENT);
-	will_return(efa_mock_ibv_read_byte_len_return_mock, pkt_entry->pkt_size);
-	will_return(efa_mock_ibv_read_opcode_return_mock, IBV_WC_RECV);
-	will_return(efa_mock_ibv_read_qp_num_return_mock, efa_rdm_ep->base_ep.qp->qp_num);
-	will_return(efa_mock_ibv_read_wc_flags_return_mock, 0);
-	will_return(efa_mock_ibv_read_slid_return_mock, efa_rdm_ep_get_peer_ahn(efa_rdm_ep, peer_addr));
-	will_return(efa_mock_ibv_read_src_qp_return_mock, raw_addr.qpn);
-	will_return(efa_mock_ibv_start_poll_return_mock, IBV_WC_SUCCESS);
+	will_return(efa_mock_efa_ibv_cq_end_poll_check_mock, NULL);
+	will_return(efa_mock_efa_ibv_cq_next_poll_return_mock, ENOENT);
+	will_return(efa_mock_efa_ibv_cq_read_byte_len_return_mock, pkt_entry->pkt_size);
+	will_return(efa_mock_efa_ibv_cq_read_opcode_return_mock, IBV_WC_RECV);
+	will_return(efa_mock_efa_ibv_cq_read_qp_num_return_mock, efa_rdm_ep->base_ep.qp->qp_num);
+	will_return(efa_mock_efa_ibv_cq_read_wc_flags_return_mock, 0);
+	will_return(efa_mock_efa_ibv_cq_read_slid_return_mock, efa_rdm_ep_get_peer_ahn(efa_rdm_ep, peer_addr));
+	will_return(efa_mock_efa_ibv_cq_read_src_qp_return_mock, raw_addr.qpn);
+	will_return(efa_mock_efa_ibv_cq_start_poll_return_mock, IBV_WC_SUCCESS);
 
 	/**
 	 * Fire away handshake packet.
 	 * Because we don't care if it fails(there is no receiver!), mark it as failed to make mocking simpler.
 	 */
-	will_return(efa_mock_ibv_end_poll_check_mock, NULL);
-	will_return(efa_mock_ibv_read_opcode_return_mock, IBV_WC_SEND);
-	will_return(efa_mock_ibv_read_qp_num_return_mock, efa_rdm_ep->base_ep.qp->qp_num);
-	will_return(efa_mock_ibv_read_vendor_err_return_mock, FI_EFA_ERR_OTHER);
-	will_return(efa_mock_ibv_start_poll_return_mock, IBV_WC_SUCCESS);
+	will_return(efa_mock_efa_ibv_cq_end_poll_check_mock, NULL);
+	will_return(efa_mock_efa_ibv_cq_read_opcode_return_mock, IBV_WC_SEND);
+	will_return(efa_mock_efa_ibv_cq_read_qp_num_return_mock, efa_rdm_ep->base_ep.qp->qp_num);
+	will_return(efa_mock_efa_ibv_cq_read_vendor_err_return_mock, FI_EFA_ERR_OTHER);
+	will_return(efa_mock_efa_ibv_cq_start_poll_return_mock, IBV_WC_SUCCESS);
 
 	/* Progress the recv wr first to process the received handshake packet. */
 	cq_read_recv_ret = fi_cq_read(resource->cq, &cq_entry, 1);
@@ -217,8 +212,8 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	 * We need to poll the CQ twice explicitly to point the CQE
 	 * to the saved send wr in handshake
 	 */
-	ibv_cqx->status = IBV_WC_GENERAL_ERR;
-	ibv_cqx->wr_id = (uintptr_t)g_ibv_submitted_wr_id_vec[0];
+	ibv_cq->ibv_cq_ex->status = IBV_WC_GENERAL_ERR;
+	ibv_cq->ibv_cq_ex->wr_id = (uintptr_t)g_ibv_submitted_wr_id_vec[0];
 
 	/* Progress the send wr to clean up outstanding tx ops */
 	cq_read_send_ret = fi_cq_read(resource->cq, &cq_entry, 1);
@@ -234,7 +229,7 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	assert_int_equal(peer->device_version, 0xefa0);
 
 	/* reset the mocked cq before it's polled by ep close */
-	will_return_always(efa_mock_ibv_start_poll_return_mock, ENOENT);
+	will_return_always(efa_mock_efa_ibv_cq_start_poll_return_mock, ENOENT);
 	assert_int_equal(fi_close(&resource->ep->fid), 0);
 	resource->ep = NULL;
 }

@@ -86,6 +86,30 @@ static int efa_unit_test_mocks_teardown(void **state)
 #if HAVE_EFADV_QUERY_CQ
 		.efadv_query_cq = __real_efadv_query_cq,
 #endif
+		.efa_qp_post_recv = __real_efa_qp_post_recv,
+		.efa_qp_wr_complete = __real_efa_qp_wr_complete,
+		.efa_qp_wr_rdma_read = __real_efa_qp_wr_rdma_read,
+		.efa_qp_wr_rdma_write = __real_efa_qp_wr_rdma_write,
+		.efa_qp_wr_rdma_write_imm = __real_efa_qp_wr_rdma_write_imm,
+		.efa_qp_wr_send = __real_efa_qp_wr_send,
+		.efa_qp_wr_send_imm = __real_efa_qp_wr_send_imm,
+		.efa_qp_wr_set_inline_data_list = __real_efa_qp_wr_set_inline_data_list,
+		.efa_qp_wr_set_sge_list = __real_efa_qp_wr_set_sge_list,
+		.efa_qp_wr_set_ud_addr = __real_efa_qp_wr_set_ud_addr,
+		.efa_qp_wr_start = __real_efa_qp_wr_start,
+		.efa_ibv_cq_start_poll = __real_efa_ibv_cq_start_poll,
+		.efa_ibv_cq_next_poll = __real_efa_ibv_cq_next_poll,
+		.efa_ibv_cq_read_opcode = __real_efa_ibv_cq_read_opcode,
+		.efa_ibv_cq_end_poll = __real_efa_ibv_cq_end_poll,
+		.efa_ibv_cq_read_qp_num = __real_efa_ibv_cq_read_qp_num,
+		.efa_ibv_cq_read_vendor_err = __real_efa_ibv_cq_read_vendor_err,
+		.efa_ibv_cq_read_src_qp = __real_efa_ibv_cq_read_src_qp,
+		.efa_ibv_cq_read_slid = __real_efa_ibv_cq_read_slid,
+		.efa_ibv_cq_read_byte_len = __real_efa_ibv_cq_read_byte_len,
+		.efa_ibv_cq_read_wc_flags = __real_efa_ibv_cq_read_wc_flags,
+		.efa_ibv_cq_read_imm_data = __real_efa_ibv_cq_read_imm_data,
+		.efa_ibv_cq_wc_is_unsolicited = __real_efa_ibv_cq_wc_is_unsolicited,
+		.efa_ibv_cq_read_sgid = __real_efa_ibv_cq_read_sgid,
 	};
 
 	/* Reset environment */
