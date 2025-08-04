@@ -313,8 +313,6 @@ void efa_qp_destruct(struct efa_qp *qp)
 {
 	int err;
 
-	efa_data_path_timer_report("SQ (Start to Complete)", &qp->data_path_direct_qp.send_timing);
-	efa_data_path_timer_report("RQ (post_recv)        ", &qp->data_path_direct_qp.recv_timing);
 
 	err = -ibv_destroy_qp(qp->ibv_qp);
 	if (err)

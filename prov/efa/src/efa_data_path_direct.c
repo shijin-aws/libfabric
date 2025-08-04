@@ -16,7 +16,6 @@
  * - Completion queue setup for direct hardware access
  * - Integration with rdma-core's efadv query interfaces
  * - Memory management for work request tracking structures
- * - Performance timing infrastructure for optimization
  *
  * The implementation leverages rdma-core's efadv (EFA device-specific)
  * interfaces to query hardware queue attributes and map hardware buffers
@@ -54,7 +53,6 @@
  * - Querying hardware queue attributes from rdma-core
  * - Mapping hardware send and receive queue buffers
  * - Setting up work request ID tracking structures
- * - Initializing performance timing infrastructure
  * - Configuring doorbell register access
  *
  * @param efa_qp Pointer to the EFA queue pair to initialize
@@ -79,9 +77,6 @@ int efa_data_path_direct_qp_initialize(struct efa_qp *efa_qp)
 	/* Initialize the direct queue pair structure */
 	memset(&efa_qp->data_path_direct_qp, 0, sizeof(efa_qp->data_path_direct_qp));
 
-	/* Initialize performance timing for send and receive operations */
-	efa_data_path_timer_init(&efa_qp->data_path_direct_qp.send_timing);
-	efa_data_path_timer_init(&efa_qp->data_path_direct_qp.recv_timing);
 
 	/* Query hardware work queue attributes from rdma-core */
 	ret = efadv_query_qp_wqs(efa_qp->ibv_qp, &sq_attr, &rq_attr,
@@ -156,7 +151,6 @@ void efa_data_path_direct_qp_finalize(struct efa_qp *efa_qp)
  * - Querying hardware completion queue attributes from rdma-core
  * - Mapping the hardware completion queue buffer
  * - Initializing completion processing state and phase tracking
- * - Setting up performance timing infrastructure
  *
  * @param efa_cq Pointer to the EFA completion queue to initialize
  * @return FI_SUCCESS on success, error code on failure
@@ -173,8 +167,6 @@ int efa_data_path_direct_cq_initialize(struct efa_cq *efa_cq)
 	/* Initialize the direct completion queue structure */
 	memset(data_path_direct, 0, sizeof(*data_path_direct));
 
-	/* Initialize performance timing for completion processing */
-	efa_data_path_timer_init(&data_path_direct->timing);
 
 	/**
 	 * Direct CQ operations are disabled if:

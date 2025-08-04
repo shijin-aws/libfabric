@@ -14,7 +14,6 @@
  * Key Components:
  * - Work queue structures that mirror rdma-core's internal representations
  * - Completion queue structures for direct hardware access
- * - Performance timing utilities for profiling and optimization
  * - Queue pair structures combining send and receive queues
  *
  * The structures in this file are designed to be binary-compatible with
@@ -111,7 +110,6 @@ struct efa_data_path_direct_cq {
 	int phase;                                /**< Current phase bit for queue wrapping */
 	int qmask;                                /**< Mask for queue index wrapping */
 	uint16_t consumed_cnt;                    /**< Number of completions consumed */
-	struct efa_data_path_timer timing;     /**< Performance timing for this CQ */
 };
 
 /**
@@ -156,7 +154,7 @@ struct efa_data_path_direct_sq {
  * @brief Direct queue pair structure
  *
  * Combines send and receive queues with error tracking and performance
- * timing. This structure provides the complete direct access interface
+ * to an EFA queue pair's hardware resources.
  * to an EFA queue pair's hardware resources.
  */
 struct efa_data_path_direct_qp {
@@ -164,8 +162,6 @@ struct efa_data_path_direct_qp {
 	struct efa_data_path_direct_rq rq;        /**< Receive queue structure */
 	int wr_session_err;                       /**< Error state for current WR session */
 
-	struct efa_data_path_timer send_timing; /**< Performance timing for send ops */
-	struct efa_data_path_timer recv_timing; /**< Performance timing for recv ops */
 };
 
 
