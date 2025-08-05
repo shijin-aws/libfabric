@@ -877,7 +877,7 @@ static void test_impl_ibv_cq_ex_read_unknow_peer_ah(struct efa_resource *resourc
 	/* Setup CQ */
 	ibv_cqx->wr_id = (uintptr_t)pkt_entry;
 	g_efa_unit_test_mocks.efa_ibv_cq_start_poll = &efa_mock_efa_ibv_cq_start_poll_return_mock;
-	g_efa_unit_test_mocks.efa_ibv_cq_next_poll = &efa_mock_efa_ibv_cq_next_poll_return_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_next_poll = &efa_mock_efa_ibv_cq_next_poll_check_function_called_and_return_mock;
 	g_efa_unit_test_mocks.efa_ibv_cq_end_poll = &efa_mock_efa_ibv_cq_end_poll_check_mock;
 	g_efa_unit_test_mocks.efa_ibv_cq_read_slid = &efa_mock_efa_ibv_cq_read_slid_return_mock;
 	g_efa_unit_test_mocks.efa_ibv_cq_read_byte_len = &efa_mock_efa_ibv_cq_read_byte_len_return_mock;
@@ -892,12 +892,12 @@ static void test_impl_ibv_cq_ex_read_unknow_peer_ah(struct efa_resource *resourc
 		/* Return unknown AH from efadv */
 		will_return(efa_mock_efa_ibv_cq_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid, raw_addr.raw);
 	} else {
-		expect_function_call(efa_mock_efa_ibv_cq_next_poll_return_mock);
+		expect_function_call(efa_mock_efa_ibv_cq_next_poll_check_function_called_and_return_mock);
 	}
 
 	/* Read 1 entry with unknown AH */
 	will_return(efa_mock_efa_ibv_cq_start_poll_return_mock, 0);
-	will_return(efa_mock_efa_ibv_cq_next_poll_return_mock, ENOENT);
+	will_return(efa_mock_efa_ibv_cq_next_poll_check_function_called_and_return_mock, ENOENT);
 	will_return(efa_mock_efa_ibv_cq_end_poll_check_mock, NULL);
 	will_return(efa_mock_efa_ibv_cq_read_slid_return_mock, 0xffff); // slid=0xffff(-1) indicates an unknown AH
 	will_return(efa_mock_efa_ibv_cq_read_byte_len_return_mock, pkt_entry->pkt_size);

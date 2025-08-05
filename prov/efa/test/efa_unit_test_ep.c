@@ -169,7 +169,7 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 
 	/* Setup CQ mocks */
 	g_efa_unit_test_mocks.efa_ibv_cq_end_poll = &efa_mock_efa_ibv_cq_end_poll_check_mock;
-	g_efa_unit_test_mocks.efa_ibv_cq_next_poll = &efa_mock_efa_ibv_cq_next_poll_return_mock;
+	g_efa_unit_test_mocks.efa_ibv_cq_next_poll = &efa_mock_efa_ibv_cq_next_poll_check_function_called_and_return_mock;
 	g_efa_unit_test_mocks.efa_ibv_cq_read_byte_len = &efa_mock_efa_ibv_cq_read_byte_len_return_mock;
 	g_efa_unit_test_mocks.efa_ibv_cq_read_opcode = &efa_mock_efa_ibv_cq_read_opcode_return_mock;
 	g_efa_unit_test_mocks.efa_ibv_cq_read_slid = &efa_mock_efa_ibv_cq_read_slid_return_mock;
@@ -180,11 +180,11 @@ void test_efa_rdm_ep_handshake_exchange_host_id(struct efa_resource **state, uin
 	g_efa_unit_test_mocks.efa_ibv_cq_start_poll = &efa_mock_efa_ibv_cq_start_poll_return_mock;
 	ibv_cq->ibv_cq_ex->status = IBV_WC_SUCCESS;
 	ibv_cq->ibv_cq_ex->wr_id = (uintptr_t)pkt_entry;
-	expect_function_call(efa_mock_efa_ibv_cq_next_poll_return_mock);
+	expect_function_call(efa_mock_efa_ibv_cq_next_poll_check_function_called_and_return_mock);
 
 	/* Receive handshake packet */
 	will_return(efa_mock_efa_ibv_cq_end_poll_check_mock, NULL);
-	will_return(efa_mock_efa_ibv_cq_next_poll_return_mock, ENOENT);
+	will_return(efa_mock_efa_ibv_cq_next_poll_check_function_called_and_return_mock, ENOENT);
 	will_return(efa_mock_efa_ibv_cq_read_byte_len_return_mock, pkt_entry->pkt_size);
 	will_return(efa_mock_efa_ibv_cq_read_opcode_return_mock, IBV_WC_RECV);
 	will_return(efa_mock_efa_ibv_cq_read_qp_num_return_mock, efa_rdm_ep->base_ep.qp->qp_num);
