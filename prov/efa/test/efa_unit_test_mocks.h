@@ -78,8 +78,6 @@ uint32_t efa_mock_efa_ibv_cq_read_wc_flags_return_mock(struct efa_ibv_cq *ibv_cq
 
 __be32 efa_mock_efa_ibv_cq_read_imm_data_return_mock(struct efa_ibv_cq *ibv_cq);
 
-bool efa_mock_efadv_wc_is_unsolicited(struct efadv_cq *efadv_cq);
-
 void efa_mock_efa_qp_wr_send_imm_save_wr(struct efa_qp *efaqp, __be32 imm_data);
 
 ssize_t __real_ofi_copy_from_hmem_iov(void *dest, size_t size,
