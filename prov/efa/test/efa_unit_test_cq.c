@@ -467,11 +467,9 @@ void test_ibv_cq_ex_read_bad_recv_status(struct efa_resource **state)
 	}
 #endif
 
-	printf("test_ibv_cq_ex_read_bad_recv_status: before cq read \n");
 	ret = fi_cq_read(resource->cq, &cq_entry, 1);
 	assert_int_equal(ret, -FI_EAGAIN);
 
-	printf("test_ibv_cq_ex_read_bad_recv_status: after cq read\n");
 	ret = fi_eq_readerr(resource->eq, &eq_err_entry, 0);
 	assert_int_equal(ret, sizeof(eq_err_entry));
 	assert_int_not_equal(eq_err_entry.err, FI_SUCCESS);
@@ -479,7 +477,6 @@ void test_ibv_cq_ex_read_bad_recv_status(struct efa_resource **state)
 	/* TODO - Fix pkt recv error path */
 	assert_int_equal(eq_err_entry.prov_errno, EFA_IO_COMP_STATUS_LOCAL_ERROR_UNRESP_REMOTE);
 
-	printf("test_ibv_cq_ex_read_bad_recv_status: before cleanup\n");
 	/* reset the mocked cq before it's polled by ep close */
 	will_return_always(efa_mock_efa_ibv_cq_start_poll_return_mock, ENOENT);
 	assert_int_equal(fi_close(&resource->ep->fid), 0);

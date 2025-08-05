@@ -423,7 +423,6 @@ __be32 __wrap_efa_ibv_cq_read_imm_data(struct efa_ibv_cq *ibv_cq)
 
 bool __wrap_efa_ibv_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq)
 {
-	printf("calling __wrap_efa_ibv_cq_wc_is_unsolicited\n");
 	return g_efa_unit_test_mocks.efa_ibv_cq_wc_is_unsolicited(ibv_cq);
 }
 

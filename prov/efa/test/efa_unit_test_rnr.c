@@ -36,12 +36,10 @@ void test_efa_rnr_queue_and_resend_impl(struct efa_resource **state, uint32_t op
 	g_efa_unit_test_mocks.efa_qp_wr_complete = &efa_mock_efa_qp_wr_complete_no_op;
 	assert_true(dlist_empty(&efa_rdm_ep->txe_list));
 
-	printf("ok before fi_send\n");
 	if (op == ofi_op_msg)
 		ret = fi_send(resource->ep, send_buff.buff, send_buff.size, fi_mr_desc(send_buff.mr), peer_addr, NULL /* context */);
 	else
 		ret = fi_tsend(resource->ep, send_buff.buff, send_buff.size, fi_mr_desc(send_buff.mr), peer_addr, 1234, NULL /* context */);
-	printf("ok after fi_send\n");
 	assert_int_equal(ret, 0);
 	assert_false(dlist_empty(&efa_rdm_ep->txe_list));
 	assert_int_equal(g_ibv_submitted_wr_id_cnt, 1);

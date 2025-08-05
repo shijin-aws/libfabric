@@ -23,7 +23,6 @@ int efa_qp_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_
 
 int efa_qp_wr_complete(struct efa_qp *efaqp)
 {
-	printf("efa_qp_wr_complete: in the stub function!\n");
 	return 0;
 }
 
