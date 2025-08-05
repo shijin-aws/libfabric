@@ -163,7 +163,7 @@ int efa_mock_efa_ibv_cq_next_poll_use_saved_send_wr_with_mock_status(struct efa_
 	return efa_mock_use_saved_send_wr(ibv_cq->ibv_cq_ex, mock());
 }
 
-void efa_mock_ibv_end_poll_check_mock(struct efa_ibv_cq *ibv_cq)
+void efa_mock_efa_ibv_cq_end_poll_check_mock(struct efa_ibv_cq *ibv_cq)
 {
 	mock();
 }
@@ -228,7 +228,7 @@ bool efa_mock_efa_device_support_unsolicited_write_recv()
 	return mock();
 }
 
-int efa_mock_ibv_post_recv(struct ibv_qp *qp, struct ibv_recv_wr *wr,
+int efa_mock_efa_qp_post_recv_return_mock(struct efa_qp *qp, struct ibv_recv_wr *wr,
 				struct ibv_recv_wr **bad_wr)
 {
 	return mock();
@@ -473,12 +473,12 @@ uint32_t efa_mock_efa_ibv_cq_read_slid_return_mock(struct efa_ibv_cq *current)
 	return mock();
 }
 
-int efa_mock_efadv_wc_read_sgid_return_mock(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid)
+int efa_mock_efa_ibv_cq_read_sgid_return_mock(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid)
 {
 	return mock();
 }
 
-int efa_mock_efadv_wc_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid)
+int efa_mock_efa_ibv_cq_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid)
 {
 	/* Make sure this mock is always called before ibv_next_poll */
 	expect_function_call(efa_mock_efa_ibv_cq_next_poll_check_function_called_and_return_mock);
