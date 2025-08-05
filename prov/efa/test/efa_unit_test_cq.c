@@ -887,10 +887,10 @@ static void test_impl_ibv_cq_ex_read_unknow_peer_ah(struct efa_resource *resourc
 	g_efa_unit_test_mocks.efa_ibv_cq_read_src_qp = &efa_mock_efa_ibv_cq_read_src_qp_return_mock;
 
 	if (support_efadv_cq) {
-		efadv_cq_from_ibv_cq_ex(ibv_cq->ibv_cq_ex)->wc_read_sgid = &efa_mock_efadv_wc_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid;
+		g_efa_unit_test_mocks.efa_ibv_cq_read_sgid = &efa_mock_efa_ibv_cq_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid;
 
 		/* Return unknown AH from efadv */
-		will_return(efa_mock_efadv_wc_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid, raw_addr.raw);
+		will_return(efa_mock_efa_ibv_cq_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid, raw_addr.raw);
 	} else {
 		expect_function_call(efa_mock_efa_ibv_cq_next_poll_return_mock);
 	}

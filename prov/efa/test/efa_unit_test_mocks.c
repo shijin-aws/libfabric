@@ -474,12 +474,7 @@ struct ibv_cq_ex *__wrap_efadv_create_cq(struct ibv_context *ibvctx,
 
 
 
-int efa_mock_efadv_wc_read_sgid_return_mock(struct efadv_cq *efadv_cq, union ibv_gid *sgid)
-{
-	return mock();
-}
-
-int efa_mock_efadv_wc_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid(struct efadv_cq *efadv_cq, union ibv_gid *sgid)
+int efa_mock_efa_ibv_cq_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid)
 {
 	/* Make sure this mock is always called before ibv_next_poll */
 	expect_function_call(efa_mock_efa_ibv_cq_next_poll_return_mock);

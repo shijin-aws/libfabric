@@ -164,8 +164,6 @@ unsigned int efa_mock_efa_ibv_cq_read_wc_flags_return_mock(struct efa_ibv_cq *ib
 __be32 efa_mock_efa_ibv_cq_read_imm_data_return_mock(struct efa_ibv_cq *ibv_cq);
 bool efa_mock_efa_ibv_cq_wc_is_unsolicited_return_mock(struct efa_ibv_cq *ibv_cq);
 
-int efa_mock_efa_ibv_cq_read_sgid_return_mock(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid);
-
 void efa_mock_ibv_wr_rdma_read_save_wr(struct ibv_qp_ex *qp, uint32_t rkey,
 				       uint64_t remote_addr);
 
@@ -267,8 +265,8 @@ struct ibv_cq_ex *__real_efadv_create_cq(struct ibv_context *ibvctx,
 uint32_t efa_mock_efa_ibv_cq_read_src_qp_return_mock(struct efa_ibv_cq *ibv_cq);
 uint32_t efa_mock_efa_ibv_cq_read_byte_len_return_mock(struct efa_ibv_cq *ibv_cq);
 uint32_t efa_mock_efa_ibv_cq_read_slid_return_mock(struct efa_ibv_cq *ibv_cq);
-int efa_mock_efadv_wc_read_sgid_return_mock(struct efadv_cq *efadv_cq, union ibv_gid *sgid);
-int efa_mock_efadv_wc_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid(struct efadv_cq *efadv_cq, union ibv_gid *sgid);
+int efa_mock_efa_ibv_cq_read_sgid_return_mock(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid);
+int efa_mock_efa_ibv_cq_read_sgid_return_zero_code_and_expect_next_poll_and_set_gid(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid);
 int efa_mock_efa_ibv_cq_start_poll_expect_efadv_wc_read_ah_and_return_mock(struct efa_ibv_cq *ibv_cq,
 																	struct ibv_poll_cq_attr *attr);
 int efa_mock_efa_ibv_cq_next_poll_check_function_called_and_return_mock(struct efa_ibv_cq *ibv_cq);
