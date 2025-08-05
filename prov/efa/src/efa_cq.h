@@ -198,19 +198,4 @@ int efa_cq_open_ibv_cq(struct fi_cq_attr *attr,
 					struct efa_ibv_cq *ibv_cq,
 					struct fi_efa_cq_init_attr *efa_cq_init_attr);
 
-/* Forward declaration to avoid cyclic dependency */
-bool efa_ibv_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq);
-
-/**
- * @brief Check whether a completion consumes recv buffer
- *
- * @param ibv_cq extended ibv cq
- * @return true the wc consumes a recv buffer
- * @return false the wc doesn't consume a recv buffer
- */
-static inline bool efa_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq)
-{
-	return efa_use_unsolicited_write_recv() && efa_ibv_cq_wc_is_unsolicited(ibv_cq);
-}
-
 #endif /* end of _EFA_CQ_H*/

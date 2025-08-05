@@ -119,7 +119,6 @@ __be32 efa_ibv_cq_read_imm_data(struct efa_ibv_cq *ibv_cq)
 
 bool efa_ibv_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq)
 {
-	printf("calling efa_ibv_cq_wc_is_unsolicited\n");
 	return false;
 }
 

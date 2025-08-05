@@ -202,7 +202,6 @@ prov_efa_test_efa_unit_test_LDFLAGS = $(cmocka_rpath) $(efa_LDFLAGS) $(cmocka_LD
 					-Wl,--wrap=efa_ibv_cq_read_wc_flags \
 					-Wl,--wrap=efa_ibv_cq_read_imm_data \
 					-Wl,--wrap=efa_ibv_cq_wc_is_unsolicited \
-					-Wl,--wrap=efa_cq_wc_is_unsolicited \
 					-Wl,--wrap=efa_ibv_cq_read_sgid
 
 if HAVE_EFADV_CQ_EX

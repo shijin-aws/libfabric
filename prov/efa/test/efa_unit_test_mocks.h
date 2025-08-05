@@ -320,6 +320,5 @@ enum ibv_fork_status __real_ibv_is_fork_initialized(void);
 enum ibv_fork_status efa_mock_ibv_is_fork_initialized_return_mock(void);
 
 bool __real_efa_ibv_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq);
-bool __real_efa_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq);
 
 #endif
