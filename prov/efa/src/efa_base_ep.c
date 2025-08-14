@@ -313,6 +313,11 @@ void efa_qp_destruct(struct efa_qp *qp)
 {
 	int err;
 
+#ifdef PRINT_EFA_TIMING
+	efa_data_path_timer_report("SQ (Start to Complete)", &qp->send_timing);
+	efa_data_path_timer_report("RQ (post_recv)        ", &qp->recv_timing);
+#endif
+
 	err = -ibv_destroy_qp(qp->ibv_qp);
 	if (err)
 		EFA_INFO(FI_LOG_CORE, "destroy qp[%u] failed, err: %s\n", qp->qp_num, fi_strerror(-err));
@@ -765,6 +770,12 @@ int efa_base_ep_create_and_enable_qp(struct efa_base_ep *ep, bool create_user_re
 	err = efa_base_ep_create_qp(ep, &attr_ex);
 	if (err)
 		return err;
+
+#ifdef PRINT_EFA_TIMING
+	/* Initialize performance timing for send and receive operations */
+	efa_data_path_timer_init(&ep->qp->send_timing);
+	efa_data_path_timer_init(&ep->qp->recv_timing);
+#endif
 
 #if HAVE_EFA_DATA_PATH_DIRECT
 	/* Only enable direct QP when direct CQ is enabled */

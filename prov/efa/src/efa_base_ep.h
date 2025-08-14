@@ -51,6 +51,10 @@ struct efa_qp {
 #if HAVE_EFA_DATA_PATH_DIRECT
 	struct efa_data_path_direct_qp data_path_direct_qp;
 #endif
+#ifdef PRINT_EFA_TIMING
+	struct efa_data_path_timer send_timing; /**< Performance timing for send ops */
+	struct efa_data_path_timer recv_timing; /**< Performance timing for recv ops */
+#endif
 };
 
 struct efa_av;

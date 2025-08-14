@@ -21,6 +21,9 @@ struct efa_ibv_cq {
 #if HAVE_EFADV_QUERY_CQ
 	struct efa_data_path_direct_cq data_path_direct;
 #endif
+#ifdef PRINT_EFA_TIMING
+	struct efa_data_path_timer timing;
+#endif
 };
 
 struct efa_ibv_cq_poll_list_entry {
@@ -192,6 +195,11 @@ int efa_cq_open_ibv_cq(struct fi_cq_attr *attr,
 	}
 
 	ibv_cq->ibv_cq_ex_type = EFADV_CQ;
+#ifdef PRINT_EFA_TIMING
+	/* Initialize performance timing for completion processing */
+	efa_data_path_timer_init(&ibv_cq->timing);
+#endif
+
 	return 0;
 }
 #else
@@ -214,6 +222,11 @@ int efa_cq_open_ibv_cq(struct fi_cq_attr *attr,
 	};
 
 	ibv_cq->data_path_direct_enabled = false;
+#ifdef PRINT_EFA_TIMING
+	/* Initialize performance timing for completion processing */
+	efa_data_path_timer_init(&ibv_cq->timing);
+#endif
+
 	return efa_cq_open_ibv_cq_with_ibv_create_cq_ex(
 		&init_attr_ex, ibv_ctx, &ibv_cq->ibv_cq_ex, &ibv_cq->ibv_cq_ex_type);
 }

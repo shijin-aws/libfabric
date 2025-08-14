@@ -125,7 +125,13 @@ static inline ssize_t efa_post_recv(struct efa_base_ep *base_ep, const struct fi
 
 	efa_tracepoint(post_recv, wr->wr_id, (uintptr_t)msg->context);
 
+#ifdef PRINT_EFA_TIMING
+	efa_data_path_timer_start(&qp->recv_timing);
+#endif
 	err = efa_qp_post_recv(qp, &base_ep->efa_recv_wr_vec[0].wr, &bad_wr);
+#ifdef PRINT_EFA_TIMING
+	efa_data_path_timer_stop(&qp->recv_timing);
+#endif
 	if (OFI_UNLIKELY(err)) {
 		/* On failure, ibv_post_recv() return positive errno.
 		 * Meanwhile, this function return a negative errno.
@@ -223,6 +229,9 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 
 	ofi_genlock_lock(&base_ep->util_ep.lock);
 	if (!base_ep->is_wr_started) {
+#ifdef PRINT_EFA_TIMING
+		efa_data_path_timer_start(&qp->send_timing);
+#endif
 		efa_qp_wr_start(qp);
 		base_ep->is_wr_started = true;
 	}
@@ -279,6 +288,9 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 
 	if (!(flags & FI_MORE)) {
 		ret = efa_qp_wr_complete(qp);
+#ifdef PRINT_EFA_TIMING
+		efa_data_path_timer_stop(&qp->send_timing);
+#endif
 		if (OFI_UNLIKELY(ret))
 			ret = (ret == ENOMEM) ? -FI_EAGAIN : -ret;
 		base_ep->is_wr_started = false;

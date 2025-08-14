@@ -14,6 +14,7 @@
  * Key Components:
  * - Work queue structures that mirror rdma-core's internal representations
  * - Completion queue structures for direct hardware access
+ * - Performance timing utilities for profiling and optimization
  * - Queue pair structures combining send and receive queues
  *
  * The structures in this file are designed to be binary-compatible with
@@ -148,16 +149,96 @@ struct efa_data_path_direct_sq {
  * @brief Direct queue pair structure
  *
  * Combines send and receive queues with error tracking and performance
- * to an EFA queue pair's hardware resources.
+ * timing. This structure provides the complete direct access interface
  * to an EFA queue pair's hardware resources.
  */
 struct efa_data_path_direct_qp {
 	struct efa_data_path_direct_sq sq;        /**< Send queue structure */
 	struct efa_data_path_direct_rq rq;        /**< Receive queue structure */
 	int wr_session_err;                       /**< Error state for current WR session */
-
 };
 
 
 #endif /* HAVE_EFA_DATA_PATH_DIRECT */
+
+#ifdef PRINT_EFA_TIMING
+#include <x86intrin.h>
+
+/**
+ * @struct efa_data_path_timer
+ * @brief High-resolution performance timing utility
+ *
+ * Provides cycle-accurate timing measurements for profiling direct completion
+ * queue operations. Uses x86 RDTSC instruction for minimal overhead timing.
+ */
+struct efa_data_path_timer {
+	uint64_t count;  /**< Number of timing measurements taken */
+	uint64_t cycles; /**< Total CPU cycles accumulated across all measurements */
+	uint64_t tic;    /**< Timestamp of current measurement start */
+};
+
+/**
+ * @brief Initialize a performance timer
+ * @param tt Pointer to timer structure to initialize
+ */
+static inline void efa_data_path_timer_init(struct efa_data_path_timer *tt) {
+	tt->count = 0;
+	tt->cycles = 0;
+	tt->tic = 0;
+}
+
+/**
+ * @brief Start a timing measurement
+ * @param tt Pointer to timer structure
+ */
+static inline void efa_data_path_timer_start(struct efa_data_path_timer *tt) {
+	tt->tic = __rdtsc();
+	asm volatile("" ::: "memory"); /* Compiler barrier */
+}
+
+/**
+ * @brief Stop a timing measurement and accumulate results
+ * @param tt Pointer to timer structure
+ */
+static inline void efa_data_path_timer_stop(struct efa_data_path_timer *tt) {
+	asm volatile("" ::: "memory"); /* Compiler barrier */
+	tt->cycles += __rdtsc() - tt->tic;
+	tt->count++;
+}
+
+/**
+ * @brief Print timing statistics
+ * @param prefix String prefix for the report
+ * @param tt Pointer to timer structure
+ */
+static inline void efa_data_path_timer_report(const char* prefix, struct efa_data_path_timer *tt) {
+	if (tt->count) {
+		uint64_t avg_cycles = tt->cycles / tt->count;
+		printf("Timer Report: %s: Count: %ld, Avg Cycles: %ld\n", prefix, tt->count, avg_cycles);
+	}
+}
+#else
+/* Empty struct and no-op functions when timing is disabled */
+struct efa_data_path_timer {
+	/* Empty struct */
+};
+
+static inline void efa_data_path_timer_init(struct efa_data_path_timer *tt) {
+	(void)tt;
+}
+
+static inline void efa_data_path_timer_start(struct efa_data_path_timer *tt) {
+	(void)tt;
+}
+
+static inline void efa_data_path_timer_stop(struct efa_data_path_timer *tt) {
+	(void)tt;
+}
+
+static inline void efa_data_path_timer_report(const char* prefix, struct efa_data_path_timer *tt) {
+	(void)prefix;
+	(void)tt;
+}
+#endif /* PRINT_EFA_TIMING */
+
 #endif /* _EFA_DATA_PATH_DIRECT_STRUCTS_H */

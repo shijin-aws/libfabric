@@ -268,7 +268,13 @@ int efa_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	efa_domain = container_of(cq->util_cq.domain, struct efa_domain, util_domain);
 
 	/* Call ibv_start_poll only once */
+#ifdef PRINT_EFA_TIMING
+	efa_data_path_timer_start(&ibv_cq->timing);
+#endif
 	efa_cq_start_poll(ibv_cq);
+#ifdef PRINT_EFA_TIMING
+	efa_data_path_timer_stop(&ibv_cq->timing);
+#endif
 
 	while (efa_cq_wc_available(ibv_cq)) {
 		base_ep = efa_domain->qp_table[efa_ibv_cq_wc_read_qp_num(ibv_cq) & efa_domain->qp_table_sz_m1]->base_ep;
@@ -380,6 +386,10 @@ int efa_cq_close(fid_t fid)
 		}
 		cq->ibv_cq.ibv_cq_ex = NULL;
 	}
+
+#ifdef PRINT_EFA_TIMING
+	efa_data_path_timer_report("CQ Polling", &cq->ibv_cq.timing);
+#endif
 
 	ret = ofi_cq_cleanup(&cq->util_cq);
 	if (ret)
