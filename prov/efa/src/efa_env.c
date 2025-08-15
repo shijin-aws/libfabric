@@ -39,7 +39,7 @@ struct efa_env efa_env = {
 	.huge_page_setting = EFA_ENV_HUGE_PAGE_UNSPEC,
 	.use_unsolicited_write_recv = 1,
 	.internal_rx_refill_threshold = 8,
-	.use_data_path_direct = false,
+	.use_data_path_direct = true,
 };
 
 /* @brief Read and store the FI_EFA_* environment variables.
