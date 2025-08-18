@@ -408,9 +408,6 @@ ssize_t efa_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count,
 
 	efa_cq = container_of(cq_fid, struct efa_cq, util_cq.cq_fid);
 
-	/* Acquire the lock to prevent race conditions when qp_table is being updated */
-	ofi_genlock_lock(&efa_cq->util_cq.ep_list_lock);
-
 	efa_domain = container_of(efa_cq->util_cq.domain, struct efa_domain, util_domain);
 	ibv_cq = &efa_cq->ibv_cq;
 
@@ -462,7 +459,6 @@ ssize_t efa_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count,
 		efa_cq_next_poll(ibv_cq);
 	}
 	efa_cq_end_poll(ibv_cq);
-	ofi_genlock_unlock(&efa_cq->util_cq.ep_list_lock);
 
 	num_cqe = num_cqe ? num_cqe : -FI_EAGAIN;
 	return err ? err : num_cqe;
