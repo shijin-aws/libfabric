@@ -35,6 +35,8 @@ struct efa_cq {
 	struct util_cq		util_cq;
 	struct efa_ibv_cq	ibv_cq;
 	int	(*poll_ibv_cq)(ssize_t cqe_to_progress, struct efa_ibv_cq *ibv_cq);
+	void	(*read_entry)(struct efa_ibv_cq *ibv_cq, void *buf);
+	size_t	entry_size;
 };
 
 extern struct fi_ops_cq efa_cq_ops;
