@@ -54,7 +54,6 @@ _efa_files = \
 	prov/efa/src/efa_cq.c \
 	prov/efa/src/efa_ep.c \
 	prov/efa/src/efa_data_path_direct.c \
-	prov/efa/src/efa_data_path_direct_wqe.c \
 	prov/efa/src/rdm/efa_rdm_peer.c	\
 	prov/efa/src/rdm/efa_rdm_cq.c \
 	prov/efa/src/rdm/efa_rdm_ep_utils.c \
