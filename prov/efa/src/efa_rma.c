@@ -9,6 +9,7 @@
 #include "efa_av.h"
 #include "efa_data_path_ops.h"
 #include "efa_data_path_direct.h"
+#include "efa_perf_timer.h"
 
 /**
  * @brief check whether endpoint was configured with FI_RMA capability
@@ -188,6 +189,7 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 					 const struct fi_msg_rma *msg,
 					 uint64_t flags)
 {
+	struct efa_perf_timer timer;
 	struct efa_qp *qp;
 	struct efa_conn *conn;
 #ifndef _WIN32
@@ -217,6 +219,7 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 	qp = base_ep->qp;
 
 	ofi_genlock_lock(&base_ep->util_ep.lock);
+	EFA_PERF_TIMER_START(&timer, "efa_rma_post_write");
 
 	if (!base_ep->is_wr_started) {
 		efa_qp_wr_start(qp);
@@ -256,6 +259,8 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 
 	if (!(flags & FI_MORE)) {
 		err = efa_qp_wr_complete(qp);
+		EFA_PERF_TIMER_END(&timer);
+		EFA_PERF_TIMER_PRINT(&timer, "WRITE");
 		if (OFI_UNLIKELY(err))
 			err = (err == ENOMEM) ? -FI_EAGAIN : -err;
 		base_ep->is_wr_started = false;

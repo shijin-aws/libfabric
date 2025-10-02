@@ -15,6 +15,7 @@
 
 #include "efa_tp.h"
 #include "efa_data_path_direct.h"
+#include "efa_perf_timer.h"
 
 #ifndef EFA_MSG_DUMP
 static inline void dump_msg(const struct fi_msg *msg, const char *context) {}
@@ -191,6 +192,7 @@ static ssize_t efa_ep_recvv(struct fid_ep *ep_fid, const struct iovec *iov, void
 
 static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi_msg *msg, uint64_t flags)
 {
+	struct efa_perf_timer timer;
 	struct efa_qp *qp = base_ep->qp;
 	struct efa_conn *conn;
 	struct ibv_sge sg_list[2];  /* efa device support up to 2 iov */
@@ -222,6 +224,7 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 	assert(len <= base_ep->info->ep_attr->max_msg_size);
 
 	ofi_genlock_lock(&base_ep->util_ep.lock);
+	EFA_PERF_TIMER_START(&timer, "efa_post_send");
 	if (!base_ep->is_wr_started) {
 		efa_qp_wr_start(qp);
 		base_ep->is_wr_started = true;
@@ -279,6 +282,8 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 
 	if (!(flags & FI_MORE)) {
 		ret = efa_qp_wr_complete(qp);
+		EFA_PERF_TIMER_END(&timer);
+		EFA_PERF_TIMER_PRINT(&timer, "SEND");
 		if (OFI_UNLIKELY(ret))
 			ret = (ret == ENOMEM) ? -FI_EAGAIN : -ret;
 		base_ep->is_wr_started = false;
