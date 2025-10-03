@@ -574,9 +574,8 @@ efa_data_path_direct_send_wr_post_working(struct efa_data_path_direct_sq *sq,
 
 	sq_desc_idx = (sq->wq.pc - 1) & sq->wq.desc_mask;
 
-	/* Copy 64-byte WQE using optimized MMIO copy */
 	mmio_memcpy_x64((struct efa_io_tx_wqe *)sq->desc + sq_desc_idx,
-			&sq->curr_tx_wqe, sizeof(struct efa_io_tx_wqe));
+                       &sq->curr_tx_wqe, sizeof(struct efa_io_tx_wqe));
 
 	/* this routine only rings the doorbell if it must. */
 	if (force_doorbell) {
