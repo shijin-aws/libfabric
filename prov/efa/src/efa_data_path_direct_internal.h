@@ -572,18 +572,13 @@ efa_data_path_direct_send_wr_post_working(struct efa_data_path_direct_sq *sq,
 {
 	struct efa_perf_timer timer;
 	uint32_t sq_desc_idx;
-	uint64_t *src, *dst;
 
 	EFA_PERF_TIMER_START(&timer, "wqe_copy");
 
 	sq_desc_idx = (sq->wq.pc - 1) & sq->wq.desc_mask;
-	src = (uint64_t *)&sq->curr_tx_wqe;
-	dst = (uint64_t *)((struct efa_io_tx_wqe *)sq->desc + sq_desc_idx);
 
-	/* Copy 64-byte WQE using 8 uint64_t stores */
-	for (int i = 0; i < 8; i++)
-		dst[i] = src[i];
-
+	mmio_memcpy_x64((struct efa_io_tx_wqe *)sq->desc + sq_desc_idx,
+                       &sq->curr_tx_wqe, sizeof(struct efa_io_tx_wqe));
 	EFA_PERF_TIMER_END(&timer);
 	EFA_PERF_TIMER_PRINT(&timer, "WQE_COPY");
 
