@@ -202,6 +202,8 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 
 	efa_tracepoint(send_begin_msg_context, (size_t) msg->context, (size_t) msg->addr);
 
+	EFA_PERF_TIMER_START(&timer, "efa_post_send");
+
 	EFA_DBG(FI_LOG_EP_DATA,
 		"total len: %zu, addr: %lu, context: %lx, flags: %lx\n",
 		ofi_total_iov_len(msg->msg_iov, msg->iov_count),
@@ -224,7 +226,7 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 	assert(len <= base_ep->info->ep_attr->max_msg_size);
 
 	ofi_genlock_lock(&base_ep->util_ep.lock);
-	EFA_PERF_TIMER_START(&timer, "efa_post_send");
+
 	if (!base_ep->is_wr_started) {
 		efa_qp_wr_start(qp);
 		base_ep->is_wr_started = true;
@@ -282,8 +284,6 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 
 	if (!(flags & FI_MORE)) {
 		ret = efa_qp_wr_complete(qp);
-		EFA_PERF_TIMER_END(&timer);
-		EFA_PERF_TIMER_PRINT(&timer, "SEND");
 		if (OFI_UNLIKELY(ret))
 			ret = (ret == ENOMEM) ? -FI_EAGAIN : -ret;
 		base_ep->is_wr_started = false;
@@ -291,6 +291,9 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 
 out_err:
 	ofi_genlock_unlock(&base_ep->util_ep.lock);
+
+	EFA_PERF_TIMER_END(&timer);
+	EFA_PERF_TIMER_PRINT(&timer, "SEND");
 	return ret;
 }
 
