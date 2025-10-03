@@ -193,11 +193,7 @@ static ssize_t efa_ep_recvv(struct fid_ep *ep_fid, const struct iovec *iov, void
 static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi_msg *msg, uint64_t flags)
 {
 	struct efa_perf_timer timer;
-	struct efa_qp *qp = base_ep->qp;
 	struct efa_conn *conn;
-	struct ibv_sge sg_list[2];  /* efa device support up to 2 iov */
-	struct ibv_data_buf inline_data_list[2];
-	size_t len, i;
 	int ret = 0;
 
 	efa_tracepoint(send_begin_msg_context, (size_t) msg->context, (size_t) msg->addr);
@@ -212,84 +208,20 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 	conn = efa_av_addr_to_conn(base_ep->av, msg->addr);
 	assert(conn && conn->ep_addr);
 
-	assert(msg->iov_count <= base_ep->info->tx_attr->iov_limit);
-
-	len = ofi_total_iov_len(msg->msg_iov, msg->iov_count);
-
-	if (qp->ibv_qp->qp_type == IBV_QPT_UD) {
-		assert(msg->msg_iov[0].iov_len >= base_ep->info->ep_attr->msg_prefix_size);
-		len -= base_ep->info->ep_attr->msg_prefix_size;
-	}
-
-	assert(len <= base_ep->info->ep_attr->max_msg_size);
-
-	ofi_genlock_lock(&base_ep->util_ep.lock);
-	EFA_PERF_TIMER_START(&timer, "efa_post_send");
-	if (!base_ep->is_wr_started) {
-		efa_qp_wr_start(qp);
-		base_ep->is_wr_started = true;
-	}
-
-	qp->ibv_qp_ex->wr_id = (uintptr_t) efa_fill_context(
-		msg->context, msg->addr, flags, FI_SEND | FI_MSG);
-
-	if (flags & FI_REMOTE_CQ_DATA) {
-		efa_qp_wr_send_imm(qp, msg->data);
-	} else {
-		efa_qp_wr_send(qp);
-	}
-
-	if (len <= base_ep->domain->device->efa_attr.inline_buf_size &&
-	    (!msg->desc || !efa_mr_is_hmem(msg->desc[0]))) {
-		for (i = 0; i < msg->iov_count; i++) {
-			inline_data_list[i].addr = msg->msg_iov[i].iov_base;
-			inline_data_list[i].length = msg->msg_iov[i].iov_len;
-
-			/* Whole prefix must be on the first sgl for dgram */
-			if (!i && qp->ibv_qp->qp_type == IBV_QPT_UD) {
-				inline_data_list[i].addr = (char*)inline_data_list[i].addr + base_ep->info->ep_attr->msg_prefix_size;
-				inline_data_list[i].length -= base_ep->info->ep_attr->msg_prefix_size;
-			}
-		}
-		efa_qp_wr_set_inline_data_list(qp, msg->iov_count, inline_data_list);
-	} else {
-		for (i = 0; i < msg->iov_count; i++) {
-			/* Set TX buffer desc from SGE */
-			if (OFI_UNLIKELY(!msg->desc || !msg->desc[i])) {
-				EFA_WARN(FI_LOG_EP_CTRL,
-					 "EFA direct requires FI_MR_LOCAL but "
-					 "application does not provide a valid desc\n");
-				ret = -FI_EINVAL;
-				goto out_err;
-			}
-			sg_list[i].lkey = ((struct efa_mr *)msg->desc[i])->ibv_mr->lkey;
-			sg_list[i].addr = (uintptr_t)msg->msg_iov[i].iov_base;
-			sg_list[i].length = msg->msg_iov[i].iov_len;
-
-			/* Whole prefix must be on the first sgl for dgram */
-			if (!i && qp->ibv_qp->qp_type == IBV_QPT_UD) {
-				sg_list[i].addr += base_ep->info->ep_attr->msg_prefix_size;
-				sg_list[i].length -= base_ep->info->ep_attr->msg_prefix_size;
-			}
-		}
-		efa_qp_wr_set_sge_list(qp, msg->iov_count, sg_list);
-	}
-
-	efa_qp_wr_set_ud_addr(qp, conn->ah, conn->ep_addr->qpn,
-			   conn->ep_addr->qkey);
+	ofi_genlock_lock(&base_ep->util_ep.lock);	
 
 	efa_tracepoint(post_send, qp->ibv_qp_ex->wr_id, (uintptr_t)msg->context);
+	EFA_PERF_TIMER_START(&timer, "efa_post_send");
 
-	if (!(flags & FI_MORE)) {
-		ret = efa_qp_wr_complete(qp);
-		EFA_PERF_TIMER_END(&timer);
-		EFA_PERF_TIMER_PRINT(&timer, "SEND");
-		if (OFI_UNLIKELY(ret))
-			ret = (ret == ENOMEM) ? -FI_EAGAIN : -ret;
-		base_ep->is_wr_started = false;
-	}
 
-out_err:
+	/* Use consolidated send function */
+	ret = efa_post_send_direct(base_ep, msg, flags, conn);
+	if (OFI_UNLIKELY(ret))
+		ret = (ret == ENOMEM) ? -FI_EAGAIN : -ret;
+
+	EFA_PERF_TIMER_END(&timer);
+	EFA_PERF_TIMER_PRINT(&timer, "SEND");
+
 	ofi_genlock_unlock(&base_ep->util_ep.lock);
 	return ret;
 }
