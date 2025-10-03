@@ -33,31 +33,66 @@ static inline uint64_t efa_rdtsc(void)
 #define WIN_SHIFT (13)  /* 8192 samples */
 #define WIN_MASK ((1 << WIN_SHIFT) - 1)
 
-/* Statistics tracking function */
+/* Statistics tracking function with separate counters per operation */
 static inline void efa_perf_timer_stats(uint64_t diff_cycles, const char *tag) {
-    static uint64_t total_cycles = 0;
-    static uint32_t sample_count = 0;
-    static uint64_t max_cycles = 0, min_cycles = 0xFFFFFFFFFFFFFFFFULL;
-    
     if (diff_cycles > 10000) {
         return;  /* Skip outliers */
     }
     
-    total_cycles += diff_cycles;
-    sample_count++;
-    
-    if (diff_cycles > max_cycles)
-        max_cycles = diff_cycles;
-    if (diff_cycles < min_cycles)
-        min_cycles = diff_cycles;
-    
-    if ((sample_count & WIN_MASK) == 0) {
-        uint64_t avg_cycles = total_cycles >> WIN_SHIFT;
-        printf("EFA %s Stats - %u samples: avg %lu cycles, min %lu, max %lu\n",
-               tag, sample_count, avg_cycles, min_cycles, max_cycles);
-        sample_count = 0;
-        total_cycles = max_cycles = 0;
-        min_cycles = 0xFFFFFFFFFFFFFFFFULL;
+    if (tag[0] == 'S') {  /* SEND */
+        static uint64_t send_total = 0;
+        static uint32_t send_count = 0;
+        static uint64_t send_max = 0, send_min = 0xFFFFFFFFFFFFFFFFULL;
+        
+        send_total += diff_cycles;
+        send_count++;
+        if (diff_cycles > send_max) send_max = diff_cycles;
+        if (diff_cycles < send_min) send_min = diff_cycles;
+        
+        if ((send_count & WIN_MASK) == 0) {
+            uint64_t avg = send_total >> WIN_SHIFT;
+            printf("EFA %s Stats - %u samples: avg %lu cycles, min %lu, max %lu\n",
+                   tag, send_count, avg, send_min, send_max);
+            send_count = 0;
+            send_total = send_max = 0;
+            send_min = 0xFFFFFFFFFFFFFFFFULL;
+        }
+    } else if (tag[0] == 'W' && tag[1] == 'R') {  /* WRITE */
+        static uint64_t write_total = 0;
+        static uint32_t write_count = 0;
+        static uint64_t write_max = 0, write_min = 0xFFFFFFFFFFFFFFFFULL;
+        
+        write_total += diff_cycles;
+        write_count++;
+        if (diff_cycles > write_max) write_max = diff_cycles;
+        if (diff_cycles < write_min) write_min = diff_cycles;
+        
+        if ((write_count & WIN_MASK) == 0) {
+            uint64_t avg = write_total >> WIN_SHIFT;
+            printf("EFA %s Stats - %u samples: avg %lu cycles, min %lu, max %lu\n",
+                   tag, write_count, avg, write_min, write_max);
+            write_count = 0;
+            write_total = write_max = 0;
+            write_min = 0xFFFFFFFFFFFFFFFFULL;
+        }
+    } else {  /* WQE_COPY */
+        static uint64_t wqe_total = 0;
+        static uint32_t wqe_count = 0;
+        static uint64_t wqe_max = 0, wqe_min = 0xFFFFFFFFFFFFFFFFULL;
+        
+        wqe_total += diff_cycles;
+        wqe_count++;
+        if (diff_cycles > wqe_max) wqe_max = diff_cycles;
+        if (diff_cycles < wqe_min) wqe_min = diff_cycles;
+        
+        if ((wqe_count & WIN_MASK) == 0) {
+            uint64_t avg = wqe_total >> WIN_SHIFT;
+            printf("EFA %s Stats - %u samples: avg %lu cycles, min %lu, max %lu\n",
+                   tag, wqe_count, avg, wqe_min, wqe_max);
+            wqe_count = 0;
+            wqe_total = wqe_max = 0;
+            wqe_min = 0xFFFFFFFFFFFFFFFFULL;
+        }
     }
 }
 

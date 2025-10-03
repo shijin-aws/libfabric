@@ -25,6 +25,7 @@
 #define _EFA_DATA_PATH_DIRECT_INTERNAL_H
 
 #include "config.h"
+#include "efa_perf_timer.h"
 
 #if HAVE_EFA_DATA_PATH_DIRECT
 
@@ -569,8 +570,11 @@ EFA_ALWAYS_INLINE void
 efa_data_path_direct_send_wr_post_working(struct efa_data_path_direct_sq *sq,
 					  bool force_doorbell)
 {
+	struct efa_perf_timer timer;
 	uint32_t sq_desc_idx;
 	uint64_t *src, *dst;
+
+	EFA_PERF_TIMER_START(&timer, "wqe_copy");
 
 	sq_desc_idx = (sq->wq.pc - 1) & sq->wq.desc_mask;
 	src = (uint64_t *)&sq->curr_tx_wqe;
@@ -585,6 +589,9 @@ efa_data_path_direct_send_wr_post_working(struct efa_data_path_direct_sq *sq,
 	dst[5] = src[5];
 	dst[6] = src[6];
 	dst[7] = src[7];
+
+	EFA_PERF_TIMER_END(&timer);
+	EFA_PERF_TIMER_PRINT(&timer, "WQE_COPY");
 
 	/* this routine only rings the doorbell if it must. */
 	if (force_doorbell) {
