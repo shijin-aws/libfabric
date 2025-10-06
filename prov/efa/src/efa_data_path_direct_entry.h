@@ -613,5 +613,250 @@ static inline int efa_data_path_direct_req_notify_cq(struct efa_ibv_cq *ibv_cq,
 	return 0;
 }
 
+/**
+ * @brief Consolidated send operation - builds WQE as stack variable and posts directly
+ * @param qp EFA queue pair
+ * @param sge_list Pre-prepared SGE list (used when use_inline=false)
+ * @param inline_data_list Pre-prepared inline data list (used when use_inline=true)
+ * @param data_count Number of SGE entries or inline data buffers
+ * @param use_inline True to use inline data, false to use SGE list
+ * @param wr_id Work request ID (pre-prepared by caller)
+ * @param data Immediate data (used when FI_REMOTE_CQ_DATA flag is set)
+ * @param flags Operation flags
+ * @param conn Connection information
+ */
+static inline int
+efa_data_path_direct_post_send(struct efa_qp *qp,
+                     const struct ibv_sge *sge_list,
+                     const struct ibv_data_buf *inline_data_list,
+                     size_t data_count,
+                     bool use_inline,
+                     uintptr_t wr_id,
+                     uint64_t data,
+                     uint64_t flags,
+                     struct efa_conn *conn)
+{
+    struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
+    struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
+    struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
+    uint32_t sq_desc_idx;
+    struct efa_io_tx_wqe *wc_wqe;
+    uint32_t total_length = 0;
+    size_t i;
+    int err;
+
+    /* Validate queue space */
+    err = efa_post_send_validate(qp);
+    if (OFI_UNLIKELY(err))
+        return err;
+
+    /* Set work request ID */
+    qp->ibv_qp_ex->wr_id = wr_id;
+
+    /* Build metadata in local stack variable */
+    meta_desc->dest_qp_num = conn->ep_addr->qpn;
+    meta_desc->ah = conn->ah->ahn;
+    meta_desc->qkey = conn->ep_addr->qkey;
+    meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
+
+    /* Set common control flags */
+    efa_set_common_ctrl_flags(meta_desc, sq, EFA_IO_SEND);
+    if (flags & FI_REMOTE_CQ_DATA) {
+        EFA_SET(&meta_desc->ctrl1, EFA_IO_TX_META_DESC_HAS_IMM, 1);
+        meta_desc->immediate_data = data;
+    }
+
+    /* Handle inline data or SGE list */
+    if (use_inline) {
+        /* Inline data path - caller has prepared inline_data_list */
+        EFA_SET(&meta_desc->ctrl1, EFA_IO_TX_META_DESC_INLINE_MSG, 1);
+        for (i = 0; i < data_count; i++) {
+            memcpy(local_wqe.data.inline_data + total_length, 
+                   inline_data_list[i].addr, inline_data_list[i].length);
+            total_length += inline_data_list[i].length;
+        }
+        meta_desc->length = total_length;
+    } else {
+        /* SGE list path - caller has prepared sge_list */
+        efa_post_send_sgl(local_wqe.data.sgl, sge_list, data_count);
+        meta_desc->length = data_count;
+    }
+
+    /* Calculate target address in write-combined memory */
+    sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
+    wc_wqe = (struct efa_io_tx_wqe *)sq->desc + sq_desc_idx;
+
+    /* Copy complete WQE to write-combined memory in one operation */
+    mmio_memcpy_x64(wc_wqe, &local_wqe, sizeof(struct efa_io_tx_wqe));
+
+    /* Update queue state */
+    efa_sq_advance_post_idx(sq);
+
+    /* Ring doorbell if required */
+    if (!(flags & FI_MORE)) {
+        mmio_flush_writes();
+        efa_sq_ring_doorbell(sq, sq->wq.pc);
+        mmio_wc_start();
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Consolidated RDMA read operation - builds WQE as stack variable and posts directly
+ * @param qp EFA queue pair
+ * @param sge_list Pre-prepared SGE list for local buffers
+ * @param sge_count Number of SGE entries
+ * @param remote_key Remote memory key
+ * @param remote_addr Remote memory address
+ * @param wr_id Work request ID (pre-prepared by caller)
+ * @param flags Operation flags
+ * @param conn Connection information
+ */
+static inline int
+efa_data_path_direct_post_read(struct efa_qp *qp,
+                          const struct ibv_sge *sge_list,
+                          size_t sge_count,
+                          uint32_t remote_key,
+                          uint64_t remote_addr,
+                          uintptr_t wr_id,
+                          uint64_t flags,
+                          struct efa_conn *conn)
+{
+    struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
+    struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
+    struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
+    struct efa_io_remote_mem_addr *remote_mem = &local_wqe.data.rdma_req.remote_mem;
+    uint32_t sq_desc_idx;
+    struct efa_io_tx_wqe *wc_wqe;
+    int err;
+
+    /* Validate queue space */
+    err = efa_post_send_validate(qp);
+    if (OFI_UNLIKELY(err))
+        return err;
+
+    /* Set work request ID */
+    qp->ibv_qp_ex->wr_id = wr_id;
+
+    /* Build metadata in local stack variable */
+    meta_desc->dest_qp_num = conn->ep_addr->qpn;
+    meta_desc->ah = conn->ah->ahn;
+    meta_desc->qkey = conn->ep_addr->qkey;
+    meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
+
+    /* Set common control flags for RDMA READ */
+    efa_set_common_ctrl_flags(meta_desc, sq, EFA_IO_RDMA_READ);
+
+    /* Set remote memory information */
+    remote_mem->rkey = remote_key;
+    remote_mem->buf_addr_lo = remote_addr & 0xFFFFFFFF;
+    remote_mem->buf_addr_hi = remote_addr >> 32;
+
+    /* Set local SGE list - caller has prepared sge_list */
+    efa_post_send_sgl(local_wqe.data.sgl, sge_list, sge_count);
+    meta_desc->length = sge_count;
+
+    /* Calculate target address in write-combined memory */
+    sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
+    wc_wqe = (struct efa_io_tx_wqe *)sq->desc + sq_desc_idx;
+
+    /* Copy complete WQE to write-combined memory in one operation */
+    mmio_memcpy_x64(wc_wqe, &local_wqe, sizeof(struct efa_io_tx_wqe));
+
+    /* Update queue state */
+    efa_sq_advance_post_idx(sq);
+
+    /* Ring doorbell if required */
+    if (!(flags & FI_MORE)) {
+        mmio_flush_writes();
+        efa_sq_ring_doorbell(sq, sq->wq.pc);
+        mmio_wc_start();
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Consolidated RDMA write operation - builds WQE as stack variable and posts directly
+ * @param qp EFA queue pair
+ * @param sge_list Pre-prepared SGE list for local buffers
+ * @param sge_count Number of SGE entries
+ * @param remote_key Remote memory key
+ * @param remote_addr Remote memory address
+ * @param wr_id Work request ID (pre-prepared by caller)
+ * @param data Immediate data (used when FI_REMOTE_CQ_DATA flag is set)
+ * @param flags Operation flags
+ * @param conn Connection information
+ */
+static inline int
+efa_data_path_direct_post_write(struct efa_qp *qp,
+                           const struct ibv_sge *sge_list,
+                           size_t sge_count,
+                           uint32_t remote_key,
+                           uint64_t remote_addr,
+                           uintptr_t wr_id,
+                           uint64_t data,
+                           uint64_t flags,
+                           struct efa_conn *conn)
+{
+    struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
+    struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
+    struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
+    struct efa_io_remote_mem_addr *remote_mem = &local_wqe.data.rdma_req.remote_mem;
+    uint32_t sq_desc_idx;
+    struct efa_io_tx_wqe *wc_wqe;
+    int err;
+
+    /* Validate queue space */
+    err = efa_post_send_validate(qp);
+    if (OFI_UNLIKELY(err))
+        return err;
+
+    /* Set work request ID */
+    qp->ibv_qp_ex->wr_id = wr_id;
+
+    /* Build metadata in local stack variable */
+    meta_desc->dest_qp_num = conn->ep_addr->qpn;
+    meta_desc->ah = conn->ah->ahn;
+    meta_desc->qkey = conn->ep_addr->qkey;
+    meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
+
+    /* Set common control flags for RDMA WRITE */
+    efa_set_common_ctrl_flags(meta_desc, sq, EFA_IO_RDMA_WRITE);
+    if (flags & FI_REMOTE_CQ_DATA) {
+        EFA_SET(&meta_desc->ctrl1, EFA_IO_TX_META_DESC_HAS_IMM, 1);
+        meta_desc->immediate_data = data;
+    }
+
+    /* Set remote memory information */
+    remote_mem->rkey = remote_key;
+    remote_mem->buf_addr_lo = remote_addr & 0xFFFFFFFF;
+    remote_mem->buf_addr_hi = remote_addr >> 32;
+
+    /* Set local SGE list - caller has prepared sge_list */
+    efa_post_send_sgl(local_wqe.data.sgl, sge_list, sge_count);
+    meta_desc->length = sge_count;
+
+    /* Calculate target address in write-combined memory */
+    sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
+    wc_wqe = (struct efa_io_tx_wqe *)sq->desc + sq_desc_idx;
+
+    /* Copy complete WQE to write-combined memory in one operation */
+    mmio_memcpy_x64(wc_wqe, &local_wqe, sizeof(struct efa_io_tx_wqe));
+
+    /* Update queue state */
+    efa_sq_advance_post_idx(sq);
+
+    /* Ring doorbell if required */
+    if (!(flags & FI_MORE)) {
+        mmio_flush_writes();
+        efa_sq_ring_doorbell(sq, sq->wq.pc);
+        mmio_wc_start();
+    }
+
+    return 0;
+}
+
 #endif /* HAVE_EFA_DATA_PATH_DIRECT */
 #endif /* _EFA_DATA_PATH_DIRECT_ENTRY_H */
