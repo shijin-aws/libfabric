@@ -266,9 +266,13 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 		}
 	}
 
+	/* Prepare work request ID */
+	uintptr_t wr_id = (uintptr_t) efa_fill_context(
+		msg->context, msg->addr, flags, FI_SEND | FI_MSG);
+
 	/* Use consolidated send function */
 	ret = efa_post_send_direct(base_ep, sg_list, inline_data_list, msg->iov_count,
-				   use_inline, msg->addr, msg->context, msg->data, flags, conn);
+				   use_inline, wr_id, msg->data, flags, conn);
 	if (OFI_UNLIKELY(ret))
 		ret = (ret == ENOMEM) ? -FI_EAGAIN : -ret;
 
