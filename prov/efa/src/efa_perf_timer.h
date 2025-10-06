@@ -8,7 +8,7 @@
 #include <stdio.h>
 
 /* Enable/disable performance timing - set to 1 to enable */
-#define EFA_PERF_TIMING_ENABLED 1
+#define EFA_PERF_TIMING_ENABLED 0
 
 #if EFA_PERF_TIMING_ENABLED
 
