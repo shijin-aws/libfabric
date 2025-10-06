@@ -571,12 +571,15 @@ efa_data_path_direct_send_wr_post_working(struct efa_data_path_direct_sq *sq,
 					  bool force_doorbell)
 {
 	uint32_t sq_desc_idx;
+	uint64_t *src, *dst;
 
 	sq_desc_idx = (sq->wq.pc - 1) & sq->wq.desc_mask;
+	src = (uint64_t *)&sq->curr_tx_wqe;
+	dst = (uint64_t *)((struct efa_io_tx_wqe *)sq->desc + sq_desc_idx);
 
-	/* Copy 64-byte WQE using optimized MMIO copy */
-	mmio_memcpy_x64((struct efa_io_tx_wqe *)sq->desc + sq_desc_idx,
-			&sq->curr_tx_wqe, sizeof(struct efa_io_tx_wqe));
+	/* Copy 64-byte WQE using 8 uint64_t stores */
+	for (int i = 0; i < 8; i++)
+		dst[i] = src[i];
 
 	/* this routine only rings the doorbell if it must. */
 	if (force_doorbell) {
