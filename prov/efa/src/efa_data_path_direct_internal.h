@@ -544,23 +544,17 @@ EFA_ALWAYS_INLINE void efa_sq_advance_post_idx(struct efa_data_path_direct_sq *s
 		wq->phase++;
 }
 
-EFA_ALWAYS_INLINE void efa_send_wr_set_imm_data(struct efa_io_tx_wqe *tx_wqe,
+EFA_ALWAYS_INLINE void efa_send_wr_set_imm_data(struct efa_io_tx_meta_desc *meta_desc,
 					     __be32 imm_data)
 {
-	struct efa_io_tx_meta_desc *meta_desc;
-
-	meta_desc = &tx_wqe->meta;
 	meta_desc->immediate_data = be32toh(imm_data);
 	EFA_SET(&meta_desc->ctrl1, EFA_IO_TX_META_DESC_HAS_IMM, 1);
 }
 
-EFA_ALWAYS_INLINE void efa_send_wr_set_rdma_addr(struct efa_io_tx_wqe *tx_wqe,
+EFA_ALWAYS_INLINE void efa_send_wr_set_rdma_addr(struct efa_io_remote_mem_addr *remote_mem,
 					      uint32_t rkey,
 					      uint64_t remote_addr)
 {
-	struct efa_io_remote_mem_addr *remote_mem;
-
-	remote_mem = &tx_wqe->data.rdma_req.remote_mem;
 	remote_mem->rkey = rkey;
 	remote_mem->buf_addr_lo = remote_addr & 0xFFFFFFFF;
 	remote_mem->buf_addr_hi = remote_addr >> 32;
