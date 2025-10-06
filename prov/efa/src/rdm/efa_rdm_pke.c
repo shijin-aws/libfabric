@@ -402,7 +402,6 @@ void efa_rdm_pke_append(struct efa_rdm_pke *dst,
 ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 			  int pkt_entry_cnt, uint64_t flags)
 {
-	struct efa_qp *qp;
 	struct efa_conn *conn;
 	struct efa_rdm_ep *ep;
 	struct efa_rdm_pke *pkt_entry;
@@ -424,24 +423,10 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 	conn = pkt_entry_vec[0]->peer->conn;
 	assert(conn && conn->ep_addr);
 
-	qp = ep->base_ep.qp;
-	if (!ep->base_ep.is_wr_started) {
-		efa_qp_wr_start(qp);
-		ep->base_ep.is_wr_started = true;
-	}
 	for (pkt_idx = 0; pkt_idx < pkt_entry_cnt; ++pkt_idx) {
 		pkt_entry = pkt_entry_vec[pkt_idx];
 		assert(pkt_entry->peer == peer);
 
-		qp->ibv_qp_ex->wr_id = (uintptr_t)pkt_entry;
-		if ((pkt_entry->ope->fi_flags & FI_REMOTE_CQ_DATA) &&
-		    (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP)) {
-			/* Currently this is only expected for eager pkts */
-			assert(pkt_entry_cnt == 1);
-			efa_qp_wr_send_imm(qp, pkt_entry->ope->cq_entry.data);
-		} else {
-			efa_qp_wr_send(qp);
-		}
 		if (pkt_entry->pkt_size <= efa_rdm_ep_domain(ep)->device->efa_attr.inline_buf_size &&
 	            !efa_mr_is_hmem((struct efa_mr *)pkt_entry->payload_mr)) {
 			iov_cnt = 1;
@@ -453,7 +438,12 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 				inline_data_list[1].length = pkt_entry->payload_size;
 			}
 
-			efa_qp_wr_set_inline_data_list(qp, iov_cnt, inline_data_list);
+			ret = efa_qp_post_send(&ep->base_ep, NULL, inline_data_list, iov_cnt, true,
+					       (uintptr_t)pkt_entry,
+					       (pkt_entry->ope->fi_flags & FI_REMOTE_CQ_DATA) ? pkt_entry->ope->cq_entry.data : 0,
+					       flags, conn->ah,
+					       (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP) ? peer->user_recv_qp.qpn : conn->ep_addr->qpn,
+					       (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP) ? peer->user_recv_qp.qkey : conn->ep_addr->qkey);
 		} else {
 			iov_cnt = 1;
 			sg_list[0].addr = (uintptr_t)pkt_entry->wiredata;
@@ -466,17 +456,16 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 				sg_list[1].lkey = ((struct efa_mr *)pkt_entry->payload_mr)->ibv_mr->lkey;
 			}
 
-			efa_qp_wr_set_sge_list(qp, iov_cnt, sg_list);
+			ret = efa_qp_post_send(&ep->base_ep, sg_list, NULL, iov_cnt, false,
+					       (uintptr_t)pkt_entry,
+					       (pkt_entry->ope->fi_flags & FI_REMOTE_CQ_DATA) ? pkt_entry->ope->cq_entry.data : 0,
+					       flags, conn->ah,
+					       (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP) ? peer->user_recv_qp.qpn : conn->ep_addr->qpn,
+					       (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP) ? peer->user_recv_qp.qkey : conn->ep_addr->qkey);
 		}
 
-		if (pkt_entry->flags & EFA_RDM_PKE_SEND_TO_USER_RECV_QP) {
-			assert(peer->extra_info[0] & EFA_RDM_EXTRA_FEATURE_REQUEST_USER_RECV_QP);
-			efa_qp_wr_set_ud_addr(qp, conn->ah,
-				   peer->user_recv_qp.qpn, peer->user_recv_qp.qkey);
-		} else {
-			efa_qp_wr_set_ud_addr(qp, conn->ah,
-				   conn->ep_addr->qpn, conn->ep_addr->qkey);
-		}
+		if (OFI_UNLIKELY(ret))
+			break;
 
 #if ENABLE_DEBUG
 		dlist_insert_tail(&pkt_entry->dbg_entry, &ep->tx_pkt_list);
@@ -488,11 +477,6 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 #if HAVE_LTTNG
 		efa_rdm_tracepoint_wr_id_post_send((void *)pkt_entry);
 #endif
-	}
-
-	if (!(flags & FI_MORE)) {
-		ret = efa_qp_wr_complete(qp);
-		ep->base_ep.is_wr_started = false;
 	}
 
 	if (OFI_UNLIKELY(ret)) {
@@ -523,8 +507,6 @@ int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 		     uint64_t remote_buf, size_t remote_key)
 {
 	struct efa_rdm_ep *ep;
-	struct efa_qp *qp;
-	struct efa_conn *conn;
 	struct ibv_sge sge;
 	struct efa_rdm_ope *txe;
 	int err = 0;
@@ -536,28 +518,19 @@ int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 	if (txe->peer == NULL)
 		pkt_entry->flags |= EFA_RDM_PKE_LOCAL_READ;
 
-	qp = ep->base_ep.qp;
-	efa_qp_wr_start(qp);
-	qp->ibv_qp_ex->wr_id = (uintptr_t)pkt_entry;
-	efa_qp_wr_rdma_read(qp, remote_key, remote_buf);
-
 	sge.addr = (uint64_t)local_buf;
 	sge.length = len;
 	sge.lkey = ((struct efa_mr *)desc)->ibv_mr->lkey;
 
-	efa_qp_wr_set_sge_list(qp, 1, &sge);
-	if (txe->peer == NULL) {
-		efa_qp_wr_set_ud_addr(qp, ep->base_ep.self_ah,
-				   qp->qp_num, qp->qkey);
-	} else {
-		conn = pkt_entry->peer->conn;
-		assert(conn && conn->ep_addr);
-		efa_qp_wr_set_ud_addr(qp, conn->ah,
-				   conn->ep_addr->qpn, conn->ep_addr->qkey);
-	}
+	err = efa_qp_post_read(&ep->base_ep, &sge, 1, remote_key, remote_buf,
+			       (uintptr_t)pkt_entry, 0,
+			       (txe->peer == NULL) ? ep->base_ep.self_ah : pkt_entry->peer->conn->ah,
+			       (txe->peer == NULL) ? ep->base_ep.qp->qp_num : pkt_entry->peer->conn->ep_addr->qpn,
+			       (txe->peer == NULL) ? ep->base_ep.qp->qkey : pkt_entry->peer->conn->ep_addr->qkey);
 
 #if ENABLE_DEBUG
-	dlist_insert_tail(&pkt_entry->dbg_entry, &ep->tx_pkt_list);
+	if (!err)
+		dlist_insert_tail(&pkt_entry->dbg_entry, &ep->tx_pkt_list);
 #ifdef ENABLE_EFA_RDM_PKE_DUMP
 	EFA_DBG(FI_LOG_EP_DATA,
 		"Posted RDMA read length: %ld local buf: %ld local key: %d "
@@ -568,10 +541,9 @@ int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 #endif
 
 #if HAVE_LTTNG
-	efa_rdm_tracepoint_wr_id_post_read((void *)pkt_entry);
+	if (!err)
+		efa_rdm_tracepoint_wr_id_post_read((void *)pkt_entry);
 #endif
-
-	err = efa_qp_wr_complete(qp);
 
 	if (OFI_UNLIKELY(err))
 		return (err == ENOMEM) ? -FI_EAGAIN : -err;
@@ -594,8 +566,6 @@ int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 int efa_rdm_pke_write(struct efa_rdm_pke *pkt_entry)
 {
 	struct efa_rdm_ep *ep;
-	struct efa_qp *qp;
-	struct efa_conn *conn;
 	struct ibv_sge sge;
 	struct efa_rdm_rma_context_pkt *rma_context_pkt;
 	struct efa_rdm_ope *txe;
@@ -624,52 +594,26 @@ int efa_rdm_pke_write(struct efa_rdm_pke *pkt_entry)
 	if (self_comm)
 		pkt_entry->flags |= EFA_RDM_PKE_LOCAL_WRITE;
 
-	qp = ep->base_ep.qp;
-	if (!ep->base_ep.is_wr_started) {
-		efa_qp_wr_start(qp);
-		ep->base_ep.is_wr_started = true;
-	}
-	qp->ibv_qp_ex->wr_id = (uintptr_t)pkt_entry;
-
-	if (txe->fi_flags & FI_REMOTE_CQ_DATA) {
-		/* assert that we are sending the entire buffer as a
-			   single IOV when immediate data is also included. */
-		assert(len == txe->bytes_write_total_len);
-		efa_qp_wr_rdma_write_imm(qp, remote_key, remote_buf,
-				      txe->cq_entry.data);
-	} else {
-		efa_qp_wr_rdma_write(qp, remote_key, remote_buf);
-	}
-
 	sge.addr = (uint64_t)local_buf;
 	sge.length = len;
 	sge.lkey = ((struct efa_mr *)desc)->ibv_mr->lkey;
 
-	/* As an optimization, we should consider implementing multiple-
-		   iov writes using an IBV wr with multiple sge entries.
-		   For now, each WR contains only one sge. */
-	efa_qp_wr_set_sge_list(qp, 1, &sge);
-	if (self_comm) {
-		efa_qp_wr_set_ud_addr(qp, ep->base_ep.self_ah,
-				   qp->qp_num, qp->qkey);
-	} else {
-		conn = pkt_entry->peer->conn;
-		assert(conn && conn->ep_addr);
-		efa_qp_wr_set_ud_addr(qp, conn->ah,
-				   conn->ep_addr->qpn, conn->ep_addr->qkey);
-	}
+	err = efa_qp_post_write(&ep->base_ep, &sge, 1, remote_key, remote_buf,
+				(uintptr_t)pkt_entry,
+				(txe->fi_flags & FI_REMOTE_CQ_DATA) ? txe->cq_entry.data : 0,
+				txe->fi_flags,
+				(self_comm) ? ep->base_ep.self_ah : pkt_entry->peer->conn->ah,
+				(self_comm) ? ep->base_ep.qp->qp_num : pkt_entry->peer->conn->ep_addr->qpn,
+				(self_comm) ? ep->base_ep.qp->qkey : pkt_entry->peer->conn->ep_addr->qkey);
 
 #if ENABLE_DEBUG
-	dlist_insert_tail(&pkt_entry->dbg_entry, &ep->tx_pkt_list);
+	if (!err)
+		dlist_insert_tail(&pkt_entry->dbg_entry, &ep->tx_pkt_list);
 #endif
 #if HAVE_LTTNG
-	efa_rdm_tracepoint_wr_id_post_write((void *)pkt_entry);
+	if (!err)
+		efa_rdm_tracepoint_wr_id_post_write((void *)pkt_entry);
 #endif
-
-	if (!(txe->fi_flags & FI_MORE)) {
-		err = efa_qp_wr_complete(qp);
-		ep->base_ep.is_wr_started = false;
-	}
 
 	if (OFI_UNLIKELY(err))
 		return (err == ENOMEM) ? -FI_EAGAIN : -err;

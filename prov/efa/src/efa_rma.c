@@ -92,7 +92,8 @@ static inline ssize_t efa_rma_post_read(struct efa_base_ep *base_ep,
 	/* ep->domain->info->tx_attr->rma_iov_limit is set to 1 */
 	err = efa_qp_post_read(base_ep, sge_list, msg->iov_count,
 			       msg->rma_iov[0].key, msg->rma_iov[0].addr,
-			       wr_id, flags, conn);
+			       wr_id, flags,
+			       conn->ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
 	if (OFI_UNLIKELY(err))
 		err = (err == ENOMEM) ? -FI_EAGAIN : -err;
 
@@ -231,7 +232,8 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 	/* Use consolidated RDMA write function */
 	err = efa_qp_post_write(base_ep, sge_list, msg->iov_count,
 				msg->rma_iov[0].key, msg->rma_iov[0].addr,
-				wr_id, msg->data, flags, conn);
+				wr_id, msg->data, flags,
+				conn->ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
 	EFA_PERF_TIMER_END(&timer);
 	EFA_PERF_TIMER_PRINT(&timer, "WRITE");
 	if (OFI_UNLIKELY(err))
