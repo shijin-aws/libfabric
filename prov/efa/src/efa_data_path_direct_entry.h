@@ -623,7 +623,9 @@ static inline int efa_data_path_direct_req_notify_cq(struct efa_ibv_cq *ibv_cq,
  * @param wr_id Work request ID (pre-prepared by caller)
  * @param data Immediate data (used when FI_REMOTE_CQ_DATA flag is set)
  * @param flags Operation flags
- * @param conn Connection information
+ * @param ah Address handle
+ * @param qpn Remote queue pair number
+ * @param qkey Remote queue key
  */
 static inline int
 efa_data_path_direct_post_send(struct efa_qp *qp,
@@ -634,7 +636,9 @@ efa_data_path_direct_post_send(struct efa_qp *qp,
                      uintptr_t wr_id,
                      uint64_t data,
                      uint64_t flags,
-                     struct efa_conn *conn)
+                     struct efa_ah *ah,
+                     uint32_t qpn,
+                     uint32_t qkey)
 {
     struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
     struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
@@ -654,9 +658,9 @@ efa_data_path_direct_post_send(struct efa_qp *qp,
     qp->ibv_qp_ex->wr_id = wr_id;
 
     /* Build metadata in local stack variable */
-    meta_desc->dest_qp_num = conn->ep_addr->qpn;
-    meta_desc->ah = conn->ah->ahn;
-    meta_desc->qkey = conn->ep_addr->qkey;
+    meta_desc->dest_qp_num = qpn;
+    meta_desc->ah = ah->ahn;
+    meta_desc->qkey = qkey;
     meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
 
     /* Set common control flags */
@@ -710,7 +714,9 @@ efa_data_path_direct_post_send(struct efa_qp *qp,
  * @param remote_addr Remote memory address
  * @param wr_id Work request ID (pre-prepared by caller)
  * @param flags Operation flags
- * @param conn Connection information
+ * @param ah Address handle
+ * @param qpn Remote queue pair number
+ * @param qkey Remote queue key
  */
 static inline int
 efa_data_path_direct_post_read(struct efa_qp *qp,
@@ -720,7 +726,9 @@ efa_data_path_direct_post_read(struct efa_qp *qp,
                           uint64_t remote_addr,
                           uintptr_t wr_id,
                           uint64_t flags,
-                          struct efa_conn *conn)
+                          struct efa_ah *ah,
+                          uint32_t qpn,
+                          uint32_t qkey)
 {
     struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
     struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
@@ -739,9 +747,9 @@ efa_data_path_direct_post_read(struct efa_qp *qp,
     qp->ibv_qp_ex->wr_id = wr_id;
 
     /* Build metadata in local stack variable */
-    meta_desc->dest_qp_num = conn->ep_addr->qpn;
-    meta_desc->ah = conn->ah->ahn;
-    meta_desc->qkey = conn->ep_addr->qkey;
+    meta_desc->dest_qp_num = qpn;
+    meta_desc->ah = ah->ahn;
+    meta_desc->qkey = qkey;
     meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
 
     /* Set common control flags for RDMA READ */
@@ -785,7 +793,9 @@ efa_data_path_direct_post_read(struct efa_qp *qp,
  * @param wr_id Work request ID (pre-prepared by caller)
  * @param data Immediate data (used when FI_REMOTE_CQ_DATA flag is set)
  * @param flags Operation flags
- * @param conn Connection information
+ * @param ah Address handle
+ * @param qpn Remote queue pair number
+ * @param qkey Remote queue key
  */
 static inline int
 efa_data_path_direct_post_write(struct efa_qp *qp,
@@ -796,7 +806,9 @@ efa_data_path_direct_post_write(struct efa_qp *qp,
                            uintptr_t wr_id,
                            uint64_t data,
                            uint64_t flags,
-                           struct efa_conn *conn)
+                           struct efa_ah *ah,
+                           uint32_t qpn,
+                           uint32_t qkey)
 {
     struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
     struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
@@ -815,9 +827,9 @@ efa_data_path_direct_post_write(struct efa_qp *qp,
     qp->ibv_qp_ex->wr_id = wr_id;
 
     /* Build metadata in local stack variable */
-    meta_desc->dest_qp_num = conn->ep_addr->qpn;
-    meta_desc->ah = conn->ah->ahn;
-    meta_desc->qkey = conn->ep_addr->qkey;
+    meta_desc->dest_qp_num = qpn;
+    meta_desc->ah = ah->ahn;
+    meta_desc->qkey = qkey;
     meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
 
     /* Set common control flags for RDMA WRITE */

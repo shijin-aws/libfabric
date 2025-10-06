@@ -46,7 +46,9 @@ efa_ibv_post_send(struct efa_qp *qp,
                   uintptr_t wr_id,
                   uint64_t data,
                   uint64_t flags,
-                  struct efa_conn *conn)
+                  struct efa_ah *ah,
+                  uint32_t qpn,
+                  uint32_t qkey)
 {
     struct efa_base_ep *base_ep = qp->base_ep;
     int ret;
@@ -70,7 +72,7 @@ efa_ibv_post_send(struct efa_qp *qp,
         ibv_wr_set_sge_list(qp->ibv_qp_ex, data_count, sge_list);
     }
 
-    ibv_wr_set_ud_addr(qp->ibv_qp_ex, conn->ah->ibv_ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
+    ibv_wr_set_ud_addr(qp->ibv_qp_ex, ah->ibv_ah, qpn, qkey);
 
     if (!(flags & FI_MORE)) {
         ret = ibv_wr_complete(qp->ibv_qp_ex);
@@ -92,7 +94,9 @@ efa_ibv_post_read(struct efa_qp *qp,
                        uint64_t remote_addr,
                        uintptr_t wr_id,
                        uint64_t flags,
-                       struct efa_conn *conn)
+                       struct efa_ah *ah,
+                       uint32_t qpn,
+                       uint32_t qkey)
 {
     struct efa_base_ep *base_ep = qp->base_ep;
     int ret;
@@ -105,7 +109,7 @@ efa_ibv_post_read(struct efa_qp *qp,
     qp->ibv_qp_ex->wr_id = wr_id;
     ibv_wr_rdma_read(qp->ibv_qp_ex, remote_key, remote_addr);
     ibv_wr_set_sge_list(qp->ibv_qp_ex, sge_count, sge_list);
-    ibv_wr_set_ud_addr(qp->ibv_qp_ex, conn->ah->ibv_ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
+    ibv_wr_set_ud_addr(qp->ibv_qp_ex, ah->ibv_ah, qpn, qkey);
 
     if (!(flags & FI_MORE)) {
         ret = ibv_wr_complete(qp->ibv_qp_ex);
@@ -128,7 +132,9 @@ efa_ibv_post_write(struct efa_qp *qp,
                         uintptr_t wr_id,
                         uint64_t data,
                         uint64_t flags,
-                        struct efa_conn *conn)
+                        struct efa_ah *ah,
+                        uint32_t qpn,
+                        uint32_t qkey)
 {
     struct efa_base_ep *base_ep = qp->base_ep;
     int ret;
@@ -147,7 +153,7 @@ efa_ibv_post_write(struct efa_qp *qp,
     }
 
     ibv_wr_set_sge_list(qp->ibv_qp_ex, sge_count, sge_list);
-    ibv_wr_set_ud_addr(qp->ibv_qp_ex, conn->ah->ibv_ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
+    ibv_wr_set_ud_addr(qp->ibv_qp_ex, ah->ibv_ah, qpn, qkey);
 
     if (!(flags & FI_MORE)) {
         ret = ibv_wr_complete(qp->ibv_qp_ex);
@@ -174,14 +180,13 @@ efa_qp_post_send(struct efa_qp *qp,
                  uint32_t qpn,
                  uint32_t qkey)
 {
-    struct efa_conn conn = {.ah = ah, .ep_addr = &(struct efa_ep_addr){.qpn = qpn, .qkey = qkey}};
 #if HAVE_EFA_DATA_PATH_DIRECT
     if (qp->data_path_direct_enabled)
         return efa_data_path_direct_post_send(qp, sge_list, inline_data_list, data_count,
-                                   use_inline, wr_id, data, flags, &conn);
+                                   use_inline, wr_id, data, flags, ah, qpn, qkey);
 #endif
     return efa_ibv_post_send(qp, sge_list, inline_data_list, data_count,
-                            use_inline, wr_id, data, flags, &conn);
+                            use_inline, wr_id, data, flags, ah, qpn, qkey);
 }
 
 /**
@@ -199,14 +204,13 @@ efa_qp_post_read(struct efa_qp *qp,
                  uint32_t qpn,
                  uint32_t qkey)
 {
-    struct efa_conn conn = {.ah = ah, .ep_addr = &(struct efa_ep_addr){.qpn = qpn, .qkey = qkey}};
 #if HAVE_EFA_DATA_PATH_DIRECT
     if (qp->data_path_direct_enabled)
         return efa_data_path_direct_post_read(qp, sge_list, sge_count,
-                                        remote_key, remote_addr, wr_id, flags, &conn);
+                                        remote_key, remote_addr, wr_id, flags, ah, qpn, qkey);
 #endif
     return efa_ibv_post_read(qp, sge_list, sge_count,
-                                 remote_key, remote_addr, wr_id, flags, &conn);
+                                 remote_key, remote_addr, wr_id, flags, ah, qpn, qkey);
 }
 
 /**
@@ -225,14 +229,13 @@ efa_qp_post_write(struct efa_qp *qp,
                   uint32_t qpn,
                   uint32_t qkey)
 {
-    struct efa_conn conn = {.ah = ah, .ep_addr = &(struct efa_ep_addr){.qpn = qpn, .qkey = qkey}};
 #if HAVE_EFA_DATA_PATH_DIRECT
     if (qp->data_path_direct_enabled)
         return efa_data_path_direct_post_write(qp, sge_list, sge_count,
-                                         remote_key, remote_addr, wr_id, data, flags, &conn);
+                                         remote_key, remote_addr, wr_id, data, flags, ah, qpn, qkey);
 #endif
     return efa_ibv_post_write(qp, sge_list, sge_count,
-                                  remote_key, remote_addr, wr_id, data, flags, &conn);
+                                  remote_key, remote_addr, wr_id, data, flags, ah, qpn, qkey);
 }
 
 #endif
