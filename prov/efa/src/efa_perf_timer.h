@@ -134,10 +134,13 @@ struct efa_perf_timer {
         efa_perf_timer_stats(cycles, (timer)->operation_name); \
     } while (0)
 
+#define EFA_PERF_TIMER_DECLARE(timer) struct efa_perf_timer timer
+
 #else /* EFA_PERF_TIMING_ENABLED */
 
 /* No-op macros when timing is disabled */
 struct efa_perf_timer { int dummy; };
+#define EFA_PERF_TIMER_DECLARE(timer) do { } while (0)
 #define EFA_PERF_TIMER_START(timer, op_name) do { } while (0)
 #define EFA_PERF_TIMER_END(timer) do { } while (0)
 #define EFA_PERF_TIMER_CYCLES(timer) (0)

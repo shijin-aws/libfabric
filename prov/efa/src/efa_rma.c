@@ -179,7 +179,7 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 					 const struct fi_msg_rma *msg,
 					 uint64_t flags)
 {
-	struct efa_perf_timer timer;
+	EFA_PERF_TIMER_DECLARE(timer);
 	struct efa_conn *conn;
 #ifndef _WIN32
 	struct ibv_sge sge_list[msg->iov_count];

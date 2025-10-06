@@ -192,7 +192,7 @@ static ssize_t efa_ep_recvv(struct fid_ep *ep_fid, const struct iovec *iov, void
 
 static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi_msg *msg, uint64_t flags)
 {
-	struct efa_perf_timer timer;
+	EFA_PERF_TIMER_DECLARE(timer);
 	struct efa_conn *conn;
 	struct ibv_sge sg_list[2];  /* efa device support up to 2 iov */
 	struct ibv_data_buf inline_data_list[2];
