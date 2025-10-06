@@ -752,9 +752,10 @@ efa_data_path_direct_post_read(struct efa_qp *qp,
     remote_mem->rkey = remote_key;
     remote_mem->buf_addr_lo = remote_addr & 0xFFFFFFFF;
     remote_mem->buf_addr_hi = remote_addr >> 32;
+    remote_mem->length = efa_sge_total_bytes(sge_list, sge_count);
 
     /* Set local SGE list - caller has prepared sge_list */
-    efa_post_send_sgl(local_wqe.data.sgl, sge_list, sge_count);
+    efa_post_send_sgl(local_wqe.data.rdma_req.local_mem, sge_list, sge_count);
     meta_desc->length = sge_count;
 
     /* Calculate target address in write-combined memory */
@@ -833,9 +834,10 @@ efa_data_path_direct_post_write(struct efa_qp *qp,
     remote_mem->rkey = remote_key;
     remote_mem->buf_addr_lo = remote_addr & 0xFFFFFFFF;
     remote_mem->buf_addr_hi = remote_addr >> 32;
+    remote_mem->length = efa_sge_total_bytes(sge_list, sge_count);
 
     /* Set local SGE list - caller has prepared sge_list */
-    efa_post_send_sgl(local_wqe.data.sgl, sge_list, sge_count);
+    efa_post_send_sgl(local_wqe.data.rdma_req.local_mem, sge_list, sge_count);
     meta_desc->length = sge_count;
 
     /* Calculate target address in write-combined memory */
