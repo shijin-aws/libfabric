@@ -280,6 +280,198 @@ efa_post_rdma_write_direct(struct efa_base_ep *base_ep,
     return 0;
 }
 
+/**
+ * @brief RDMA-core version of send operation using ibv_* APIs
+ */
+static inline int
+efa_post_send_ibv(struct efa_base_ep *base_ep,
+                  const struct ibv_sge *sge_list,
+                  const struct ibv_data_buf *inline_data_list,
+                  size_t data_count,
+                  bool use_inline,
+                  uintptr_t wr_id,
+                  uint64_t data,
+                  uint64_t flags,
+                  struct efa_conn *conn)
+{
+    struct efa_qp *qp = base_ep->qp;
+    int ret;
+
+    if (!base_ep->is_wr_started) {
+        ibv_wr_start(qp->ibv_qp_ex);
+        base_ep->is_wr_started = true;
+    }
+
+    qp->ibv_qp_ex->wr_id = wr_id;
+
+    if (flags & FI_REMOTE_CQ_DATA) {
+        ibv_wr_send_imm(qp->ibv_qp_ex, data);
+    } else {
+        ibv_wr_send(qp->ibv_qp_ex);
+    }
+
+    if (use_inline) {
+        ibv_wr_set_inline_data_list(qp->ibv_qp_ex, data_count, inline_data_list);
+    } else {
+        ibv_wr_set_sge_list(qp->ibv_qp_ex, data_count, sge_list);
+    }
+
+    ibv_wr_set_ud_addr(qp->ibv_qp_ex, conn->ah->ibv_ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
+
+    if (!(flags & FI_MORE)) {
+        ret = ibv_wr_complete(qp->ibv_qp_ex);
+        base_ep->is_wr_started = false;
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief RDMA-core version of RDMA read operation using ibv_* APIs
+ */
+static inline int
+efa_post_rdma_read_ibv(struct efa_base_ep *base_ep,
+                       const struct ibv_sge *sge_list,
+                       size_t sge_count,
+                       uint32_t remote_key,
+                       uint64_t remote_addr,
+                       uintptr_t wr_id,
+                       uint64_t flags,
+                       struct efa_conn *conn)
+{
+    struct efa_qp *qp = base_ep->qp;
+    int ret;
+
+    if (!base_ep->is_wr_started) {
+        ibv_wr_start(qp->ibv_qp_ex);
+        base_ep->is_wr_started = true;
+    }
+
+    qp->ibv_qp_ex->wr_id = wr_id;
+    ibv_wr_rdma_read(qp->ibv_qp_ex, remote_key, remote_addr);
+    ibv_wr_set_sge_list(qp->ibv_qp_ex, sge_count, sge_list);
+    ibv_wr_set_ud_addr(qp->ibv_qp_ex, conn->ah->ibv_ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
+
+    if (!(flags & FI_MORE)) {
+        ret = ibv_wr_complete(qp->ibv_qp_ex);
+        base_ep->is_wr_started = false;
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief RDMA-core version of RDMA write operation using ibv_* APIs
+ */
+static inline int
+efa_post_rdma_write_ibv(struct efa_base_ep *base_ep,
+                        const struct ibv_sge *sge_list,
+                        size_t sge_count,
+                        uint32_t remote_key,
+                        uint64_t remote_addr,
+                        uintptr_t wr_id,
+                        uint64_t data,
+                        uint64_t flags,
+                        struct efa_conn *conn)
+{
+    struct efa_qp *qp = base_ep->qp;
+    int ret;
+
+    if (!base_ep->is_wr_started) {
+        ibv_wr_start(qp->ibv_qp_ex);
+        base_ep->is_wr_started = true;
+    }
+
+    qp->ibv_qp_ex->wr_id = wr_id;
+
+    if (flags & FI_REMOTE_CQ_DATA) {
+        ibv_wr_rdma_write_imm(qp->ibv_qp_ex, remote_key, remote_addr, data);
+    } else {
+        ibv_wr_rdma_write(qp->ibv_qp_ex, remote_key, remote_addr);
+    }
+
+    ibv_wr_set_sge_list(qp->ibv_qp_ex, sge_count, sge_list);
+    ibv_wr_set_ud_addr(qp->ibv_qp_ex, conn->ah->ibv_ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
+
+    if (!(flags & FI_MORE)) {
+        ret = ibv_wr_complete(qp->ibv_qp_ex);
+        base_ep->is_wr_started = false;
+        return ret;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Wrapper for send operations - chooses between direct and IBV paths
+ */
+static inline int
+efa_qp_post_send(struct efa_base_ep *base_ep,
+                 const struct ibv_sge *sge_list,
+                 const struct ibv_data_buf *inline_data_list,
+                 size_t data_count,
+                 bool use_inline,
+                 uintptr_t wr_id,
+                 uint64_t data,
+                 uint64_t flags,
+                 struct efa_conn *conn)
+{
+#if HAVE_EFA_DATA_PATH_DIRECT
+    if (base_ep->qp->data_path_direct_enabled)
+        return efa_post_send_direct(base_ep, sge_list, inline_data_list, data_count,
+                                   use_inline, wr_id, data, flags, conn);
+#endif
+    return efa_post_send_ibv(base_ep, sge_list, inline_data_list, data_count,
+                            use_inline, wr_id, data, flags, conn);
+}
+
+/**
+ * @brief Wrapper for RDMA read operations - chooses between direct and IBV paths
+ */
+static inline int
+efa_qp_post_read(struct efa_base_ep *base_ep,
+                 const struct ibv_sge *sge_list,
+                 size_t sge_count,
+                 uint32_t remote_key,
+                 uint64_t remote_addr,
+                 uintptr_t wr_id,
+                 uint64_t flags,
+                 struct efa_conn *conn)
+{
+#if HAVE_EFA_DATA_PATH_DIRECT
+    if (base_ep->qp->data_path_direct_enabled)
+        return efa_post_rdma_read_direct(base_ep, sge_list, sge_count,
+                                        remote_key, remote_addr, wr_id, flags, conn);
+#endif
+    return efa_post_rdma_read_ibv(base_ep, sge_list, sge_count,
+                                 remote_key, remote_addr, wr_id, flags, conn);
+}
+
+/**
+ * @brief Wrapper for RDMA write operations - chooses between direct and IBV paths
+ */
+static inline int
+efa_qp_post_write(struct efa_base_ep *base_ep,
+                  const struct ibv_sge *sge_list,
+                  size_t sge_count,
+                  uint32_t remote_key,
+                  uint64_t remote_addr,
+                  uintptr_t wr_id,
+                  uint64_t data,
+                  uint64_t flags,
+                  struct efa_conn *conn)
+{
+#if HAVE_EFA_DATA_PATH_DIRECT
+    if (base_ep->qp->data_path_direct_enabled)
+        return efa_post_rdma_write_direct(base_ep, sge_list, sge_count,
+                                         remote_key, remote_addr, wr_id, data, flags, conn);
+#endif
+    return efa_post_rdma_write_ibv(base_ep, sge_list, sge_count,
+                                  remote_key, remote_addr, wr_id, data, flags, conn);
+}
+
 #endif
 
 #if EFA_UNIT_TEST
