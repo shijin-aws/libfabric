@@ -90,7 +90,7 @@ static inline ssize_t efa_rma_post_read(struct efa_base_ep *base_ep,
 
 	/* Use consolidated RDMA read function */
 	/* ep->domain->info->tx_attr->rma_iov_limit is set to 1 */
-	err = efa_qp_post_read(base_ep, sge_list, msg->iov_count,
+	err = efa_qp_post_read(base_ep->qp, sge_list, msg->iov_count,
 			       msg->rma_iov[0].key, msg->rma_iov[0].addr,
 			       wr_id, flags,
 			       conn->ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
@@ -230,7 +230,7 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 		msg->context, msg->addr, flags, FI_RMA | FI_WRITE);
 
 	/* Use consolidated RDMA write function */
-	err = efa_qp_post_write(base_ep, sge_list, msg->iov_count,
+	err = efa_qp_post_write(base_ep->qp, sge_list, msg->iov_count,
 				msg->rma_iov[0].key, msg->rma_iov[0].addr,
 				wr_id, msg->data, flags,
 				conn->ah, conn->ep_addr->qpn, conn->ep_addr->qkey);

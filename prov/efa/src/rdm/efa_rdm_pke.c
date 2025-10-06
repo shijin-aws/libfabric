@@ -438,7 +438,7 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 				inline_data_list[1].length = pkt_entry->payload_size;
 			}
 
-			ret = efa_qp_post_send(&ep->base_ep, NULL, inline_data_list, iov_cnt, true,
+			ret = efa_qp_post_send(ep->base_ep.qp, NULL, inline_data_list, iov_cnt, true,
 					       (uintptr_t)pkt_entry,
 					       (pkt_entry->ope->fi_flags & FI_REMOTE_CQ_DATA) ? pkt_entry->ope->cq_entry.data : 0,
 					       flags, conn->ah,
@@ -456,7 +456,7 @@ ssize_t efa_rdm_pke_sendv(struct efa_rdm_pke **pkt_entry_vec,
 				sg_list[1].lkey = ((struct efa_mr *)pkt_entry->payload_mr)->ibv_mr->lkey;
 			}
 
-			ret = efa_qp_post_send(&ep->base_ep, sg_list, NULL, iov_cnt, false,
+			ret = efa_qp_post_send(ep->base_ep.qp, sg_list, NULL, iov_cnt, false,
 					       (uintptr_t)pkt_entry,
 					       (pkt_entry->ope->fi_flags & FI_REMOTE_CQ_DATA) ? pkt_entry->ope->cq_entry.data : 0,
 					       flags, conn->ah,
@@ -522,7 +522,7 @@ int efa_rdm_pke_read(struct efa_rdm_pke *pkt_entry,
 	sge.length = len;
 	sge.lkey = ((struct efa_mr *)desc)->ibv_mr->lkey;
 
-	err = efa_qp_post_read(&ep->base_ep, &sge, 1, remote_key, remote_buf,
+	err = efa_qp_post_read(ep->base_ep.qp, &sge, 1, remote_key, remote_buf,
 			       (uintptr_t)pkt_entry, 0,
 			       (txe->peer == NULL) ? ep->base_ep.self_ah : pkt_entry->peer->conn->ah,
 			       (txe->peer == NULL) ? ep->base_ep.qp->qp_num : pkt_entry->peer->conn->ep_addr->qpn,
@@ -598,7 +598,7 @@ int efa_rdm_pke_write(struct efa_rdm_pke *pkt_entry)
 	sge.length = len;
 	sge.lkey = ((struct efa_mr *)desc)->ibv_mr->lkey;
 
-	err = efa_qp_post_write(&ep->base_ep, &sge, 1, remote_key, remote_buf,
+	err = efa_qp_post_write(ep->base_ep.qp, &sge, 1, remote_key, remote_buf,
 				(uintptr_t)pkt_entry,
 				(txe->fi_flags & FI_REMOTE_CQ_DATA) ? txe->cq_entry.data : 0,
 				txe->fi_flags,

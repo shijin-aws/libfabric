@@ -34,7 +34,7 @@
 
 /**
  * @brief Consolidated send operation - builds WQE as stack variable and posts directly
- * @param base_ep EFA base endpoint
+ * @param qp EFA queue pair
  * @param sge_list Pre-prepared SGE list (used when use_inline=false)
  * @param inline_data_list Pre-prepared inline data list (used when use_inline=true)
  * @param data_count Number of SGE entries or inline data buffers
@@ -45,7 +45,7 @@
  * @param conn Connection information
  */
 static inline int
-efa_post_send_direct(struct efa_base_ep *base_ep,
+efa_post_send_direct(struct efa_qp *qp,
                      const struct ibv_sge *sge_list,
                      const struct ibv_data_buf *inline_data_list,
                      size_t data_count,
@@ -55,7 +55,6 @@ efa_post_send_direct(struct efa_base_ep *base_ep,
                      uint64_t flags,
                      struct efa_conn *conn)
 {
-    struct efa_qp *qp = base_ep->qp;
     struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
     struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
     struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
@@ -124,7 +123,7 @@ efa_post_send_direct(struct efa_base_ep *base_ep,
 
 /**
  * @brief Consolidated RDMA read operation - builds WQE as stack variable and posts directly
- * @param base_ep EFA base endpoint
+ * @param qp EFA queue pair
  * @param sge_list Pre-prepared SGE list for local buffers
  * @param sge_count Number of SGE entries
  * @param remote_key Remote memory key
@@ -134,7 +133,7 @@ efa_post_send_direct(struct efa_base_ep *base_ep,
  * @param conn Connection information
  */
 static inline int
-efa_post_rdma_read_direct(struct efa_base_ep *base_ep,
+efa_post_rdma_read_direct(struct efa_qp *qp,
                           const struct ibv_sge *sge_list,
                           size_t sge_count,
                           uint32_t remote_key,
@@ -143,7 +142,6 @@ efa_post_rdma_read_direct(struct efa_base_ep *base_ep,
                           uint64_t flags,
                           struct efa_conn *conn)
 {
-    struct efa_qp *qp = base_ep->qp;
     struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
     struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
     struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
@@ -200,7 +198,7 @@ efa_post_rdma_read_direct(struct efa_base_ep *base_ep,
 
 /**
  * @brief Consolidated RDMA write operation - builds WQE as stack variable and posts directly
- * @param base_ep EFA base endpoint
+ * @param qp EFA queue pair
  * @param sge_list Pre-prepared SGE list for local buffers
  * @param sge_count Number of SGE entries
  * @param remote_key Remote memory key
@@ -211,7 +209,7 @@ efa_post_rdma_read_direct(struct efa_base_ep *base_ep,
  * @param conn Connection information
  */
 static inline int
-efa_post_rdma_write_direct(struct efa_base_ep *base_ep,
+efa_post_rdma_write_direct(struct efa_qp *qp,
                            const struct ibv_sge *sge_list,
                            size_t sge_count,
                            uint32_t remote_key,
@@ -221,7 +219,6 @@ efa_post_rdma_write_direct(struct efa_base_ep *base_ep,
                            uint64_t flags,
                            struct efa_conn *conn)
 {
-    struct efa_qp *qp = base_ep->qp;
     struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
     struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
     struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
@@ -284,7 +281,7 @@ efa_post_rdma_write_direct(struct efa_base_ep *base_ep,
  * @brief RDMA-core version of send operation using ibv_* APIs
  */
 static inline int
-efa_post_send_ibv(struct efa_base_ep *base_ep,
+efa_post_send_ibv(struct efa_qp *qp,
                   const struct ibv_sge *sge_list,
                   const struct ibv_data_buf *inline_data_list,
                   size_t data_count,
@@ -294,7 +291,7 @@ efa_post_send_ibv(struct efa_base_ep *base_ep,
                   uint64_t flags,
                   struct efa_conn *conn)
 {
-    struct efa_qp *qp = base_ep->qp;
+    struct efa_base_ep *base_ep = qp->base_ep;
     int ret;
 
     if (!base_ep->is_wr_started) {
@@ -331,7 +328,7 @@ efa_post_send_ibv(struct efa_base_ep *base_ep,
  * @brief RDMA-core version of RDMA read operation using ibv_* APIs
  */
 static inline int
-efa_post_rdma_read_ibv(struct efa_base_ep *base_ep,
+efa_post_rdma_read_ibv(struct efa_qp *qp,
                        const struct ibv_sge *sge_list,
                        size_t sge_count,
                        uint32_t remote_key,
@@ -340,7 +337,7 @@ efa_post_rdma_read_ibv(struct efa_base_ep *base_ep,
                        uint64_t flags,
                        struct efa_conn *conn)
 {
-    struct efa_qp *qp = base_ep->qp;
+    struct efa_base_ep *base_ep = qp->base_ep;
     int ret;
 
     if (!base_ep->is_wr_started) {
@@ -366,7 +363,7 @@ efa_post_rdma_read_ibv(struct efa_base_ep *base_ep,
  * @brief RDMA-core version of RDMA write operation using ibv_* APIs
  */
 static inline int
-efa_post_rdma_write_ibv(struct efa_base_ep *base_ep,
+efa_post_rdma_write_ibv(struct efa_qp *qp,
                         const struct ibv_sge *sge_list,
                         size_t sge_count,
                         uint32_t remote_key,
@@ -376,7 +373,7 @@ efa_post_rdma_write_ibv(struct efa_base_ep *base_ep,
                         uint64_t flags,
                         struct efa_conn *conn)
 {
-    struct efa_qp *qp = base_ep->qp;
+    struct efa_base_ep *base_ep = qp->base_ep;
     int ret;
 
     if (!base_ep->is_wr_started) {
@@ -408,7 +405,7 @@ efa_post_rdma_write_ibv(struct efa_base_ep *base_ep,
  * @brief Wrapper for send operations - chooses between direct and IBV paths
  */
 static inline int
-efa_qp_post_send(struct efa_base_ep *base_ep,
+efa_qp_post_send(struct efa_qp *qp,
                  const struct ibv_sge *sge_list,
                  const struct ibv_data_buf *inline_data_list,
                  size_t data_count,
@@ -422,11 +419,11 @@ efa_qp_post_send(struct efa_base_ep *base_ep,
 {
     struct efa_conn conn = {.ah = ah, .ep_addr = &(struct efa_ep_addr){.qpn = qpn, .qkey = qkey}};
 #if HAVE_EFA_DATA_PATH_DIRECT
-    if (base_ep->qp->data_path_direct_enabled)
-        return efa_post_send_direct(base_ep, sge_list, inline_data_list, data_count,
+    if (qp->data_path_direct_enabled)
+        return efa_post_send_direct(qp, sge_list, inline_data_list, data_count,
                                    use_inline, wr_id, data, flags, &conn);
 #endif
-    return efa_post_send_ibv(base_ep, sge_list, inline_data_list, data_count,
+    return efa_post_send_ibv(qp, sge_list, inline_data_list, data_count,
                             use_inline, wr_id, data, flags, &conn);
 }
 
@@ -434,7 +431,7 @@ efa_qp_post_send(struct efa_base_ep *base_ep,
  * @brief Wrapper for RDMA read operations - chooses between direct and IBV paths
  */
 static inline int
-efa_qp_post_read(struct efa_base_ep *base_ep,
+efa_qp_post_read(struct efa_qp *qp,
                  const struct ibv_sge *sge_list,
                  size_t sge_count,
                  uint32_t remote_key,
@@ -447,11 +444,11 @@ efa_qp_post_read(struct efa_base_ep *base_ep,
 {
     struct efa_conn conn = {.ah = ah, .ep_addr = &(struct efa_ep_addr){.qpn = qpn, .qkey = qkey}};
 #if HAVE_EFA_DATA_PATH_DIRECT
-    if (base_ep->qp->data_path_direct_enabled)
-        return efa_post_rdma_read_direct(base_ep, sge_list, sge_count,
+    if (qp->data_path_direct_enabled)
+        return efa_post_rdma_read_direct(qp, sge_list, sge_count,
                                         remote_key, remote_addr, wr_id, flags, &conn);
 #endif
-    return efa_post_rdma_read_ibv(base_ep, sge_list, sge_count,
+    return efa_post_rdma_read_ibv(qp, sge_list, sge_count,
                                  remote_key, remote_addr, wr_id, flags, &conn);
 }
 
@@ -459,7 +456,7 @@ efa_qp_post_read(struct efa_base_ep *base_ep,
  * @brief Wrapper for RDMA write operations - chooses between direct and IBV paths
  */
 static inline int
-efa_qp_post_write(struct efa_base_ep *base_ep,
+efa_qp_post_write(struct efa_qp *qp,
                   const struct ibv_sge *sge_list,
                   size_t sge_count,
                   uint32_t remote_key,
@@ -473,11 +470,11 @@ efa_qp_post_write(struct efa_base_ep *base_ep,
 {
     struct efa_conn conn = {.ah = ah, .ep_addr = &(struct efa_ep_addr){.qpn = qpn, .qkey = qkey}};
 #if HAVE_EFA_DATA_PATH_DIRECT
-    if (base_ep->qp->data_path_direct_enabled)
-        return efa_post_rdma_write_direct(base_ep, sge_list, sge_count,
+    if (qp->data_path_direct_enabled)
+        return efa_post_rdma_write_direct(qp, sge_list, sge_count,
                                          remote_key, remote_addr, wr_id, data, flags, &conn);
 #endif
-    return efa_post_rdma_write_ibv(base_ep, sge_list, sge_count,
+    return efa_post_rdma_write_ibv(qp, sge_list, sge_count,
                                   remote_key, remote_addr, wr_id, data, flags, &conn);
 }
 

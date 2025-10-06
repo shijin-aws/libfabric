@@ -271,7 +271,7 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 		msg->context, msg->addr, flags, FI_SEND | FI_MSG);
 
 	/* Use consolidated send function */
-	ret = efa_qp_post_send(base_ep, sg_list, inline_data_list, msg->iov_count,
+	ret = efa_qp_post_send(base_ep->qp, sg_list, inline_data_list, msg->iov_count,
 			       use_inline, wr_id, msg->data, flags,
 			       conn->ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
 	if (OFI_UNLIKELY(ret))
