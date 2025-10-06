@@ -34,10 +34,26 @@
 
 /**
  * @brief Consolidated send operation - builds WQE as stack variable and posts directly
+ * @param base_ep EFA base endpoint
+ * @param sge_list Pre-prepared SGE list (used when use_inline=false)
+ * @param inline_data_list Pre-prepared inline data list (used when use_inline=true)
+ * @param data_count Number of SGE entries or inline data buffers
+ * @param use_inline True to use inline data, false to use SGE list
+ * @param dest_addr Destination address
+ * @param context User context for completion
+ * @param data Immediate data (used when FI_REMOTE_CQ_DATA flag is set)
+ * @param flags Operation flags
+ * @param conn Connection information
  */
 static inline int
 efa_post_send_direct(struct efa_base_ep *base_ep,
-                     const struct fi_msg *msg,
+                     const struct ibv_sge *sge_list,
+                     const struct ibv_data_buf *inline_data_list,
+                     size_t data_count,
+                     bool use_inline,
+                     fi_addr_t dest_addr,
+                     void *context,
+                     uint64_t data,
                      uint64_t flags,
                      struct efa_conn *conn)
 {
@@ -45,11 +61,10 @@ efa_post_send_direct(struct efa_base_ep *base_ep,
     struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
     struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
     struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
-    struct ibv_sge sg_list[2];
     uint32_t sq_desc_idx;
     struct efa_io_tx_wqe *wc_wqe;
     uint32_t total_length = 0;
-    size_t len, i;
+    size_t i;
     int err;
 
     /* Validate queue space */
@@ -57,14 +72,9 @@ efa_post_send_direct(struct efa_base_ep *base_ep,
     if (OFI_UNLIKELY(err))
         return err;
 
-    len = ofi_total_iov_len(msg->msg_iov, msg->iov_count);
-    if (qp->ibv_qp->qp_type == IBV_QPT_UD) {
-        len -= base_ep->info->ep_attr->msg_prefix_size;
-    }
-
 	/* Set work request ID */
 	qp->ibv_qp_ex->wr_id = (uintptr_t) efa_fill_context(
-		msg->context, msg->addr, flags, FI_SEND | FI_MSG);
+		context, dest_addr, flags, FI_SEND | FI_MSG);
 
     /* Build metadata in local stack variable */
     meta_desc->dest_qp_num = conn->ep_addr->qpn;
@@ -77,7 +87,7 @@ efa_post_send_direct(struct efa_base_ep *base_ep,
     EFA_SET(&meta_desc->ctrl1, EFA_IO_TX_META_DESC_OP_TYPE, EFA_IO_SEND);
     if (flags & FI_REMOTE_CQ_DATA) {
         EFA_SET(&meta_desc->ctrl1, EFA_IO_TX_META_DESC_HAS_IMM, 1);
-        meta_desc->immediate_data = msg->data;
+        meta_desc->immediate_data = data;
     }
     
     EFA_SET(&meta_desc->ctrl2, EFA_IO_TX_META_DESC_PHASE, sq->wq.phase);
@@ -86,42 +96,19 @@ efa_post_send_direct(struct efa_base_ep *base_ep,
     EFA_SET(&meta_desc->ctrl2, EFA_IO_TX_META_DESC_COMP_REQ, 1);
 
     /* Handle inline data or SGE list */
-    if (len <= base_ep->domain->device->efa_attr.inline_buf_size &&
-        (!msg->desc || !efa_mr_is_hmem(msg->desc[0]))) {
-        /* Inline data path */
+    if (use_inline) {
+        /* Inline data path - caller has prepared inline_data_list */
         EFA_SET(&meta_desc->ctrl1, EFA_IO_TX_META_DESC_INLINE_MSG, 1);
-        for (i = 0; i < msg->iov_count; i++) {
-            const void *addr = msg->msg_iov[i].iov_base;
-            uint32_t length = msg->msg_iov[i].iov_len;
-            
-            /* Handle UD prefix */
-            if (!i && qp->ibv_qp->qp_type == IBV_QPT_UD) {
-                addr = (char*)addr + base_ep->info->ep_attr->msg_prefix_size;
-                length -= base_ep->info->ep_attr->msg_prefix_size;
-            }
-            
-            memcpy(local_wqe.data.inline_data + total_length, addr, length);
-            total_length += length;
+        for (i = 0; i < data_count; i++) {
+            memcpy(local_wqe.data.inline_data + total_length, 
+                   inline_data_list[i].addr, inline_data_list[i].length);
+            total_length += inline_data_list[i].length;
         }
         meta_desc->length = total_length;
     } else {
-        /* SGE list path */
-        for (i = 0; i < msg->iov_count; i++) {
-            if (OFI_UNLIKELY(!msg->desc || !msg->desc[i]))
-                return -FI_EINVAL;
-            
-            sg_list[i].lkey = ((struct efa_mr *)msg->desc[i])->ibv_mr->lkey;
-            sg_list[i].addr = (uintptr_t)msg->msg_iov[i].iov_base;
-            sg_list[i].length = msg->msg_iov[i].iov_len;
-
-            /* Handle UD prefix */
-            if (!i && qp->ibv_qp->qp_type == IBV_QPT_UD) {
-                sg_list[i].addr += base_ep->info->ep_attr->msg_prefix_size;
-                sg_list[i].length -= base_ep->info->ep_attr->msg_prefix_size;
-            }
-        }
-        efa_post_send_sgl(local_wqe.data.sgl, sg_list, msg->iov_count);
-        meta_desc->length = msg->iov_count;
+        /* SGE list path - caller has prepared sge_list */
+        efa_post_send_sgl(local_wqe.data.sgl, sge_list, data_count);
+        meta_desc->length = data_count;
     }
 
     /* Calculate target address in write-combined memory */

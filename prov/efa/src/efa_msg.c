@@ -194,6 +194,10 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 {
 	struct efa_perf_timer timer;
 	struct efa_conn *conn;
+	struct ibv_sge sg_list[2];  /* efa device support up to 2 iov */
+	struct ibv_data_buf inline_data_list[2];
+	size_t len, i;
+	bool use_inline;
 	int ret = 0;
 
 	efa_tracepoint(send_begin_msg_context, (size_t) msg->context, (size_t) msg->addr);
@@ -210,13 +214,65 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 	conn = efa_av_addr_to_conn(base_ep->av, msg->addr);
 	assert(conn && conn->ep_addr);
 
-	ofi_genlock_lock(&base_ep->util_ep.lock);	
+	assert(msg->iov_count <= base_ep->info->tx_attr->iov_limit);
+
+	len = ofi_total_iov_len(msg->msg_iov, msg->iov_count);
+
+	if (base_ep->qp->ibv_qp->qp_type == IBV_QPT_UD) {
+		assert(msg->msg_iov[0].iov_len >= base_ep->info->ep_attr->msg_prefix_size);
+		len -= base_ep->info->ep_attr->msg_prefix_size;
+	}
+
+	assert(len <= base_ep->info->ep_attr->max_msg_size);
+
+	ofi_genlock_lock(&base_ep->util_ep.lock);
+
+	/* Determine if we should use inline data */
+	use_inline = (len <= base_ep->domain->device->efa_attr.inline_buf_size &&
+		      (!msg->desc || !efa_mr_is_hmem(msg->desc[0])));
+
+	if (use_inline) {
+		/* Prepare inline data list */
+		for (i = 0; i < msg->iov_count; i++) {
+			inline_data_list[i].addr = msg->msg_iov[i].iov_base;
+			inline_data_list[i].length = msg->msg_iov[i].iov_len;
+
+			/* Whole prefix must be on the first sgl for dgram */
+			if (!i && base_ep->qp->ibv_qp->qp_type == IBV_QPT_UD) {
+				inline_data_list[i].addr = (char*)inline_data_list[i].addr + base_ep->info->ep_attr->msg_prefix_size;
+				inline_data_list[i].length -= base_ep->info->ep_attr->msg_prefix_size;
+			}
+		}
+	} else {
+		/* Prepare SGE list */
+		for (i = 0; i < msg->iov_count; i++) {
+			/* Set TX buffer desc from SGE */
+			if (OFI_UNLIKELY(!msg->desc || !msg->desc[i])) {
+				EFA_WARN(FI_LOG_EP_CTRL,
+					 "EFA direct requires FI_MR_LOCAL but "
+					 "application does not provide a valid desc\n");
+				ret = -FI_EINVAL;
+				goto out_err;
+			}
+			sg_list[i].lkey = ((struct efa_mr *)msg->desc[i])->ibv_mr->lkey;
+			sg_list[i].addr = (uintptr_t)msg->msg_iov[i].iov_base;
+			sg_list[i].length = msg->msg_iov[i].iov_len;
+
+			/* Whole prefix must be on the first sgl for dgram */
+			if (!i && base_ep->qp->ibv_qp->qp_type == IBV_QPT_UD) {
+				sg_list[i].addr += base_ep->info->ep_attr->msg_prefix_size;
+				sg_list[i].length -= base_ep->info->ep_attr->msg_prefix_size;
+			}
+		}
+	}
 
 	/* Use consolidated send function */
-	ret = efa_post_send_direct(base_ep, msg, flags, conn);
+	ret = efa_post_send_direct(base_ep, sg_list, inline_data_list, msg->iov_count,
+				   use_inline, msg->addr, msg->context, msg->data, flags, conn);
 	if (OFI_UNLIKELY(ret))
 		ret = (ret == ENOMEM) ? -FI_EAGAIN : -ret;
 
+out_err:
 	ofi_genlock_unlock(&base_ep->util_ep.lock);
 
 	EFA_PERF_TIMER_END(&timer);
