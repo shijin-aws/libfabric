@@ -627,86 +627,72 @@ static inline int efa_data_path_direct_req_notify_cq(struct efa_ibv_cq *ibv_cq,
  * @param qpn Remote queue pair number
  * @param qkey Remote queue key
  */
-static inline int
-efa_data_path_direct_post_send(struct efa_qp *qp,
-                     const struct ibv_sge *sge_list,
-                     const struct ibv_data_buf *inline_data_list,
-                     size_t iov_count,
-                     bool use_inline,
-                     uintptr_t wr_id,
-                     uint64_t data,
-                     uint64_t flags,
-                     struct efa_ah *ah,
-                     uint32_t qpn,
-                     uint32_t qkey)
+static inline int efa_data_path_direct_post_send(
+	struct efa_qp *qp, const struct ibv_sge *sge_list,
+	const struct ibv_data_buf *inline_data_list, size_t iov_count,
+	bool use_inline, uintptr_t wr_id, uint64_t data, uint64_t flags,
+	struct efa_ah *ah, uint32_t qpn, uint32_t qkey)
 {
-    struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
-    struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
-    struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
-    uint32_t sq_desc_idx;
-    struct efa_io_tx_wqe *wc_wqe;
-    uint32_t total_length = 0;
-    size_t i;
-    int err;
-	uint64_t *src, *dst;
+	struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
+	struct efa_io_tx_wqe local_wqe = {
+		0}; /* Stack variable - can be in registers */
+	struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
+	uint32_t total_length = 0;
+	size_t i;
+	int err = 0;
 
-    /* Validate queue space */
-    err = efa_post_send_validate(qp);
-    if (OFI_UNLIKELY(err))
-        return err;
+	/* Validate queue space */
+	err = efa_post_send_validate(qp);
+	if (OFI_UNLIKELY(err))
+		return err;
 
-    /* Set work request ID */
-    qp->ibv_qp_ex->wr_id = wr_id;
+	/* when reaching the sq max_batch, ring the db */
+	if (sq->num_wqe_pending == sq->wq.max_batch)
+		efa_data_path_direct_send_wr_post(sq);
 
-    /* Build metadata in local stack variable */
-    meta_desc->dest_qp_num = qpn;
-    meta_desc->ah = ah->ahn;
-    meta_desc->qkey = qkey;
-    meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
+	/* Set work request ID */
+	qp->ibv_qp_ex->wr_id = wr_id;
 
-    /* Set common control flags */
-    efa_set_common_ctrl_flags(meta_desc, sq, EFA_IO_SEND);
-    if (flags & FI_REMOTE_CQ_DATA) {
-        efa_send_wr_set_imm_data(meta_desc, data);
-    }
+	/* Build metadata in local stack variable */
+	meta_desc->dest_qp_num = qpn;
+	meta_desc->ah = ah->ahn;
+	meta_desc->qkey = qkey;
+	meta_desc->req_id =
+		efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
 
-    /* Handle inline data or SGE list */
-    if (use_inline) {
-        /* Inline data path - caller has prepared inline_data_list */
-        EFA_SET(&meta_desc->ctrl1, EFA_IO_TX_META_DESC_INLINE_MSG, 1);
-        for (i = 0; i < iov_count; i++) {
-            memcpy(local_wqe.data.inline_data + total_length, 
-                   inline_data_list[i].addr, inline_data_list[i].length);
-            total_length += inline_data_list[i].length;
-        }
-        meta_desc->length = total_length;
-    } else {
-        /* SGE list path - caller has prepared sge_list */
-        efa_post_send_sgl(local_wqe.data.sgl, sge_list, iov_count);
-        meta_desc->length = iov_count;
-    }
+	/* Set common control flags */
+	efa_set_common_ctrl_flags(meta_desc, sq, EFA_IO_SEND);
+	if (flags & FI_REMOTE_CQ_DATA) {
+		efa_send_wr_set_imm_data(meta_desc, data);
+	}
 
-    /* Calculate target address in write-combined memory */
-    sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
-    wc_wqe = (struct efa_io_tx_wqe *)sq->desc + sq_desc_idx;
+	/* Handle inline data or SGE list */
+	if (use_inline) {
+		/* Inline data path - caller has prepared inline_data_list */
+		EFA_SET(&meta_desc->ctrl1, EFA_IO_TX_META_DESC_INLINE_MSG, 1);
+		for (i = 0; i < iov_count; i++) {
+			memcpy(local_wqe.data.inline_data + total_length,
+			       inline_data_list[i].addr,
+			       inline_data_list[i].length);
+			total_length += inline_data_list[i].length;
+		}
+		meta_desc->length = total_length;
+	} else {
+		/* SGE list path - caller has prepared sge_list */
+		efa_post_send_sgl(local_wqe.data.sgl, sge_list, iov_count);
+		meta_desc->length = iov_count;
+	}
 
-	src = (uint64_t *)&local_wqe;
-	dst = (uint64_t *)wc_wqe;
-	/* Copy 64-byte WQE using 8 uint64_t stores */
-	for (i = 0; i < 8; i++)
-		dst[i] = src[i];
+	efa_data_path_direct_send_wr_copy_by_word(sq, &local_wqe);
 
-    /* Update queue state */
-    efa_sq_advance_post_idx(sq);
+	/* Update queue state */
+	efa_sq_advance_post_idx(sq);
+	sq->num_wqe_pending++;
 
-    /* Ring doorbell if required */
-    if (!(flags & FI_MORE)) {
-        mmio_flush_writes();
-        efa_sq_ring_doorbell(sq, sq->wq.pc);
-        mmio_wc_start();
-    }
+	if (!(flags & FI_MORE))
+		efa_data_path_direct_send_wr_post(sq);
 
-    return 0;
+	return 0;
 }
 
 /**
@@ -722,74 +708,61 @@ efa_data_path_direct_post_send(struct efa_qp *qp,
  * @param qpn Remote queue pair number
  * @param qkey Remote queue key
  */
-static inline int
-efa_data_path_direct_post_read(struct efa_qp *qp,
-                          const struct ibv_sge *sge_list,
-                          size_t sge_count,
-                          uint32_t remote_key,
-                          uint64_t remote_addr,
-                          uintptr_t wr_id,
-                          uint64_t flags,
-                          struct efa_ah *ah,
-                          uint32_t qpn,
-                          uint32_t qkey)
+static inline int efa_data_path_direct_post_read(
+	struct efa_qp *qp, const struct ibv_sge *sge_list, size_t sge_count,
+	uint32_t remote_key, uint64_t remote_addr, uintptr_t wr_id,
+	uint64_t flags, struct efa_ah *ah, uint32_t qpn, uint32_t qkey)
 {
-    struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
-    struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
-    struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
-    struct efa_io_remote_mem_addr *remote_mem = &local_wqe.data.rdma_req.remote_mem;
-    uint32_t sq_desc_idx;
-    struct efa_io_tx_wqe *wc_wqe;
-    int err;
-	int i;
-	uint64_t *src, *dst;
+	struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
+	struct efa_io_tx_wqe local_wqe = {
+		0}; /* Stack variable - can be in registers */
+	struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
+	struct efa_io_remote_mem_addr *remote_mem =
+		&local_wqe.data.rdma_req.remote_mem;
+	int err;
 
-    /* Validate queue space */
-    err = efa_post_send_validate(qp);
-    if (OFI_UNLIKELY(err))
-        return err;
+	/* Validate queue space */
+	err = efa_post_send_validate(qp);
+	if (OFI_UNLIKELY(err))
+		return err;
 
-    /* Set work request ID */
-    qp->ibv_qp_ex->wr_id = wr_id;
+	/* when reaching the sq max_batch, ring the db */
+	if (sq->num_wqe_pending == sq->wq.max_batch)
+		efa_data_path_direct_send_wr_post(sq);
 
-    /* Build metadata in local stack variable */
-    meta_desc->dest_qp_num = qpn;
-    meta_desc->ah = ah->ahn;
-    meta_desc->qkey = qkey;
-    meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
+	/* Set work request ID */
+	qp->ibv_qp_ex->wr_id = wr_id;
 
-    /* Set common control flags for RDMA READ */
-    efa_set_common_ctrl_flags(meta_desc, sq, EFA_IO_RDMA_READ);
+	/* Build metadata in local stack variable */
+	meta_desc->dest_qp_num = qpn;
+	meta_desc->ah = ah->ahn;
+	meta_desc->qkey = qkey;
+	meta_desc->req_id =
+		efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
 
-    /* Set remote memory information */
-    efa_send_wr_set_rdma_addr(remote_mem, remote_key, remote_addr);
-    remote_mem->length = efa_sge_total_bytes(sge_list, sge_count);
+	/* Set common control flags for RDMA READ */
+	efa_set_common_ctrl_flags(meta_desc, sq, EFA_IO_RDMA_READ);
 
-    /* Set local SGE list - caller has prepared sge_list */
-    efa_post_send_sgl(local_wqe.data.rdma_req.local_mem, sge_list, sge_count);
-    meta_desc->length = sge_count;
+	/* Set remote memory information */
+	efa_send_wr_set_rdma_addr(remote_mem, remote_key, remote_addr);
+	remote_mem->length = efa_sge_total_bytes(sge_list, sge_count);
 
-    /* Calculate target address in write-combined memory */
-    sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
-    wc_wqe = (struct efa_io_tx_wqe *)sq->desc + sq_desc_idx;
+	/* Set local SGE list - caller has prepared sge_list */
+	efa_post_send_sgl(local_wqe.data.rdma_req.local_mem, sge_list,
+			  sge_count);
+	meta_desc->length = sge_count;
 
-    src = (uint64_t *)&local_wqe;
-	dst = (uint64_t *)wc_wqe;
-	/* Copy 64-byte WQE using 8 uint64_t stores */
-	for (i = 0; i < 8; i++)
-		dst[i] = src[i];
+	efa_data_path_direct_send_wr_copy_by_word(sq, &local_wqe);
 
-    /* Update queue state */
-    efa_sq_advance_post_idx(sq);
+	/* Update queue state */
+	efa_sq_advance_post_idx(sq);
+	sq->num_wqe_pending++;
 
-    /* Ring doorbell if required */
-    if (!(flags & FI_MORE)) {
-        mmio_flush_writes();
-        efa_sq_ring_doorbell(sq, sq->wq.pc);
-        mmio_wc_start();
-    }
+	/* Ring doorbell if required */
+	if (!(flags & FI_MORE))
+		efa_data_path_direct_send_wr_post(sq);
 
-    return 0;
+	return 0;
 }
 
 /**
@@ -819,64 +792,59 @@ efa_data_path_direct_post_write(struct efa_qp *qp,
                            uint32_t qpn,
                            uint32_t qkey)
 {
-    struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
-    struct efa_io_tx_wqe local_wqe = {0}; /* Stack variable - can be in registers */
-    struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
-    struct efa_io_remote_mem_addr *remote_mem = &local_wqe.data.rdma_req.remote_mem;
-    uint32_t sq_desc_idx;
-    struct efa_io_tx_wqe *wc_wqe;
-    int i, err;
-	uint64_t *src, *dst;
+	struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
+	struct efa_io_tx_wqe local_wqe = {
+		0}; /* Stack variable - can be in registers */
+	struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
+	struct efa_io_remote_mem_addr *remote_mem =
+		&local_wqe.data.rdma_req.remote_mem;
+	int err;
 
-    /* Validate queue space */
-    err = efa_post_send_validate(qp);
-    if (OFI_UNLIKELY(err))
-        return err;
+	/* Validate queue space */
+	err = efa_post_send_validate(qp);
+	if (OFI_UNLIKELY(err))
+		return err;
 
-    /* Set work request ID */
-    qp->ibv_qp_ex->wr_id = wr_id;
+	/* when reaching the sq max_batch, ring the db */
+	if (sq->num_wqe_pending == sq->wq.max_batch)
+		efa_data_path_direct_send_wr_post(sq);
 
-    /* Build metadata in local stack variable */
-    meta_desc->dest_qp_num = qpn;
-    meta_desc->ah = ah->ahn;
-    meta_desc->qkey = qkey;
-    meta_desc->req_id = efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
+	/* Set work request ID */
+	qp->ibv_qp_ex->wr_id = wr_id;
 
-    /* Set common control flags for RDMA WRITE */
-    efa_set_common_ctrl_flags(meta_desc, sq, EFA_IO_RDMA_WRITE);
-    if (flags & FI_REMOTE_CQ_DATA) {
-        efa_send_wr_set_imm_data(meta_desc, data);
-    }
+	/* Build metadata in local stack variable */
+	meta_desc->dest_qp_num = qpn;
+	meta_desc->ah = ah->ahn;
+	meta_desc->qkey = qkey;
+	meta_desc->req_id =
+		efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
 
-    /* Set remote memory information */
-    efa_send_wr_set_rdma_addr(remote_mem, remote_key, remote_addr);
-    remote_mem->length = efa_sge_total_bytes(sge_list, sge_count);
+	/* Set common control flags for RDMA WRITE */
+	efa_set_common_ctrl_flags(meta_desc, sq, EFA_IO_RDMA_WRITE);
+	if (flags & FI_REMOTE_CQ_DATA) {
+		efa_send_wr_set_imm_data(meta_desc, data);
+	}
 
-    /* Set local SGE list - caller has prepared sge_list */
-    efa_post_send_sgl(local_wqe.data.rdma_req.local_mem, sge_list, sge_count);
-    meta_desc->length = sge_count;
+	/* Set remote memory information */
+	efa_send_wr_set_rdma_addr(remote_mem, remote_key, remote_addr);
+	remote_mem->length = efa_sge_total_bytes(sge_list, sge_count);
 
-    /* Calculate target address in write-combined memory */
-    sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
-    wc_wqe = (struct efa_io_tx_wqe *)sq->desc + sq_desc_idx;
+	/* Set local SGE list - caller has prepared sge_list */
+	efa_post_send_sgl(local_wqe.data.rdma_req.local_mem, sge_list,
+			  sge_count);
+	meta_desc->length = sge_count;
 
-    src = (uint64_t *)&local_wqe;
-	dst = (uint64_t *)wc_wqe;
-	/* Copy 64-byte WQE using 8 uint64_t stores */
-	for (i = 0; i < 8; i++)
-		dst[i] = src[i];
+	efa_data_path_direct_send_wr_copy_by_word(sq, &local_wqe);
 
-    /* Update queue state */
-    efa_sq_advance_post_idx(sq);
+	/* Update queue state */
+	efa_sq_advance_post_idx(sq);
+	sq->num_wqe_pending++;
 
-    /* Ring doorbell if required */
-    if (!(flags & FI_MORE)) {
-        mmio_flush_writes();
-        efa_sq_ring_doorbell(sq, sq->wq.pc);
-        mmio_wc_start();
-    }
+	/* Ring doorbell if required */
+	if (!(flags & FI_MORE))
+		efa_data_path_direct_send_wr_post(sq);
 
-    return 0;
+	return 0;
 }
 
 #endif /* HAVE_EFA_DATA_PATH_DIRECT */

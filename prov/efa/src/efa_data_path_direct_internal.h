@@ -587,6 +587,31 @@ efa_data_path_direct_send_wr_post_working(struct efa_data_path_direct_sq *sq,
 #endif
 }
 
+EFA_ALWAYS_INLINE void
+efa_data_path_direct_send_wr_copy_by_word(struct efa_data_path_direct_sq *sq, struct efa_io_tx_wqe *wqe)
+{
+	uint32_t sq_desc_idx;
+	uint64_t *src, *dst;
+
+	/* Calculate target address in write-combined memory */
+	sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
+	src = (uint64_t *)wqe;
+	dst = (uint64_t *)((struct efa_io_tx_wqe *)sq->desc + sq_desc_idx);
+
+	/* Copy 64-byte WQE using 8 uint64_t stores */
+	for (int i = 0; i < 8; i++)
+		dst[i] = src[i];
+}
+
+EFA_ALWAYS_INLINE void
+efa_data_path_direct_send_wr_post(struct efa_data_path_direct_sq *sq)
+{
+	mmio_flush_writes();
+	efa_sq_ring_doorbell(sq, sq->wq.pc);
+	mmio_wc_start();
+	sq->num_wqe_pending = 0;
+}
+
 EFA_ALWAYS_INLINE struct efa_io_tx_wqe *
 efa_data_path_direct_send_wr_common(struct efa_qp *qp,
 				     enum efa_io_send_op_type op_type)
