@@ -648,6 +648,7 @@ efa_data_path_direct_post_send(struct efa_qp *qp,
     uint32_t total_length = 0;
     size_t i;
     int err;
+	uint64_t *src, *dst;
 
     /* Validate queue space */
     err = efa_post_send_validate(qp);
@@ -689,8 +690,11 @@ efa_data_path_direct_post_send(struct efa_qp *qp,
     sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
     wc_wqe = (struct efa_io_tx_wqe *)sq->desc + sq_desc_idx;
 
-    /* Copy complete WQE to write-combined memory in one operation */
-    mmio_memcpy_x64(wc_wqe, &local_wqe, sizeof(struct efa_io_tx_wqe));
+	src = (uint64_t *)&local_wqe;
+	dst = (uint64_t *)wc_wqe;
+	/* Copy 64-byte WQE using 8 uint64_t stores */
+	for (i = 0; i < 8; i++)
+		dst[i] = src[i];
 
     /* Update queue state */
     efa_sq_advance_post_idx(sq);
@@ -737,6 +741,8 @@ efa_data_path_direct_post_read(struct efa_qp *qp,
     uint32_t sq_desc_idx;
     struct efa_io_tx_wqe *wc_wqe;
     int err;
+	int i;
+	uint64_t *src, *dst;
 
     /* Validate queue space */
     err = efa_post_send_validate(qp);
@@ -767,8 +773,11 @@ efa_data_path_direct_post_read(struct efa_qp *qp,
     sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
     wc_wqe = (struct efa_io_tx_wqe *)sq->desc + sq_desc_idx;
 
-    /* Copy complete WQE to write-combined memory in one operation */
-    mmio_memcpy_x64(wc_wqe, &local_wqe, sizeof(struct efa_io_tx_wqe));
+    src = (uint64_t *)&local_wqe;
+	dst = (uint64_t *)wc_wqe;
+	/* Copy 64-byte WQE using 8 uint64_t stores */
+	for (i = 0; i < 8; i++)
+		dst[i] = src[i];
 
     /* Update queue state */
     efa_sq_advance_post_idx(sq);
@@ -816,7 +825,8 @@ efa_data_path_direct_post_write(struct efa_qp *qp,
     struct efa_io_remote_mem_addr *remote_mem = &local_wqe.data.rdma_req.remote_mem;
     uint32_t sq_desc_idx;
     struct efa_io_tx_wqe *wc_wqe;
-    int err;
+    int i, err;
+	uint64_t *src, *dst;
 
     /* Validate queue space */
     err = efa_post_send_validate(qp);
@@ -850,8 +860,11 @@ efa_data_path_direct_post_write(struct efa_qp *qp,
     sq_desc_idx = sq->wq.pc & sq->wq.desc_mask;
     wc_wqe = (struct efa_io_tx_wqe *)sq->desc + sq_desc_idx;
 
-    /* Copy complete WQE to write-combined memory in one operation */
-    mmio_memcpy_x64(wc_wqe, &local_wqe, sizeof(struct efa_io_tx_wqe));
+    src = (uint64_t *)&local_wqe;
+	dst = (uint64_t *)wc_wqe;
+	/* Copy 64-byte WQE using 8 uint64_t stores */
+	for (i = 0; i < 8; i++)
+		dst[i] = src[i];
 
     /* Update queue state */
     efa_sq_advance_post_idx(sq);
