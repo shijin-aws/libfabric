@@ -637,8 +637,6 @@ static inline int efa_data_path_direct_post_send(
 	struct efa_io_tx_wqe local_wqe = {
 		0}; /* Stack variable - can be in registers */
 	struct efa_io_tx_meta_desc *meta_desc = &local_wqe.meta;
-	uint32_t total_length = 0;
-	size_t i;
 	int err = 0;
 
 	/* Validate queue space */
@@ -654,9 +652,7 @@ static inline int efa_data_path_direct_post_send(
 	qp->ibv_qp_ex->wr_id = wr_id;
 
 	/* Build metadata in local stack variable */
-	meta_desc->dest_qp_num = qpn;
-	meta_desc->ah = ah->ahn;
-	meta_desc->qkey = qkey;
+	efa_data_path_direct_set_ud_addr_meta(meta_desc, ah, qpn, qkey);
 	meta_desc->req_id =
 		efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
 
@@ -669,18 +665,10 @@ static inline int efa_data_path_direct_post_send(
 	/* Handle inline data or SGE list */
 	if (use_inline) {
 		/* Inline data path - caller has prepared inline_data_list */
-		EFA_SET(&meta_desc->ctrl1, EFA_IO_TX_META_DESC_INLINE_MSG, 1);
-		for (i = 0; i < iov_count; i++) {
-			memcpy(local_wqe.data.inline_data + total_length,
-			       inline_data_list[i].addr,
-			       inline_data_list[i].length);
-			total_length += inline_data_list[i].length;
-		}
-		meta_desc->length = total_length;
+		efa_data_path_direct_set_inline_data(&local_wqe, iov_count, inline_data_list);
 	} else {
 		/* SGE list path - caller has prepared sge_list */
-		efa_post_send_sgl(local_wqe.data.sgl, sge_list, iov_count);
-		meta_desc->length = iov_count;
+		efa_data_path_direct_set_sgl(local_wqe.data.sgl, meta_desc, sge_list, iov_count);
 	}
 
 	efa_data_path_direct_send_wr_assign_by_word(sq, &local_wqe);
@@ -734,9 +722,7 @@ static inline int efa_data_path_direct_post_read(
 	qp->ibv_qp_ex->wr_id = wr_id;
 
 	/* Build metadata in local stack variable */
-	meta_desc->dest_qp_num = qpn;
-	meta_desc->ah = ah->ahn;
-	meta_desc->qkey = qkey;
+	efa_data_path_direct_set_ud_addr_meta(meta_desc, ah, qpn, qkey);
 	meta_desc->req_id =
 		efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
 
@@ -748,9 +734,7 @@ static inline int efa_data_path_direct_post_read(
 	remote_mem->length = efa_sge_total_bytes(sge_list, sge_count);
 
 	/* Set local SGE list - caller has prepared sge_list */
-	efa_post_send_sgl(local_wqe.data.rdma_req.local_mem, sge_list,
-			  sge_count);
-	meta_desc->length = sge_count;
+	efa_data_path_direct_set_sgl(local_wqe.data.rdma_req.local_mem, meta_desc, sge_list, sge_count);
 
 	efa_data_path_direct_send_wr_assign_by_word(sq, &local_wqe);
 
@@ -813,9 +797,7 @@ efa_data_path_direct_post_write(struct efa_qp *qp,
 	qp->ibv_qp_ex->wr_id = wr_id;
 
 	/* Build metadata in local stack variable */
-	meta_desc->dest_qp_num = qpn;
-	meta_desc->ah = ah->ahn;
-	meta_desc->qkey = qkey;
+	efa_data_path_direct_set_ud_addr_meta(meta_desc, ah, qpn, qkey);
 	meta_desc->req_id =
 		efa_wq_get_next_wrid_idx(&sq->wq, qp->ibv_qp_ex->wr_id);
 
@@ -830,9 +812,7 @@ efa_data_path_direct_post_write(struct efa_qp *qp,
 	remote_mem->length = efa_sge_total_bytes(sge_list, sge_count);
 
 	/* Set local SGE list - caller has prepared sge_list */
-	efa_post_send_sgl(local_wqe.data.rdma_req.local_mem, sge_list,
-			  sge_count);
-	meta_desc->length = sge_count;
+	efa_data_path_direct_set_sgl(local_wqe.data.rdma_req.local_mem, meta_desc, sge_list, sge_count);
 
 	efa_data_path_direct_send_wr_assign_by_word(sq, &local_wqe);
 

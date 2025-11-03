@@ -650,5 +650,67 @@ efa_data_path_direct_send_wr_common(struct efa_qp *qp,
 	return &sq->curr_tx_wqe;
 }
 
+/**
+ * @brief Internal utility: Set UD addressing information in WQE metadata
+ * @param meta_desc Pointer to WQE metadata descriptor
+ * @param ah Address handle
+ * @param remote_qpn Remote queue pair number
+ * @param remote_qkey Remote queue key
+ */
+EFA_ALWAYS_INLINE void efa_data_path_direct_set_ud_addr_meta(struct efa_io_tx_meta_desc *meta_desc,
+                                                             struct efa_ah *ah,
+                                                             uint32_t remote_qpn,
+                                                             uint32_t remote_qkey)
+{
+    meta_desc->dest_qp_num = remote_qpn;
+    meta_desc->ah = ah->ahn;
+    meta_desc->qkey = remote_qkey;
+}
+
+/**
+ * @brief Internal utility: Set inline data buffers in WQE inline data area
+ * @param wqe Pointer to work queue entry
+ * @param num_buf Number of data buffers
+ * @param buf_list Array of data buffers
+ */
+EFA_ALWAYS_INLINE void efa_data_path_direct_set_inline_data(struct efa_io_tx_wqe *wqe,
+                                                            size_t num_buf,
+                                                            const struct ibv_data_buf *buf_list)
+{
+    uint32_t total_length = 0;
+    size_t i;
+
+    for (i = 0; i < num_buf; i++) {
+        memcpy(wqe->data.inline_data + total_length,
+               buf_list[i].addr, buf_list[i].length);
+        total_length += buf_list[i].length;
+    }
+
+    EFA_SET(&wqe->meta.ctrl1, EFA_IO_TX_META_DESC_INLINE_MSG, 1);
+    wqe->meta.length = total_length;
+}
+
+/**
+ * @brief Internal utility: Set SGE list and update metadata length
+ * @param tx_bufs Array of hardware transmit buffer descriptors to populate
+ * @param meta_desc Pointer to WQE metadata descriptor
+ * @param sg_list Array of IBV scatter-gather elements
+ * @param num_sge Number of scatter-gather elements
+ */
+EFA_ALWAYS_INLINE void efa_data_path_direct_set_sgl(struct efa_io_tx_buf_desc *tx_bufs,
+                                                    struct efa_io_tx_meta_desc *meta_desc,
+                                                    const struct ibv_sge *sg_list,
+                                                    size_t num_sge)
+{
+    const struct ibv_sge *sge;
+    size_t i;
+
+    for (i = 0; i < num_sge; i++) {
+        sge = &sg_list[i];
+        efa_set_tx_buf(&tx_bufs[i], sge->addr, sge->lkey, sge->length);
+    }
+    meta_desc->length = num_sge;
+}
+
 #endif /* HAVE_EFA_DATA_PATH_DIRECT */
 #endif /* _EFA_DATA_PATH_DIRECT_INTERNAL_H */
