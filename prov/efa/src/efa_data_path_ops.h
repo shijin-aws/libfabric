@@ -32,7 +32,42 @@
 #include "efa_perf_timer.h"
 #include "efa_mmio.h"
 
+#endif
 
+#if EFA_UNIT_TEST
+/* For unit tests, declare functions that are defined in efa_unit_test_data_path_ops.c */
+int efa_qp_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad);
+int efa_qp_post_send(struct efa_qp *qp, const struct ibv_sge *sge_list, const struct ibv_data_buf *inline_data_list, size_t iov_count, bool use_inline, uintptr_t wr_id, uint64_t data, uint64_t flags, struct efa_ah *ah, uint32_t qpn, uint32_t qkey);
+int efa_qp_post_read(struct efa_qp *qp, const struct ibv_sge *sge_list, size_t sge_count, uint32_t remote_key, uint64_t remote_addr, uintptr_t wr_id, uint64_t flags, struct efa_ah *ah, uint32_t qpn, uint32_t qkey);
+int efa_qp_post_write(struct efa_qp *qp, const struct ibv_sge *sge_list, size_t sge_count, uint32_t remote_key, uint64_t remote_addr, uintptr_t wr_id, uint64_t data, uint64_t flags, struct efa_ah *ah, uint32_t qpn, uint32_t qkey);
+int efa_ibv_cq_start_poll(struct efa_ibv_cq *ibv_cq, struct ibv_poll_cq_attr *attr);
+int efa_ibv_cq_next_poll(struct efa_ibv_cq *ibv_cq);
+enum ibv_wc_opcode efa_ibv_cq_wc_read_opcode(struct efa_ibv_cq *ibv_cq);
+void efa_ibv_cq_end_poll(struct efa_ibv_cq *ibv_cq);
+uint32_t efa_ibv_cq_wc_read_qp_num(struct efa_ibv_cq *ibv_cq);
+uint32_t efa_ibv_cq_wc_read_vendor_err(struct efa_ibv_cq *ibv_cq);
+uint32_t efa_ibv_cq_wc_read_src_qp(struct efa_ibv_cq *ibv_cq);
+uint32_t efa_ibv_cq_wc_read_slid(struct efa_ibv_cq *ibv_cq);
+uint32_t efa_ibv_cq_wc_read_byte_len(struct efa_ibv_cq *ibv_cq);
+unsigned int efa_ibv_cq_wc_read_wc_flags(struct efa_ibv_cq *ibv_cq);
+__be32 efa_ibv_cq_wc_read_imm_data(struct efa_ibv_cq *ibv_cq);
+bool efa_ibv_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq);
+int efa_ibv_cq_wc_read_sgid(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid);
+int efa_ibv_get_cq_event(struct efa_ibv_cq *ibv_cq, void **cq_context);
+int efa_ibv_req_notify_cq(struct efa_ibv_cq *ibv_cq, int solicited_only);
+
+#else
+/* For production, define static inline functions */
+
+/* QP wrapper functions */
+static inline int efa_qp_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad)
+{
+#if HAVE_EFA_DATA_PATH_DIRECT
+	if (qp->data_path_direct_enabled)
+		return efa_data_path_direct_post_recv(qp, wr, bad);
+#endif
+	return ibv_post_recv(qp->ibv_qp, wr, bad);
+}
 
 /**
  * @brief RDMA-core version of send operation using ibv_* APIs
@@ -236,160 +271,6 @@ efa_qp_post_write(struct efa_qp *qp,
 #endif
     return efa_ibv_post_write(qp, sge_list, sge_count,
                                   remote_key, remote_addr, wr_id, data, flags, ah, qpn, qkey);
-}
-
-#endif
-
-#if EFA_UNIT_TEST
-/* For unit tests, declare functions that are defined in efa_unit_test_data_path_ops.c */
-int efa_qp_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad);
-int efa_qp_wr_complete(struct efa_qp *efaqp);
-void efa_qp_wr_rdma_read(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr);
-void efa_qp_wr_rdma_write(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr);
-void efa_qp_wr_rdma_write_imm(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr, __be32 imm_data);
-void efa_qp_wr_send(struct efa_qp *efaqp);
-void efa_qp_wr_send_imm(struct efa_qp *efaqp, __be32 imm_data);
-void efa_qp_wr_set_inline_data_list(struct efa_qp *efaqp, size_t num_buf, const struct ibv_data_buf *buf_list);
-void efa_qp_wr_set_sge_list(struct efa_qp *efaqp, size_t num_sge, const struct ibv_sge *sg_list);
-void efa_qp_wr_set_ud_addr(struct efa_qp *efaqp, struct efa_ah *ah, uint32_t remote_qpn, uint32_t remote_qkey);
-void efa_qp_wr_start(struct efa_qp *efaqp);
-int efa_ibv_cq_start_poll(struct efa_ibv_cq *ibv_cq, struct ibv_poll_cq_attr *attr);
-int efa_ibv_cq_next_poll(struct efa_ibv_cq *ibv_cq);
-enum ibv_wc_opcode efa_ibv_cq_wc_read_opcode(struct efa_ibv_cq *ibv_cq);
-void efa_ibv_cq_end_poll(struct efa_ibv_cq *ibv_cq);
-uint32_t efa_ibv_cq_wc_read_qp_num(struct efa_ibv_cq *ibv_cq);
-uint32_t efa_ibv_cq_wc_read_vendor_err(struct efa_ibv_cq *ibv_cq);
-uint32_t efa_ibv_cq_wc_read_src_qp(struct efa_ibv_cq *ibv_cq);
-uint32_t efa_ibv_cq_wc_read_slid(struct efa_ibv_cq *ibv_cq);
-uint32_t efa_ibv_cq_wc_read_byte_len(struct efa_ibv_cq *ibv_cq);
-unsigned int efa_ibv_cq_wc_read_wc_flags(struct efa_ibv_cq *ibv_cq);
-__be32 efa_ibv_cq_wc_read_imm_data(struct efa_ibv_cq *ibv_cq);
-bool efa_ibv_cq_wc_is_unsolicited(struct efa_ibv_cq *ibv_cq);
-
-int efa_ibv_cq_wc_read_sgid(struct efa_ibv_cq *ibv_cq, union ibv_gid *sgid);
-
-int efa_ibv_get_cq_event(struct efa_ibv_cq *ibv_cq, void **cq_context);
-int efa_ibv_req_notify_cq(struct efa_ibv_cq *ibv_cq, int solicited_only);
-
-#else
-/* For production, define static inline functions */
-
-/* QP wrapper functions */
-static inline int efa_qp_post_recv(struct efa_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (qp->data_path_direct_enabled)
-		return efa_data_path_direct_post_recv(qp, wr, bad);
-#endif
-	return ibv_post_recv(qp->ibv_qp, wr, bad);
-}
-
-static inline int efa_qp_wr_complete(struct efa_qp *efaqp)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (efaqp->data_path_direct_enabled)
-		return efa_data_path_direct_wr_complete(efaqp);
-#endif
-	return ibv_wr_complete(efaqp->ibv_qp_ex);
-}
-
-static inline void efa_qp_wr_rdma_read(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (efaqp->data_path_direct_enabled) {
-		efa_data_path_direct_wr_rdma_read(efaqp, rkey, remote_addr);
-		return;
-	}
-#endif
-	ibv_wr_rdma_read(efaqp->ibv_qp_ex, rkey, remote_addr);
-}
-
-static inline void efa_qp_wr_rdma_write(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (efaqp->data_path_direct_enabled) {
-		efa_data_path_direct_wr_rdma_write(efaqp, rkey, remote_addr);
-		return;
-	}
-#endif
-	ibv_wr_rdma_write(efaqp->ibv_qp_ex, rkey, remote_addr);
-}
-
-static inline void efa_qp_wr_rdma_write_imm(struct efa_qp *efaqp, uint32_t rkey, uint64_t remote_addr, __be32 imm_data)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (efaqp->data_path_direct_enabled) {
-		efa_data_path_direct_wr_rdma_write_imm(efaqp, rkey, remote_addr, imm_data);
-		return;
-	}
-#endif
-	ibv_wr_rdma_write_imm(efaqp->ibv_qp_ex, rkey, remote_addr, imm_data);
-}
-
-static inline void efa_qp_wr_send(struct efa_qp *efaqp)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (efaqp->data_path_direct_enabled) {
-		efa_data_path_direct_wr_send(efaqp);
-		return;
-	}
-#endif
-	ibv_wr_send(efaqp->ibv_qp_ex);
-}
-
-static inline void efa_qp_wr_send_imm(struct efa_qp *efaqp, __be32 imm_data)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (efaqp->data_path_direct_enabled) {
-		efa_data_path_direct_wr_send_imm(efaqp, imm_data);
-		return;
-	}
-#endif
-	ibv_wr_send_imm(efaqp->ibv_qp_ex, imm_data);
-}
-
-static inline void efa_qp_wr_set_inline_data_list(struct efa_qp *efaqp, size_t num_buf, const struct ibv_data_buf *buf_list)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (efaqp->data_path_direct_enabled) {
-		efa_data_path_direct_wr_set_inline_data_list(efaqp, num_buf, buf_list);
-		return;
-	}
-#endif
-	ibv_wr_set_inline_data_list(efaqp->ibv_qp_ex, num_buf, buf_list);
-}
-
-static inline void efa_qp_wr_set_sge_list(struct efa_qp *efaqp, size_t num_sge, const struct ibv_sge *sg_list)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (efaqp->data_path_direct_enabled) {
-		efa_data_path_direct_wr_set_sge_list(efaqp, num_sge, sg_list);
-		return;
-	}
-#endif
-	ibv_wr_set_sge_list(efaqp->ibv_qp_ex, num_sge, sg_list);
-}
-
-static inline void efa_qp_wr_set_ud_addr(struct efa_qp *efaqp, struct efa_ah *ah, uint32_t remote_qpn, uint32_t remote_qkey)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (efaqp->data_path_direct_enabled) {
-		efa_data_path_direct_wr_set_ud_addr(efaqp, ah, remote_qpn, remote_qkey);
-		return;
-	}
-#endif
-	ibv_wr_set_ud_addr(efaqp->ibv_qp_ex, ah->ibv_ah, remote_qpn, remote_qkey);
-}
-
-static inline void efa_qp_wr_start(struct efa_qp *efaqp)
-{
-#if HAVE_EFA_DATA_PATH_DIRECT
-	if (efaqp->data_path_direct_enabled) {
-		efa_data_path_direct_wr_start(efaqp);
-		return;
-	}
-#endif
-	ibv_wr_start(efaqp->ibv_qp_ex);
 }
 
 /* CQ wrapper functions */
