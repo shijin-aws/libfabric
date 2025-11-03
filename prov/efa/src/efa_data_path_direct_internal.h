@@ -588,7 +588,7 @@ efa_data_path_direct_send_wr_post_working(struct efa_data_path_direct_sq *sq,
 }
 
 EFA_ALWAYS_INLINE void
-efa_data_path_direct_send_wr_copy_by_word(struct efa_data_path_direct_sq *sq, struct efa_io_tx_wqe *wqe)
+efa_data_path_direct_send_wr_assign_by_word(struct efa_data_path_direct_sq *sq, struct efa_io_tx_wqe *wqe)
 {
 	uint32_t sq_desc_idx;
 	uint64_t *src, *dst;

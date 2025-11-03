@@ -683,7 +683,7 @@ static inline int efa_data_path_direct_post_send(
 		meta_desc->length = iov_count;
 	}
 
-	efa_data_path_direct_send_wr_copy_by_word(sq, &local_wqe);
+	efa_data_path_direct_send_wr_assign_by_word(sq, &local_wqe);
 
 	/* Update queue state */
 	efa_sq_advance_post_idx(sq);
@@ -752,7 +752,7 @@ static inline int efa_data_path_direct_post_read(
 			  sge_count);
 	meta_desc->length = sge_count;
 
-	efa_data_path_direct_send_wr_copy_by_word(sq, &local_wqe);
+	efa_data_path_direct_send_wr_assign_by_word(sq, &local_wqe);
 
 	/* Update queue state */
 	efa_sq_advance_post_idx(sq);
@@ -834,7 +834,7 @@ efa_data_path_direct_post_write(struct efa_qp *qp,
 			  sge_count);
 	meta_desc->length = sge_count;
 
-	efa_data_path_direct_send_wr_copy_by_word(sq, &local_wqe);
+	efa_data_path_direct_send_wr_assign_by_word(sq, &local_wqe);
 
 	/* Update queue state */
 	efa_sq_advance_post_idx(sq);
