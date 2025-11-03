@@ -561,7 +561,8 @@ EFA_ALWAYS_INLINE void efa_send_wr_set_rdma_addr(struct efa_io_remote_mem_addr *
 }
 
 EFA_ALWAYS_INLINE void
-efa_data_path_direct_send_wr_post_working(struct efa_data_path_direct_sq *sq,
+efa_data_path_direct_send_wr_post_working(struct efa_qp *qp,
+					  struct efa_data_path_direct_sq *sq,
 					  bool force_doorbell)
 {
 	uint32_t sq_desc_idx;
@@ -621,7 +622,6 @@ efa_data_path_direct_send_wr_common(struct efa_qp *qp,
 	struct efa_data_path_direct_sq *sq = &qp->data_path_direct_qp.sq;
 	struct efa_io_tx_meta_desc *meta_desc;
 	int err;
-	bool ring_db;
 
 	if (OFI_UNLIKELY(dpd_qp->wr_session_err))
 		return NULL;
@@ -635,7 +635,7 @@ efa_data_path_direct_send_wr_common(struct efa_qp *qp,
 	/* MODIFIED: if any are pending, copy out the previous one first: */
 	if (sq->num_wqe_pending) {
 		/* when reaching the sq max_batch, ring the db */
-		efa_data_path_direct_send_wr_post_working(sq, sq->num_wqe_pending == sq->wq.max_batch);
+		efa_data_path_direct_send_wr_post_working(qp, sq, sq->num_wqe_pending == sq->wq.max_batch);
 	}
 
 	memset(&sq->curr_tx_wqe, 0, sizeof(sq->curr_tx_wqe));
