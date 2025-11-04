@@ -29,7 +29,7 @@
 #if HAVE_EFA_DATA_PATH_DIRECT
 #include "efa_data_path_direct_entry.h"
 #include "efa_data_path_direct_internal.h"
-#include "efa_perf_timer.h"
+
 #include "efa_mmio.h"
 
 #endif

@@ -25,7 +25,7 @@
 #define _EFA_DATA_PATH_DIRECT_INTERNAL_H
 
 #include "config.h"
-#include "efa_perf_timer.h"
+
 
 #if HAVE_EFA_DATA_PATH_DIRECT
 
