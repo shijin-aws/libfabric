@@ -112,6 +112,7 @@ _efa_headers = \
 	prov/efa/src/efa_data_path_direct.h \
 	prov/efa/src/efa_data_path_direct_internal.h \
 	prov/efa/src/efa_mmio.h \
+	prov/efa/src/efa_perf_timer.h \
 	prov/efa/src/rdm/efa_rdm_peer.h	\
 	prov/efa/src/rdm/efa_rdm_cq.h \
 	prov/efa/src/rdm/efa_rdm_ep.h \

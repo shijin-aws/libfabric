@@ -9,7 +9,7 @@
 #include "efa_av.h"
 #include "efa_data_path_ops.h"
 #include "efa_data_path_direct.h"
-
+#include "efa_perf_timer.h"
 
 /**
  * @brief check whether endpoint was configured with FI_RMA capability
@@ -179,6 +179,7 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 					 const struct fi_msg_rma *msg,
 					 uint64_t flags)
 {
+	EFA_PERF_TIMER_DECLARE(timer);
 	struct efa_conn *conn;
 #ifndef _WIN32
 	struct ibv_sge sge_list[msg->iov_count];
@@ -208,6 +209,7 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 	assert(conn && conn->ep_addr);
 
 	ofi_genlock_lock(&base_ep->util_ep.lock);
+	EFA_PERF_TIMER_START(&timer, "efa_rma_post_write");
 
 	/* Prepare SGE list */
 	for (i = 0; i < msg->iov_count; ++i) {
@@ -232,6 +234,8 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 				msg->rma_iov[0].key, msg->rma_iov[0].addr,
 				wr_id, msg->data, flags,
 				conn->ah, conn->ep_addr->qpn, conn->ep_addr->qkey);
+	EFA_PERF_TIMER_END(&timer);
+	EFA_PERF_TIMER_PRINT(&timer, "WRITE");
 	if (OFI_UNLIKELY(err))
 		err = (err == ENOMEM) ? -FI_EAGAIN : -err;
 
