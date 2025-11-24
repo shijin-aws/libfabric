@@ -1,0 +1,80 @@
+name: Auto Release
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'release')
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Extract version
+      id: version
+      run: |
+        VERSION=$(grep 'AC_INIT' configure.ac | sed 's/.*\[\([^]]*\)\].*/\1/' | head -1)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Build libfabric
+      run: |
+        ./autogen.sh
+        ./configure --prefix=$PWD/install
+        make
+        make install
+        make dist
+
+    - name: Build fabtests
+      run: |
+        cd fabtests
+        ./autogen.sh
+        ./configure --with-libfabric=$PWD/../install
+        make dist
+
+    - name: Generate checksums
+      id: checksums
+      run: |
+        echo "sha512_sums<<EOF" >> $GITHUB_OUTPUT
+        sha512sum libfabric-*.tar.* fabtests/fabtests-*.tar.* >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        echo "md5_sums<<EOF" >> $GITHUB_OUTPUT
+        md5sum libfabric-*.tar.* fabtests/fabtests-*.tar.* >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.version.outputs.version }}
+        name: Libfabric ${{ steps.version.outputs.version }}
+        draft: true
+        body: |
+          The OpenFabrics Interfaces Working Group (OFIWG) and the libfabric open-source community are pleased to announce the release of version ${{ steps.version.outputs.version }} of libfabric. See [NEWS.md](https://github.com/${{ github.repository }}/blob/${{ steps.version.outputs.version }}/NEWS.md) for the list of features and enhancements that have been added since the last release. Installation instructions are available in the [README.md](https://github.com/${{ github.repository }}/blob/${{ steps.version.outputs.version }}/README.md) file in the source tree or at the project's homepage.
+
+          Download the distribution tarballs below to get started:
+
+          **sha512 sums**
+          ```
+          ${{ steps.checksums.outputs.sha512_sums }}
+          ```
+
+          **md5sums**
+          ```
+          ${{ steps.checksums.outputs.md5_sums }}
+          ```
+
+          ${{ github.event.pull_request.body }}
+        files: |
+          libfabric-*.tar.gz
+          libfabric-*.tar.bz2
+          fabtests/fabtests-*.tar.gz
+          fabtests/fabtests-*.tar.bz2
