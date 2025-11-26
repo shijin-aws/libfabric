@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <execinfo.h>
 
 #include <alloca.h>
 #include <errno.h>
@@ -26,6 +27,54 @@
 #ifdef _WIN32
 #include "efawin.h"
 #endif
+
+// Declare the glibc private global variable
+extern const char *__progname;
+
+// Function that returns the program name without needing main's arguments
+const char* get_program_name_glibc() {
+    // __progname points to the same string as argv[0]
+    if (__progname != NULL) {
+        return __progname;
+    } else {
+        return "Unknown Program Name (via glibc)";
+    }
+}
+
+void print_stacktrace(void) {
+    const int max_frames = 100;
+    void *addrlist[max_frames + 1];
+    int addrlen;
+    char **symbollist;
+
+    // Obtain the backtrace addresses (list of function return addresses)
+    addrlen = backtrace(addrlist, sizeof(addrlist) / sizeof(void*));
+
+    if (addrlen == 0) {
+        printf(" <empty, possibly corrupt stacktrace>\n");
+        return;
+    }
+
+    // Translate the addresses into readable strings
+    // The strings are allocated by malloc() and must be freed
+    symbollist = backtrace_symbols(addrlist, addrlen);
+
+    if (symbollist == NULL) {
+        perror("backtrace_symbols failed");
+        return;
+    }
+
+    // Print the stack frames
+    EFA_WARN(FI_LOG_CORE, "Obtained %d stack frames:\n", addrlen);
+	EFA_WARN(FI_LOG_CORE, "pid[%d], argv[0]: %s, Obtained %d stack frames:\n", getpid(), get_program_name_glibc(), addrlen);
+
+    for (int i = 0; i < addrlen; i++) {
+        EFA_WARN(FI_LOG_CORE, "pid[%d], argv[0]: %s, %s\n", getpid(), get_program_name_glibc(), symbollist[i]);
+    }
+
+    // Free the memory allocated by backtrace_symbols
+    free(symbollist);
+}
 
 /**
  * @brief initialize data members of a struct of efa_device until the gid
@@ -47,6 +96,8 @@ int efa_device_construct_gid(struct efa_device *efa_device,
 			 errno);
 		return -errno;
 	}
+	EFA_WARN(FI_LOG_CORE, "pid[%d], argv[0]: %s, ibv_open_device succeeds with ibv_ctx %p\n", getpid(), get_program_name_glibc(), efa_device->ibv_ctx);
+	print_stacktrace();
 
 	memset(&efa_device->ibv_attr, 0, sizeof(efa_device->ibv_attr));
 	err = ibv_query_device(efa_device->ibv_ctx, &efa_device->ibv_attr);
@@ -164,6 +215,8 @@ static void efa_device_destruct(struct efa_device *device)
 	int err;
 
 	if (device->ibv_ctx) {
+		EFA_WARN(FI_LOG_CORE, "pid[%d], argv[0]: %s, calling ibv_close_device with ibv_ctx %p\n", getpid(), get_program_name_glibc(), device->ibv_ctx);
+		print_stacktrace();
 		err = ibv_close_device(device->ibv_ctx);
 		if (err)
 			EFA_INFO_ERRNO(FI_LOG_DOMAIN, "ibv_dealloc_pd",
