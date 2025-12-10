@@ -32,7 +32,7 @@
  */
 const struct fi_fabric_attr efa_fabric_attr = {
 	.fabric		= NULL,
-	.name		= NULL,
+	.name		= NULL,SYS_afs_syscall
 	.prov_name	= NULL,
 	.prov_version	= OFI_VERSION_DEF_PROV,
 };
