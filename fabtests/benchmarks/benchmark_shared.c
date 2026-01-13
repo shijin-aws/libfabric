@@ -658,6 +658,25 @@ static int bw_rma_comp(enum ft_rma_opcodes rma_op, int num_completions)
 	return ret;
 }
 
+static int bw_comp_nonblocking(struct fid_cq *cq, int *completed_cnt)
+{
+	int ret, comp_count = 0;
+	struct fi_cq_data_entry comp;
+
+	/* Poll for completions without blocking */
+	while ((ret = fi_cq_read(cq, &comp, 1)) > 0) {
+		comp_count++;
+		(*completed_cnt)++;
+	}
+
+	if (ret < 0 && ret != -FI_EAGAIN) {
+		FT_PRINTERR("fi_cq_read", ret);
+		return ret;
+	}
+
+	return comp_count;
+}
+
 int bandwidth_rma(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote)
 {
 	int ret, i, j;
@@ -804,6 +823,139 @@ int bandwidth_rma(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote)
 
 	if (opts.machr)
 		show_perf_mr(opts.transfer_size, opts.iterations, &start, &end,	1,
+				opts.argc, opts.argv);
+	else
+		show_perf(NULL, opts.transfer_size, opts.iterations, &start, &end, 1);
+	return 0;
+}
+
+int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote)
+{
+	int ret, posted_cnt = 0, completed_cnt = 0;
+	uint64_t flags = 0;
+	size_t offset, inject_size = fi->tx_attr->inject_size;
+	int total_iterations = opts.iterations + opts.warmup_iterations;
+	bool warmup_done = false;
+
+	ret = fi_getopt(&ep->fid, FI_OPT_ENDPOINT, FI_OPT_INJECT_RMA_SIZE,
+			&inject_size, &(size_t){sizeof inject_size});
+	if (ret && ret != -FI_ENOPROTOOPT) {
+		FT_PRINTERR("fi_getopt(FI_OPT_INJECT_RMA_SIZE)", ret);
+		return ret;
+	}
+
+	if (inject_size_set)
+		inject_size = opts.inject_size;
+
+	if (ft_check_opts(FT_OPT_ENABLE_HMEM))
+		inject_size = 0;
+
+	if (ft_check_opts(FT_OPT_VERIFY_DATA))
+		inject_size = 0;
+
+	ret = ft_sync();
+	if (ret)
+		return ret;
+
+	offset_rma_start = FT_RMA_SYNC_MSG_BYTES +
+			   MAX(ft_tx_prefix_size(), ft_rx_prefix_size());
+
+	if (ft_check_opts(FT_OPT_VERIFY_DATA) && opts.transfer_size > 0) {
+		ret = ft_fill_buf(tx_buf + offset_rma_start,
+			opts.transfer_size * opts.window_size);
+		if (ret)
+			return ret;
+
+		ret = ft_fill_buf(rx_buf + offset_rma_start + 1,
+			opts.transfer_size * opts.window_size - 1);
+		if (ret)
+			return ret;
+
+		ft_sync();
+	}
+
+	if (rma_op == FT_RMA_WRITEDATA && !opts.dst_addr) {
+		/* Server side for WRITEDATA: just poll for completions */
+		while (completed_cnt < total_iterations) {
+			if (!warmup_done && completed_cnt >= opts.warmup_iterations) {
+				ft_start();
+				warmup_done = true;
+			}
+			if (fi->rx_attr->mode & FI_RX_CQ_DATA) {
+				while (posted_cnt < total_iterations && 
+				       (posted_cnt - completed_cnt) < opts.window_size) {
+					ret = ft_post_rx(ep, 0, &rx_ctx_arr[posted_cnt % opts.window_size].context);
+					if (ret)
+						return ret;
+					posted_cnt++;
+				}
+			}
+			ret = bw_comp_nonblocking(rxcq, &completed_cnt);
+			if (ret < 0)
+				return ret;
+		}
+	} else {
+		/* Client side: post operations and poll completions */
+		while (posted_cnt < total_iterations || completed_cnt < total_iterations) {
+			if (!warmup_done && completed_cnt >= opts.warmup_iterations) {
+				ft_start();
+				warmup_done = true;
+			}
+
+			while (posted_cnt < total_iterations && 
+			       (posted_cnt - completed_cnt) < opts.window_size) {
+				offset = offset_rma_start + 
+					 (posted_cnt % opts.window_size) * opts.transfer_size;
+
+				int ctx_idx = posted_cnt % opts.window_size;
+				switch (rma_op) {
+				case FT_RMA_WRITE:
+					if (opts.transfer_size <= inject_size) {
+						ret = ft_post_rma_inject(FT_RMA_WRITE, tx_buf + offset,
+								opts.transfer_size, remote);
+					} else {
+						ret = ft_post_rma(FT_RMA_WRITE, tx_buf + offset,
+								opts.transfer_size, remote,
+								&tx_ctx_arr[ctx_idx].context);
+					}
+					break;
+				case FT_RMA_WRITEDATA:
+					if (opts.transfer_size <= inject_size) {
+						ret = ft_post_rma_inject(FT_RMA_WRITEDATA,
+								tx_buf + offset,
+								opts.transfer_size,
+								remote);
+					} else {
+						ret = ft_post_rma(FT_RMA_WRITEDATA,
+								tx_buf + offset,
+								opts.transfer_size,
+								remote,	&tx_ctx_arr[ctx_idx].context);
+					}
+					break;
+				case FT_RMA_READ:
+					ret = ft_post_rma(FT_RMA_READ, rx_buf + offset, opts.transfer_size,
+							remote,	&tx_ctx_arr[ctx_idx].context);
+					break;
+				default:
+					FT_ERR("Unknown RMA op type\n");
+					return EXIT_FAILURE;
+				}
+				if (ret)
+					return ret;
+
+				posted_cnt++;
+			}
+
+			ret = bw_comp_nonblocking(txcq, &completed_cnt);
+			if (ret < 0)
+				return ret;
+		}
+	}
+
+	ft_stop();
+
+	if (opts.machr)
+		show_perf_mr(opts.transfer_size, opts.iterations, &start, &end, 1,
 				opts.argc, opts.argv);
 	else
 		show_perf(NULL, opts.transfer_size, opts.iterations, &start, &end, 1);
