@@ -658,7 +658,7 @@ static int bw_rma_comp(enum ft_rma_opcodes rma_op, int num_completions)
 	return ret;
 }
 
-static int bw_comp_nonblocking(struct fid_cq *cq, int *completed_cnt)
+static int bw_comp_nonblocking(struct fid_cq *cq, uint64_t *completed_cnt)
 {
 	int ret, comp_count = 0;
 	struct fi_cq_data_entry comp;
@@ -831,11 +831,12 @@ int bandwidth_rma(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote)
 
 int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *remote)
 {
-	int ret, posted_cnt = 0, completed_cnt = 0;
+	int ret;
 	uint64_t flags = 0;
 	size_t offset, inject_size = fi->tx_attr->inject_size;
 	int total_iterations = opts.iterations + opts.warmup_iterations;
 	int i, j;
+	int posted_cnt = 0, completed_cnt = 0;
 
 	ret = fi_getopt(&ep->fid, FI_OPT_ENDPOINT, FI_OPT_INJECT_RMA_SIZE,
 			&inject_size, &(size_t){sizeof inject_size});
@@ -881,10 +882,7 @@ int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *rem
 		}
 		switch (rma_op) {
 		case FT_RMA_WRITE:
-			if (opts.transfer_size <= inject_size) {
-				ret = ft_post_rma_inject(FT_RMA_WRITE, tx_buf + offset,
-						opts.transfer_size, remote);
-			} else if (opts.use_fi_more) {
+			if (opts.use_fi_more) {
 				flags = set_fi_more_flag(i, j, flags);
 				ret = ft_post_rma_writemsg(
 						tx_buf + offset,
@@ -924,12 +922,7 @@ int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *rem
 					rx_seq++;
 
 			} else {
-				if (opts.transfer_size <= inject_size) {
-					ret = ft_post_rma_inject(FT_RMA_WRITEDATA,
-							tx_buf + offset,
-							opts.transfer_size,
-							remote);
-				} else if (opts.use_fi_more) {
+				if (opts.use_fi_more) {
 					flags = set_fi_more_flag(i, j, flags);
 					flags |= FI_REMOTE_CQ_DATA;
 					ret = ft_post_rma_writemsg(
@@ -956,14 +949,26 @@ int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *rem
 			return ret;
 
 		if (++j == opts.window_size) {
+			printf("Start waiting for comp after window exhaustion\n");
+			printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
+			printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
 			ret = bw_rma_comp(rma_op, j);
+			printf("Done waiting for comp after window exhaustion\n");
+			printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
+			printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
 			if (ret)
 				return ret;
 			j = 0;
 		}
 		offset += opts.transfer_size;
 	}
+	printf("Start waiting for comp after warmp iterations, j=%d\n", j);
+	printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
+	printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
 	ret = bw_rma_comp(rma_op, j);
+	printf("Done waiting for comp after warmp iterations, j=%d\n", j);
+	printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
+	printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
 	if (ret)
 		return ret;
 
@@ -984,20 +989,24 @@ int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *rem
 
 	/* Real benchmark loop, use non-blocking post + poll approach */
 	/* Start from where we are after warmup */
-	completed_cnt = posted_cnt = i;
+	printf("Before starting benchmarks for msg size %zu \n", opts.transfer_size);
+	printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
+	printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
 	ft_start();
 	if (rma_op == FT_RMA_WRITEDATA && !opts.dst_addr) {
 		/* Server side for WRITEDATA: just poll for completions */
-		while (completed_cnt < total_iterations) {
-			if (fi->rx_attr->mode & FI_RX_CQ_DATA) {
-				while (posted_cnt < total_iterations && 
-				       (posted_cnt - completed_cnt) < opts.window_size) {
-					ret = ft_post_rx(ep, 0, &rx_ctx_arr[posted_cnt % opts.window_size].context);
-					if (ret)
-						return ret;
-					posted_cnt++;
+		while (completed_cnt < total_iterations ) {
+			while (rx_seq < total_iterations + 1 && 
+				(rx_seq - rx_cq_cntr) < opts.window_size) {
+					if (fi->rx_attr->mode & FI_RX_CQ_DATA) {
+						ret = ft_post_rx(ep, 0, &rx_ctx_arr[rx_seq % opts.window_size].context);
+						if (ret)
+							return ret;
+						posted_cnt++;
+					} else {
+						rx_seq++;
+					}
 				}
-			}
 			ret = bw_comp_nonblocking(rxcq, &completed_cnt);
 			if (ret < 0)
 				return ret;
@@ -1014,27 +1023,15 @@ int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *rem
 				int ctx_idx = posted_cnt % opts.window_size;
 				switch (rma_op) {
 				case FT_RMA_WRITE:
-					if (opts.transfer_size <= inject_size) {
-						ret = ft_post_rma_inject(FT_RMA_WRITE, tx_buf + offset,
-								opts.transfer_size, remote);
-					} else {
-						ret = ft_post_rma(FT_RMA_WRITE, tx_buf + offset,
+					ret = ft_post_rma(FT_RMA_WRITE, tx_buf + offset,
 								opts.transfer_size, remote,
 								&tx_ctx_arr[ctx_idx].context);
-					}
 					break;
 				case FT_RMA_WRITEDATA:
-					if (opts.transfer_size <= inject_size) {
-						ret = ft_post_rma_inject(FT_RMA_WRITEDATA,
-								tx_buf + offset,
-								opts.transfer_size,
-								remote);
-					} else {
-						ret = ft_post_rma(FT_RMA_WRITEDATA,
-								tx_buf + offset,
-								opts.transfer_size,
-								remote,	&tx_ctx_arr[ctx_idx].context);
-					}
+					ret = ft_post_rma(FT_RMA_WRITEDATA,
+							tx_buf + offset,
+							opts.transfer_size,
+							remote,	&tx_ctx_arr[ctx_idx].context);
 					break;
 				case FT_RMA_READ:
 					ret = ft_post_rma(FT_RMA_READ, rx_buf + offset, opts.transfer_size,
@@ -1046,7 +1043,6 @@ int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *rem
 				}
 				if (ret)
 					return ret;
-
 				posted_cnt++;
 			}
 
@@ -1056,8 +1052,19 @@ int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *rem
 		}
 	}
 
+	if (opts.dst_addr)
+		tx_cq_cntr += completed_cnt;
+	else
+		rx_cq_cntr += completed_cnt;
+
 	ft_stop();
 
+	printf("Iteration done for msg size %zu \n", opts.transfer_size);
+	printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
+	printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
+
+	bw_rma_comp(rma_op, 0);
+	//rx_seq = rx_cq_cntr + 1;
 	if (opts.machr)
 		show_perf_mr(opts.transfer_size, opts.iterations, &start, &end, 1,
 				opts.argc, opts.argv);
