@@ -947,26 +947,15 @@ int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *rem
 			return ret;
 
 		if (++j == opts.window_size) {
-			printf("Start waiting for comp after window exhaustion\n");
-			printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
-			printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
 			ret = bw_rma_comp(rma_op, j);
-			printf("Done waiting for comp after window exhaustion\n");
-			printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
-			printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
 			if (ret)
 				return ret;
 			j = 0;
 		}
 		offset += opts.transfer_size;
 	}
-	printf("Start waiting for comp after warmp iterations, j=%d\n", j);
-	printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
-	printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
+
 	ret = bw_rma_comp(rma_op, j);
-	printf("Done waiting for comp after warmp iterations, j=%d\n", j);
-	printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
-	printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
 	if (ret)
 		return ret;
 
@@ -987,9 +976,7 @@ int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *rem
 
 	/* Real benchmark loop, use non-blocking post + poll approach */
 	/* Start from where we are after warmup */
-	printf("Before starting benchmarks for msg size %zu \n", opts.transfer_size);
-	printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
-	printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
+
 	ft_start();
 	int targeted_tx_seq = tx_seq + opts.iterations;
 	int targeted_rx_seq = rx_seq + opts.iterations;
@@ -1054,10 +1041,6 @@ int bandwidth_rma_nonblocking(enum ft_rma_opcodes rma_op, struct fi_rma_iov *rem
 	}
 
 	ft_stop();
-
-	printf("Iteration done for msg size %zu \n", opts.transfer_size);
-	printf("tx posted: %d, tx completed: %d\n", tx_seq, tx_cq_cntr);
-	printf("rx posted: %d, rx completed: %d\n", rx_seq, rx_cq_cntr);
 
 	if (opts.machr)
 		show_perf_mr(opts.transfer_size, opts.iterations, &start, &end, 1,
