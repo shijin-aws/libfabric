@@ -55,7 +55,8 @@ struct efa_domain {
 	struct dlist_entry handshake_queued_peer_list;
 	/* LRU list of AH entries in this domain */
 	struct dlist_entry ah_lru_list;
-	/* Function pointer for internal buffer memory registration */
+	/* Function pointer for internal buffer memory registration
+	 * NOTE: Only used by EFA-RDM protocol path, NULL for EFA-direct */
 	int (*internal_buf_mr_regv)(struct fid_domain *domain_fid,
 				    const struct iovec *iov, size_t count,
 				    uint64_t access, uint64_t offset,

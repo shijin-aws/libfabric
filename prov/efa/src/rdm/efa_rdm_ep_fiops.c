@@ -39,6 +39,8 @@ int efa_rdm_pke_pool_alloc_handler(struct ofi_bufpool_region *region)
 		.iov_len = region->pool->alloc_size,
 	};
 
+	/* Assert that internal_buf_mr_regv is not NULL for RDM domains */
+	assert(domain->internal_buf_mr_regv);
 	ret = domain->internal_buf_mr_regv(&domain->util_domain.domain_fid, &iov, 1, FI_SEND | FI_RECV, 0, 0, 0,
 			&mr, NULL);
 
