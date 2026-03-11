@@ -489,7 +489,7 @@ int efa_copy_from_hmem(void *desc, void *dest, const void *src, size_t size)
 	struct efa_mr_peer peer = { .iface = FI_HMEM_SYSTEM };
 
 	if (desc)
-		peer = ((struct efa_mr *) desc)->peer;
+		peer = ((struct efa_rdm_mr *) desc)->peer;
 
 	if (peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE) {
 		assert(peer.hmem_data);
@@ -522,7 +522,7 @@ int efa_copy_to_hmem(void *desc, void *dest, const void *src, size_t size)
 	struct efa_mr_peer peer = { .iface = FI_HMEM_SYSTEM };
 
 	if (desc)
-		peer = ((struct efa_mr *) desc)->peer;
+		peer = ((struct efa_rdm_mr *) desc)->peer;
 
 	if (peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE) {
 		assert(peer.hmem_data);

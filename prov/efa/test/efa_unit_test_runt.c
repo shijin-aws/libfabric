@@ -24,7 +24,7 @@ void test_efa_rdm_peer_get_runt_size_impl(
 	size_t raw_addr_len = sizeof(raw_addr);
 	struct efa_rdm_peer *peer;
 	fi_addr_t addr;
-	struct efa_mr mock_mr;
+	struct efa_rdm_mr mock_mr;
 	struct efa_rdm_ope mock_txe;
 	size_t runt_size;
 	int ret;
@@ -292,7 +292,7 @@ void test_efa_rdm_peer_select_readbase_rtm_impl(
 	size_t raw_addr_len = sizeof(raw_addr);
 	struct efa_rdm_peer *peer;
 	fi_addr_t addr;
-	struct efa_mr mock_mr;
+	struct efa_rdm_mr mock_mr;
 	struct efa_rdm_ope mock_txe;
 	int readbase_rtm;
 	int ret;

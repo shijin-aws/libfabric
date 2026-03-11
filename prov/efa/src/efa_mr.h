@@ -21,14 +21,23 @@ struct efa_mr {
 	struct fid_mr		mr_fid;
 	struct ibv_mr		*ibv_mr;
 	struct efa_domain	*domain;
+};
+
+struct efa_rdm_mr {
+	struct efa_mr		efa_mr;
+	/* Peer memory descriptor for HMEM */
+	struct efa_mr_peer	peer;
 	/* Used only in MR cache */
 	struct ofi_mr_entry	*entry;
 	/* Used only in rdm */
 	struct fid_mr		*shm_mr;
-	struct efa_mr_peer	peer;
 	bool			inserted_to_mr_map;
 	bool 			needs_sync;
 };
+
+/* Compile-time assertion to ensure safe casting between efa_mr and efa_rdm_mr */
+_Static_assert(offsetof(struct efa_rdm_mr, efa_mr) == 0,
+               "efa_mr must be the first member of efa_rdm_mr for safe casting");
 
 extern int efa_mr_cache_enable;
 extern size_t efa_mr_max_cached_count;
@@ -47,13 +56,13 @@ int efa_mr_cache_entry_reg(struct ofi_mr_cache *cache,
 void efa_mr_cache_entry_dereg(struct ofi_mr_cache *cache,
 			      struct ofi_mr_entry *entry);
 
-static inline bool efa_mr_is_hmem(struct efa_mr *efa_mr)
+static inline bool efa_mr_is_hmem(struct efa_rdm_mr *efa_rdm_mr)
 {
-	return efa_mr && (
-		efa_mr->peer.iface == FI_HMEM_CUDA ||
-		efa_mr->peer.iface == FI_HMEM_ROCR ||
-		efa_mr->peer.iface == FI_HMEM_NEURON ||
-		efa_mr->peer.iface == FI_HMEM_SYNAPSEAI);
+	return efa_rdm_mr && (
+		efa_rdm_mr->peer.iface == FI_HMEM_CUDA ||
+		efa_rdm_mr->peer.iface == FI_HMEM_ROCR ||
+		efa_rdm_mr->peer.iface == FI_HMEM_NEURON ||
+		efa_rdm_mr->peer.iface == FI_HMEM_SYNAPSEAI);
 }
 
 int efa_mr_cache_regv(struct fid_domain *domain_fid, const struct iovec *iov,
@@ -66,24 +75,24 @@ int efa_mr_internal_regv(struct fid_domain *domain_fid, const struct iovec *iov,
 		      uint64_t requested_key, uint64_t flags,
 		      struct fid_mr **mr_fid, void *context);
 
-static inline bool efa_mr_is_cuda(struct efa_mr *efa_mr)
+static inline bool efa_mr_is_cuda(struct efa_rdm_mr *efa_rdm_mr)
 {
-	return efa_mr ? (efa_mr->peer.iface == FI_HMEM_CUDA) : false;
+	return efa_rdm_mr ? (efa_rdm_mr->peer.iface == FI_HMEM_CUDA) : false;
 }
 
-static inline bool efa_mr_is_neuron(struct efa_mr *efa_mr)
+static inline bool efa_mr_is_neuron(struct efa_rdm_mr *efa_rdm_mr)
 {
-	return efa_mr ? (efa_mr->peer.iface == FI_HMEM_NEURON) : false;
+	return efa_rdm_mr ? (efa_rdm_mr->peer.iface == FI_HMEM_NEURON) : false;
 }
 
-static inline bool efa_mr_is_synapseai(struct efa_mr *efa_mr)
+static inline bool efa_mr_is_synapseai(struct efa_rdm_mr *efa_rdm_mr)
 {
-	return efa_mr ? (efa_mr->peer.iface == FI_HMEM_SYNAPSEAI) : false;
+	return efa_rdm_mr ? (efa_rdm_mr->peer.iface == FI_HMEM_SYNAPSEAI) : false;
 }
 
-static inline bool efa_mr_is_rocr(struct efa_mr *efa_mr)
+static inline bool efa_mr_is_rocr(struct efa_rdm_mr *efa_rdm_mr)
 {
-	return efa_mr && efa_mr->peer.iface == FI_HMEM_ROCR;
+	return efa_rdm_mr && efa_rdm_mr->peer.iface == FI_HMEM_ROCR;
 }
 
 #define EFA_MR_IOV_LIMIT 1

@@ -18,7 +18,7 @@ int efa_rdm_rma_verified_copy_iov(struct efa_rdm_ep *ep, struct efa_rma_iov *rma
 			      struct iovec *iov, void **desc)
 {
 	void *context;
-	struct efa_mr *efa_mr;
+	struct efa_rdm_mr *efa_rdm_mr;
 	int i, ret;
 
 	for (i = 0; i < count; i++) {
@@ -27,8 +27,8 @@ int efa_rdm_rma_verified_copy_iov(struct efa_rdm_ep *ep, struct efa_rma_iov *rma
 					(uintptr_t *)(&rma[i].addr),
 					rma[i].len, rma[i].key, flags,
 					&context);
-		efa_mr = context;
-		desc[i] = fi_mr_desc(&efa_mr->mr_fid);
+		efa_rdm_mr = context;
+		desc[i] = fi_mr_desc(&efa_rdm_mr->efa_mr.mr_fid);
 		ofi_genlock_unlock(&efa_rdm_ep_domain(ep)->util_domain.lock);
 		if (ret) {
 			EFA_WARN(FI_LOG_EP_CTRL,
@@ -383,7 +383,7 @@ ssize_t efa_rdm_rma_post_write(struct efa_rdm_ep *ep, struct efa_rdm_ope *txe)
 		max_eager_rtw_data_size = efa_rdm_txe_max_req_data_capacity(ep, txe, EFA_RDM_EAGER_RTW_PKT);
 	}
 
-	iface = txe->desc[0] ? ((struct efa_mr*) txe->desc[0])->peer.iface : FI_HMEM_SYSTEM;
+	iface = txe->desc[0] ? ((struct efa_rdm_mr*) txe->desc[0])->peer.iface : FI_HMEM_SYSTEM;
 
 	if (use_p2p &&
 	    txe->total_len >= g_efa_hmem_info[iface].min_read_write_size &&

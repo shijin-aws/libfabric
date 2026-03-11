@@ -274,16 +274,16 @@ int efa_rdm_ep_bulk_post_internal_rx_pkts(struct efa_rdm_ep *ep);
  * if the transfer should fail.
  */
 static inline
-int efa_rdm_ep_use_p2p(struct efa_rdm_ep *efa_rdm_ep, struct efa_mr *efa_mr)
+int efa_rdm_ep_use_p2p(struct efa_rdm_ep *efa_rdm_ep, struct efa_rdm_mr *efa_rdm_mr)
 {
 	/*
 	 * P2P is always available for host memory (Unregistered buffer will be
 	 * regarded as host memory as EFA provider requires FI_MR_HMEM)
 	 */
-	if (!efa_mr || efa_mr->peer.iface == FI_HMEM_SYSTEM)
+	if (!efa_rdm_mr || efa_rdm_mr->peer.iface == FI_HMEM_SYSTEM)
 		return 1;
 
-	if (g_efa_hmem_info[efa_mr->peer.iface].p2p_supported_by_device)
+	if (g_efa_hmem_info[efa_rdm_mr->peer.iface].p2p_supported_by_device)
 		return (efa_rdm_ep->hmem_p2p_opt != FI_HMEM_P2P_DISABLED);
 
 	if (efa_rdm_ep->hmem_p2p_opt == FI_HMEM_P2P_REQUIRED) {
@@ -467,15 +467,15 @@ void efa_rdm_ep_post_handshake_or_queue(struct efa_rdm_ep *ep,
 static inline int efa_rdm_attempt_to_sync_memops_iov(struct efa_rdm_ep *ep, struct iovec *iov, void **desc, int num_desc)
 {
 	int err = 0, i;
-	struct efa_mr *efa_mr;
+	struct efa_rdm_mr *efa_rdm_mr;
 
 	if (!desc)
 		return err;
 
 	if (OFI_UNLIKELY(ep->cuda_api_permitted)) {
 		for (i = 0; i < num_desc; i++) {
-			efa_mr = (struct efa_mr *) desc[i];
-			if (efa_mr && efa_mr->needs_sync) {
+			efa_rdm_mr = (struct efa_rdm_mr *) desc[i];
+			if (efa_rdm_mr && efa_rdm_mr->needs_sync) {
 				err = cuda_set_sync_memops(iov[i].iov_base);
 				if (err) {
 					EFA_WARN(FI_LOG_MR,
@@ -484,7 +484,7 @@ static inline int efa_rdm_attempt_to_sync_memops_iov(struct efa_rdm_ep *ep, stru
 						 iov[i].iov_base);
 					return err;
 				}
-				efa_mr->needs_sync = false;
+				efa_rdm_mr->needs_sync = false;
 			}
 		}
 	}
@@ -495,15 +495,15 @@ static inline int efa_rdm_attempt_to_sync_memops_iov(struct efa_rdm_ep *ep, stru
 static inline int efa_rdm_attempt_to_sync_memops_ioc(struct efa_rdm_ep *ep, struct fi_ioc *ioc, void **desc, int num_desc)
 {
 	int err = 0, i;
-	struct efa_mr *efa_mr;
+	struct efa_rdm_mr *efa_rdm_mr;
 
 	if (!desc)
 		return err;
 
 	if (OFI_UNLIKELY(ep->cuda_api_permitted)) {
 		for (i = 0; i < num_desc; i++) {
-			efa_mr = (struct efa_mr *) desc[i];
-			if (efa_mr && efa_mr->needs_sync) {
+			efa_rdm_mr = (struct efa_rdm_mr *) desc[i];
+			if (efa_rdm_mr && efa_rdm_mr->needs_sync) {
 				err = cuda_set_sync_memops(ioc[i].addr);
 				if (err) {
 					EFA_WARN(FI_LOG_MR,
@@ -512,7 +512,7 @@ static inline int efa_rdm_attempt_to_sync_memops_ioc(struct efa_rdm_ep *ep, stru
 						 ioc[i].addr);
 					return err;
 				}
-				efa_mr->needs_sync = false;
+				efa_rdm_mr->needs_sync = false;
 			}
 		}
 	}

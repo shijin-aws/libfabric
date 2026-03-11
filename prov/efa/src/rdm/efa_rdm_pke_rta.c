@@ -165,14 +165,14 @@ void efa_rdm_pke_handle_write_rta_send_completion(struct efa_rdm_pke *pkt_entry)
 }
 
 static
-int efa_rdm_write_atomic_hmem(struct efa_mr *efa_mr, struct iovec *dst, char *data,
+int efa_rdm_write_atomic_hmem(struct efa_rdm_mr *efa_rdm_mr, struct iovec *dst, char *data,
                                  size_t dtsize, int op, int dt)
 {
 	char *host_data = (char *) malloc(dst->iov_len);
 	int err;
 
 	/* Step 1: Copy data from device to temporary host buffer */
-	err = efa_copy_from_hmem(efa_mr, host_data, dst->iov_base, dst->iov_len);
+	err = efa_copy_from_hmem(efa_rdm_mr, host_data, dst->iov_base, dst->iov_len);
 	if (OFI_UNLIKELY(err)) {
 		free(host_data);
 		return err;
@@ -184,7 +184,7 @@ int efa_rdm_write_atomic_hmem(struct efa_mr *efa_mr, struct iovec *dst, char *da
 	                                  dst->iov_len / dtsize);
 
 	/* Step 3: Copy temporary host buffer to device */
-	err = efa_copy_to_hmem(efa_mr, dst->iov_base, host_data, dst->iov_len);
+	err = efa_copy_to_hmem(efa_rdm_mr, dst->iov_base, host_data, dst->iov_len);
 	free(host_data);
 	return err;
 }
@@ -197,7 +197,7 @@ int efa_rdm_write_atomic_hmem(struct efa_mr *efa_mr, struct iovec *dst, char *da
 int efa_rdm_pke_proc_write_rta(struct efa_rdm_pke *pkt_entry)
 {
 	struct iovec iov[EFA_RDM_IOV_LIMIT];
-	struct efa_mr *efa_mr;
+	struct efa_rdm_mr *efa_rdm_mr;
 	struct efa_rdm_rta_hdr *rta_hdr;
 	void *desc[EFA_RDM_IOV_LIMIT];
 	char *data;
@@ -221,15 +221,15 @@ int efa_rdm_pke_proc_write_rta(struct efa_rdm_pke *pkt_entry)
 	offset = 0;
 	for (i = 0; i < iov_count; ++i) {
 		/* Get hmem_iface from MR */
-		efa_mr = (struct efa_mr*) ofi_mr_map_get(&pkt_entry->ep->base_ep.util_ep.domain->mr_map, (rta_hdr->rma_iov + i)->key);
-		hmem_iface = efa_mr->peer.iface;
+		efa_rdm_mr = (struct efa_rdm_mr*) ofi_mr_map_get(&pkt_entry->ep->base_ep.util_ep.domain->mr_map, (rta_hdr->rma_iov + i)->key);
+		hmem_iface = efa_rdm_mr->peer.iface;
 
 		if (hmem_iface == FI_HMEM_SYSTEM) {
 			ofi_atomic_write_handlers[op][dt](iov[i].iov_base,
 			                                  data + offset,
 			                                  iov[i].iov_len / dtsize);
 		} else {
-			err = efa_rdm_write_atomic_hmem(efa_mr, &iov[i], data + offset, dtsize, op, dt);
+			err = efa_rdm_write_atomic_hmem(efa_rdm_mr, &iov[i], data + offset, dtsize, op, dt);
 			if (OFI_UNLIKELY(err)) {
 				return err;
 			}
@@ -335,14 +335,14 @@ ssize_t efa_rdm_pke_init_fetch_rta(struct efa_rdm_pke *pkt_entry,
 }
 
 static
-int efa_rdm_fetch_atomic_hmem(struct efa_mr *efa_mr, struct iovec *dst, char *data,
+int efa_rdm_fetch_atomic_hmem(struct efa_rdm_mr *efa_rdm_mr, struct iovec *dst, char *data,
 			      void* result, size_t dtsize, int op, int dt)
 {
 	char *host_data = (char *) malloc(dst->iov_len);
 	int err;
 
 	/* Step 1: Copy data from device to temporary host buffer */
-	err = efa_copy_from_hmem(efa_mr, host_data, dst->iov_base, dst->iov_len);
+	err = efa_copy_from_hmem(efa_rdm_mr, host_data, dst->iov_base, dst->iov_len);
 	if (OFI_UNLIKELY(err)) {
 		free(host_data);
 		return err;
@@ -355,7 +355,7 @@ int efa_rdm_fetch_atomic_hmem(struct efa_mr *efa_mr, struct iovec *dst, char *da
 	                                      dst->iov_len / dtsize);
 
 	/* Step 3: Copy data from host buffer to device */
-	err = efa_copy_to_hmem(efa_mr, dst->iov_base, host_data, dst->iov_len);
+	err = efa_copy_to_hmem(efa_rdm_mr, dst->iov_base, host_data, dst->iov_len);
 	free(host_data);
 	return err;
 }
@@ -369,7 +369,7 @@ int efa_rdm_pke_proc_fetch_rta(struct efa_rdm_pke *pkt_entry)
 {
 	struct efa_rdm_ep *ep;
 	struct efa_rdm_ope *rxe;
-	struct efa_mr *efa_mr;
+	struct efa_rdm_mr *efa_rdm_mr;
 	char *data;
 	int op, dt, i;
 	size_t offset, dtsize;
@@ -397,15 +397,15 @@ int efa_rdm_pke_proc_fetch_rta(struct efa_rdm_pke *pkt_entry)
 
 	offset = 0;
 	for (i = 0; i < rxe->iov_count; ++i) {
-		efa_mr = (struct efa_mr*) ofi_mr_map_get(&ep->base_ep.util_ep.domain->mr_map, (efa_rdm_pke_get_rta_hdr(pkt_entry)->rma_iov + i)->key);
-		hmem_iface = efa_mr->peer.iface;
+		efa_rdm_mr = (struct efa_rdm_mr*) ofi_mr_map_get(&ep->base_ep.util_ep.domain->mr_map, (efa_rdm_pke_get_rta_hdr(pkt_entry)->rma_iov + i)->key);
+		hmem_iface = efa_rdm_mr->peer.iface;
 		if (hmem_iface == FI_HMEM_SYSTEM) {
 			ofi_atomic_readwrite_handlers[op][dt](rxe->iov[i].iov_base,
 			                                      data + offset,
 			                                      rxe->atomrsp_data + offset,
 			                                      rxe->iov[i].iov_len / dtsize);
 		} else {
-			err = efa_rdm_fetch_atomic_hmem(efa_mr, &rxe->iov[i], data + offset,
+			err = efa_rdm_fetch_atomic_hmem(efa_rdm_mr, &rxe->iov[i], data + offset,
 							rxe->atomrsp_data + offset, dtsize, op, dt);
 			if (OFI_UNLIKELY(err)) {
 				return err;
@@ -469,14 +469,14 @@ ssize_t efa_rdm_pke_init_compare_rta(struct efa_rdm_pke *pkt_entry,
 }
 
 static
-int efa_rdm_compare_atomic_hmem(struct efa_mr *efa_mr, struct iovec *dst, char *src, void* res,
+int efa_rdm_compare_atomic_hmem(struct efa_rdm_mr *efa_rdm_mr, struct iovec *dst, char *src, void* res,
 				void* cmp, size_t dtsize, int op, int dt)
 {
 	char *host_data = (char *) malloc(dst->iov_len);
 	int err;
 
 	/* Step 1: Copy From HMEM into temp_host_buffer */
-	err = efa_copy_from_hmem(efa_mr, host_data, dst->iov_base, dst->iov_len);
+	err = efa_copy_from_hmem(efa_rdm_mr, host_data, dst->iov_base, dst->iov_len);
 	if (OFI_UNLIKELY(err)) {
 		free(host_data);
 		return err;
@@ -486,7 +486,7 @@ int efa_rdm_compare_atomic_hmem(struct efa_mr *efa_mr, struct iovec *dst, char *
 	ofi_atomic_swap_handler(op, dt, host_data, src, cmp, res, dst->iov_len / dtsize);
 
 	/* Step 3: Copy host buffer back to device*/
-	err = efa_copy_to_hmem(efa_mr, dst->iov_base, host_data, dst->iov_len);
+	err = efa_copy_to_hmem(efa_rdm_mr, dst->iov_base, host_data, dst->iov_len);
 	free(host_data);
 	return err;
 }
@@ -498,7 +498,7 @@ int efa_rdm_compare_atomic_hmem(struct efa_mr *efa_mr, struct iovec *dst, char *
  */
 int efa_rdm_pke_proc_compare_rta(struct efa_rdm_pke *pkt_entry)
 {
-	struct efa_mr *efa_mr;
+	struct efa_rdm_mr *efa_rdm_mr;
 	struct efa_rdm_ep *ep;
 	struct efa_rdm_ope *rxe;
 	char *src_data, *cmp_data;
@@ -531,8 +531,8 @@ int efa_rdm_pke_proc_compare_rta(struct efa_rdm_pke *pkt_entry)
 	cmp_data = src_data + rxe->total_len;
 	offset = 0;
 	for (i = 0; i < rxe->iov_count; ++i) {
-		efa_mr = (struct efa_mr*) ofi_mr_map_get(&ep->base_ep.util_ep.domain->mr_map, (efa_rdm_pke_get_rta_hdr(pkt_entry)->rma_iov + i)->key);
-		hmem_iface = efa_mr->peer.iface;
+		efa_rdm_mr = (struct efa_rdm_mr*) ofi_mr_map_get(&ep->base_ep.util_ep.domain->mr_map, (efa_rdm_pke_get_rta_hdr(pkt_entry)->rma_iov + i)->key);
+		hmem_iface = efa_rdm_mr->peer.iface;
 
 		if (hmem_iface == FI_HMEM_SYSTEM) {
 			ofi_atomic_swap_handler(op, dt, rxe->iov[i].iov_base,
@@ -541,7 +541,7 @@ int efa_rdm_pke_proc_compare_rta(struct efa_rdm_pke *pkt_entry)
 			                        rxe->atomrsp_data + offset,
 			                        rxe->iov[i].iov_len / dtsize);
 		} else {
-			err = efa_rdm_compare_atomic_hmem(efa_mr, &rxe->iov[i], src_data + offset,
+			err = efa_rdm_compare_atomic_hmem(efa_rdm_mr, &rxe->iov[i], src_data + offset,
 							  rxe->atomrsp_data + offset, cmp_data + offset,
 							  dtsize, op, dt);
 			if (OFI_UNLIKELY(err)) {

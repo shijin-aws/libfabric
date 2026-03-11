@@ -15,7 +15,7 @@ void test_efa_rdm_ope_prepare_to_post_send_impl(struct efa_resource *resource,
 						int *expected_pkt_entry_data_size_vec)
 {
 	struct efa_ep_addr raw_addr;
-	struct efa_mr mock_mr;
+	struct efa_rdm_mr mock_mr;
 	struct efa_rdm_ope mock_txe;
 	struct efa_rdm_peer mock_peer;
 	size_t raw_addr_len = sizeof(raw_addr);
@@ -310,7 +310,7 @@ void test_efa_rdm_rxe_post_local_read_or_queue_impl(struct efa_resource *resourc
 	struct efa_rdm_ep *efa_rdm_ep;
 	struct efa_rdm_pke *pkt_entry;
 	struct efa_rdm_ope *rxe;
-	struct efa_mr cuda_mr = {0};
+	struct efa_rdm_mr cuda_mr = {0};
 	char buf[16];
 	struct iovec iov = {
 		.iov_base = buf,

@@ -133,7 +133,7 @@ size_t efa_rdm_pke_get_segment_offset(struct efa_rdm_pke *pke)
  * @return   		length of data copied.
  */
 static inline size_t
-efa_rdm_pke_copy_from_hmem_iov(struct efa_mr *iov_mr, struct efa_rdm_pke *pke,
+efa_rdm_pke_copy_from_hmem_iov(struct efa_rdm_mr *iov_mr, struct efa_rdm_pke *pke,
 			       struct efa_rdm_ope *ope, size_t payload_offset,
 			       size_t segment_offset, size_t data_size)
 {
@@ -243,7 +243,7 @@ ssize_t efa_rdm_pke_copy_payload_to_ope(struct efa_rdm_pke *pke,
 uint32_t *efa_rdm_pke_connid_ptr(struct efa_rdm_pke *pkt_entry);
 
 int efa_rdm_pke_get_available_copy_methods(struct efa_rdm_ep *ep,
-					   struct efa_mr *efa_mr,
+					   struct efa_rdm_mr *efa_mr,
 					   bool *restrict local_read_available,
 					   bool *restrict cuda_memcpy_available,
 					   bool *restrict gdrcopy_available);

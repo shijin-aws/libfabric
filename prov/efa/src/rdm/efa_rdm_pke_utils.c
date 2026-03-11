@@ -43,7 +43,7 @@ ssize_t efa_rdm_pke_init_payload_from_ope(struct efa_rdm_pke *pke,
 	int tx_iov_index, ret;
 	bool mr_p2p_available;
 	size_t tx_iov_offset, copied;
-	struct efa_mr *iov_mr;
+	struct efa_rdm_mr *iov_mr;
 
 	pke->ope = ope;
 	pke->peer = ope->peer;
@@ -123,7 +123,7 @@ int efa_rdm_ep_flush_queued_blocking_copy_to_hmem(struct efa_rdm_ep *ep)
 {
 	size_t i;
 	size_t bytes_copied[EFA_RDM_MAX_QUEUED_COPY] = {0};
-	struct efa_mr *desc;
+	struct efa_rdm_mr *desc;
 	struct efa_rdm_ope *rxe;
 	struct efa_rdm_pke *pkt_entry;
 	char *data;
@@ -242,7 +242,7 @@ int efa_rdm_pke_queued_copy_payload_to_hmem(struct efa_rdm_pke *pke,
  * 				On failure, return libfabric error code
  */
 int efa_rdm_pke_get_available_copy_methods(struct efa_rdm_ep *ep,
-					   struct efa_mr *efa_mr,
+					   struct efa_rdm_mr *efa_rdm_mr,
 					   bool *restrict local_read_available,
 					   bool *restrict cuda_memcpy_available,
 					   bool *restrict gdrcopy_available)
@@ -250,8 +250,8 @@ int efa_rdm_pke_get_available_copy_methods(struct efa_rdm_ep *ep,
 	int ret;
 	bool mr_p2p_available;
 
-	assert(efa_mr);
-	ret = efa_rdm_ep_use_p2p(ep, efa_mr);
+	assert(efa_rdm_mr);
+	ret = efa_rdm_ep_use_p2p(ep, efa_rdm_mr);
 	if (ret < 0) {
 		return ret;
 	}
@@ -259,7 +259,7 @@ int efa_rdm_pke_get_available_copy_methods(struct efa_rdm_ep *ep,
 	mr_p2p_available = ret;
 	*local_read_available = mr_p2p_available && efa_rdm_ep_support_rdma_read(ep);
 	*cuda_memcpy_available = ep->cuda_api_permitted;
-	*gdrcopy_available = efa_mr->peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE;
+	*gdrcopy_available = efa_rdm_mr->peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE;
 
 	/* For in-order aligned send/recv, only allow local read to be used to copy data */
 	if (ep->sendrecv_in_order_aligned_128_bytes) {
@@ -295,7 +295,7 @@ int efa_rdm_pke_copy_payload_to_cuda(struct efa_rdm_pke *pke,
 				     struct efa_rdm_ope *rxe)
 {
 	static const int max_blocking_copy_rxe_num = 4;
-	struct efa_mr *desc;
+	struct efa_rdm_mr *desc;
 	struct efa_rdm_ep *ep;
 	size_t segment_offset;
 	bool local_read_available, gdrcopy_available, cuda_memcpy_available;
@@ -424,7 +424,7 @@ int efa_rdm_pke_copy_payload_to_cuda(struct efa_rdm_pke *pke,
 ssize_t efa_rdm_pke_copy_payload_to_ope(struct efa_rdm_pke *pke,
 					struct efa_rdm_ope *ope)
 {
-	struct efa_mr *desc;
+	struct efa_rdm_mr *desc;
 	struct efa_rdm_ep *ep;
 	size_t segment_offset;
 	size_t bytes_copied;
