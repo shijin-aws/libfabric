@@ -618,7 +618,7 @@ void test_efa_mr_internal_regv_no_shm_mr(struct efa_resource **state)
 	iov.iov_base = buf;
 	iov.iov_len = mr_size;
 
-	assert_int_equal(efa_mr_internal_regv(resource->domain, &iov, 1,
+	assert_int_equal(efa_rdm_mr_internal_regv(resource->domain, &iov, 1,
 					      FI_SEND | FI_RECV, 0, 0, 0, &mr, NULL),
 			 0);
 	assert_non_null(mr);

@@ -12,6 +12,10 @@
 #include "efa_rdm_tracepoint.h"
 #include "efa_rdm_pke_req.h"
 #include "efa_rdm_pkt_type.h"
+<<<<<<< HEAD
+=======
+#include "efa_rdm_mr.h"
+>>>>>>> 99eca88e1 (prov/efa: Separate efa_mr and efa_rdm_mr into different files)
 
 void efa_rdm_txe_construct(struct efa_rdm_ope *txe,
 			   struct efa_rdm_ep *ep,

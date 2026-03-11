@@ -11,6 +11,10 @@
 #define _EFA_RDM_TP_DEF_H
 
 #include <lttng/tracepoint.h>
+<<<<<<< HEAD
+=======
+#include "efa_rdm_mr.h"
+>>>>>>> 99eca88e1 (prov/efa: Separate efa_mr and efa_rdm_mr into different files)
 
 #define EFA_RDM_TP_PROV efa_rdm
 

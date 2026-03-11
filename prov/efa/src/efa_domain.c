@@ -11,6 +11,7 @@
 #include "efa_cntr.h"
 #include "rdm/efa_rdm_cq.h"
 #include "rdm/efa_rdm_atomic.h"
+#include "efa_rdm_mr.h"
 
 
 struct dlist_entry g_efa_domain_list;
@@ -268,7 +269,7 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 			}
 			efa_domain->internal_buf_mr_regv = efa_rdm_mr_cache_regv;
 		} else {
-			efa_domain->internal_buf_mr_regv = efa_mr_internal_regv;
+			efa_domain->internal_buf_mr_regv = efa_rdm_mr_internal_regv;;
 		}
 		efa_domain->info_type = EFA_INFO_RDM;
 		efa_domain->util_domain.domain_fid.mr = &efa_rdm_domain_mr_ops;
