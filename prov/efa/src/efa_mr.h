@@ -56,6 +56,9 @@ int efa_mr_cache_entry_reg(struct ofi_mr_cache *cache,
 void efa_mr_cache_entry_dereg(struct ofi_mr_cache *cache,
 			      struct ofi_mr_entry *entry);
 
+
+int efa_mr_regattr_validate(struct fid *fid, const struct fi_mr_attr *attr, uint64_t flags);
+
 static inline bool efa_mr_is_hmem(struct efa_rdm_mr *efa_rdm_mr)
 {
 	return efa_rdm_mr && (
