@@ -10,16 +10,6 @@
 
 static int efa_mr_regattr(struct fid *fid, const struct fi_mr_attr *attr,
 			  uint64_t flags, struct fid_mr **mr_fid);
-<<<<<<< HEAD
-static int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const struct fi_mr_attr *mr_attr);
-static int efa_mr_dereg_impl(struct efa_mr *efa_mr);
-static int efa_rdm_mr_reg_impl(struct efa_rdm_mr *efa_mr, uint64_t flags, const struct fi_mr_attr *mr_attr);
-static int efa_rdm_mr_dereg_impl(struct efa_rdm_mr *efa_mr);
-
-/* Forward declaration */
-static struct fi_ops efa_rdm_mr_ops;
-=======
->>>>>>> 99eca88e1 (prov/efa: Separate efa_mr and efa_rdm_mr into different files)
 
 /* Common validation for MR registration attributes */
 int efa_mr_regattr_validate(struct fid *fid, const struct fi_mr_attr *attr,
@@ -98,88 +88,6 @@ int efa_mr_regattr_validate(struct fid *fid, const struct fi_mr_attr *attr,
 	}
 
 	return 0;
-}
-
-/**
- * @brief Validate HMEM attributes and populate efa_mr struct
- *
- * Check if FI_HMEM is enabled for the domain, validate whether the specific
- * device type requested is currently supported by the provider, and update the
- * efa_mr structure based on the attributes requested by the user.
- *
- * @param[in]	efa_mr	efa_mr structure to be updated
- * @param[in]	attr	a copy of fi_mr_attr updated from the user's registration call
- * @param[in]	flags   MR flags
- *
- * @return FI_SUCCESS or negative FI error code
- */
-static int efa_mr_hmem_setup(struct efa_rdm_mr *efa_rdm_mr,
-                             const struct fi_mr_attr *attr,
-							 uint64_t flags)
-{
-	int err;
-	struct iovec mr_iov = {0};
-	struct efa_mr *efa_mr = &efa_rdm_mr->efa_mr;
-	efa_rdm_mr->peer.flags = flags;
-
-	if (attr->iface == FI_HMEM_SYSTEM) {
-		efa_rdm_mr->peer.iface = FI_HMEM_SYSTEM;
-		return FI_SUCCESS;
-	}
-
-	if (efa_mr->domain->util_domain.info_domain_caps & FI_HMEM) {
-		if (g_efa_hmem_info[attr->iface].initialized) {
-			efa_rdm_mr->peer.iface = attr->iface;
-		} else {
-			EFA_WARN(FI_LOG_MR,
-				"%s is not initialized\n",
-				fi_tostr(&attr->iface, FI_TYPE_HMEM_IFACE));
-			return -FI_ENOSYS;
-		}
-	} else {
-		/*
-		 * It's possible that attr->iface is not initialized when
-		 * FI_HMEM is off, so this can't be a fatal error. Print a
-		 * warning in case this value is not FI_HMEM_SYSTEM for
-		 * whatever reason.
-		 */
-		EFA_WARN_ONCE(FI_LOG_MR,
-		             "FI_HMEM support is disabled, assuming FI_HMEM_SYSTEM instead of %s\n",
-		             fi_tostr(&attr->iface, FI_TYPE_HMEM_IFACE));
-		efa_rdm_mr->peer.iface = FI_HMEM_SYSTEM;
-	}
-
-	efa_rdm_mr->peer.device = 0;
-	efa_rdm_mr->peer.flags &= ~OFI_HMEM_DATA_DEV_REG_HANDLE;
-	efa_rdm_mr->peer.hmem_data = NULL;
-	if (efa_rdm_mr->peer.iface == FI_HMEM_CUDA) {
-		efa_rdm_mr->needs_sync = true;
-		efa_rdm_mr->peer.device = attr->device.cuda;
-
-		/* Only attempt GDRCopy registrations for efa rdm path */
-		if (efa_mr->domain->info_type == EFA_INFO_RDM && !(flags & FI_MR_DMABUF) && cuda_is_gdrcopy_enabled()) {
-			mr_iov = *attr->mr_iov;
-			err = ofi_hmem_dev_register(FI_HMEM_CUDA, mr_iov.iov_base, mr_iov.iov_len,
-						    (uint64_t *)&efa_rdm_mr->peer.hmem_data);
-			efa_rdm_mr->peer.flags |= OFI_HMEM_DATA_DEV_REG_HANDLE;
-			if (err) {
-				EFA_WARN(FI_LOG_MR,
-				         "Unable to register handle for GPU memory. err: %d buf: %p len: %zu\n",
-				         err, mr_iov.iov_base, mr_iov.iov_len);
-				/* When gdrcopy pin buf failed, fallback to cudaMemcpy */
-				efa_rdm_mr->peer.hmem_data = NULL;
-				efa_rdm_mr->peer.flags &= ~OFI_HMEM_DATA_DEV_REG_HANDLE;
-			}
-		}
-	} else if (attr->iface == FI_HMEM_ROCR) {
-		efa_rdm_mr->peer.device = attr->device.rocr;
-	} else if (attr->iface == FI_HMEM_NEURON) {
-		efa_rdm_mr->peer.device = attr->device.neuron;
-	} else if (attr->iface == FI_HMEM_SYNAPSEAI) {
-		efa_rdm_mr->peer.device = attr->device.synapseai;
-	}
-
-	return FI_SUCCESS;
 }
 
 int efa_mr_dereg_impl(struct efa_mr *efa_mr)

@@ -35,15 +35,6 @@ extern struct fi_ops_mr efa_domain_mr_ops;
 
 int efa_mr_regattr_validate(struct fid *fid, const struct fi_mr_attr *attr, uint64_t flags);
 
-static inline bool efa_mr_is_hmem(struct efa_rdm_mr *efa_rdm_mr)
-{
-	return efa_rdm_mr && (
-		efa_rdm_mr->peer.iface == FI_HMEM_CUDA ||
-		efa_rdm_mr->peer.iface == FI_HMEM_ROCR ||
-		efa_rdm_mr->peer.iface == FI_HMEM_NEURON ||
-		efa_rdm_mr->peer.iface == FI_HMEM_SYNAPSEAI);
-}
-
 #define EFA_MR_IOV_LIMIT 1
 #define EFA_MR_SUPPORTED_PERMISSIONS (FI_SEND | FI_RECV | FI_REMOTE_READ | FI_REMOTE_WRITE | FI_READ | FI_WRITE)
 

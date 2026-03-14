@@ -385,13 +385,6 @@ static int efa_rdm_mr_dereg_impl(struct efa_rdm_mr *efa_rdm_mr)
 	int ret = 0;
 	int err;
 
-	if (efa_rdm_mr->shm_mr) {
-		ret = fi_close(&efa_rdm_mr->shm_mr->fid);
-		if (ret)
-			return ret;
-		efa_rdm_mr->shm_mr = NULL;
-	}
-
 	if (efa_rdm_mr->inserted_to_mr_map) {
 		efa_domain = efa_rdm_mr->efa_mr.domain;
 		ofi_genlock_lock(&efa_domain->util_domain.lock);
@@ -409,18 +402,103 @@ static int efa_rdm_mr_dereg_impl(struct efa_rdm_mr *efa_rdm_mr)
 	}
 
 	/* RDM-specific: GDRCopy cleanup */
-	if (efa_rdm_mr->efa_mr.iface == FI_HMEM_CUDA &&
-	    (efa_rdm_mr->flags & OFI_HMEM_DATA_DEV_REG_HANDLE)) {
-		assert(efa_rdm_mr->hmem_data);
-		int err = ofi_hmem_dev_unregister(FI_HMEM_CUDA, (uint64_t)efa_rdm_mr->hmem_data);
+	if (efa_rdm_mr->peer.iface == FI_HMEM_CUDA &&
+	    (efa_rdm_mr->peer.flags & OFI_HMEM_DATA_DEV_REG_HANDLE)) {
+		assert(efa_rdm_mr->peer.hmem_data);
+		int err = ofi_hmem_dev_unregister(FI_HMEM_CUDA, (uint64_t)efa_rdm_mr->peer.hmem_data);
 		if (err) {
 			EFA_WARN(FI_LOG_MR, "Unable to de-register cuda handle\n");
 			ret = err;
 		}
-		efa_rdm_mr->hmem_data = NULL;
+		efa_rdm_mr->peer.hmem_data = NULL;
 	}
 
-	return efa_mr_dereg_impl(&efa_rdm_mr->efa_mr);
+	err = efa_mr_dereg_impl(&efa_rdm_mr->efa_mr);
+	if (err)
+		ret = err;
+	return ret;
+}
+
+/**
+ * @brief Validate HMEM attributes and populate efa_mr struct
+ *
+ * Check if FI_HMEM is enabled for the domain, validate whether the specific
+ * device type requested is currently supported by the provider, and update the
+ * efa_mr structure based on the attributes requested by the user.
+ *
+ * @param[in]	efa_mr	efa_mr structure to be updated
+ * @param[in]	attr	a copy of fi_mr_attr updated from the user's registration call
+ * @param[in]	flags   MR flags
+ *
+ * @return FI_SUCCESS or negative FI error code
+ */
+static int efa_rdm_mr_hmem_setup(struct efa_rdm_mr *efa_rdm_mr,
+                             const struct fi_mr_attr *attr,
+							 uint64_t flags)
+{
+	int err;
+	struct iovec mr_iov = {0};
+	struct efa_mr *efa_mr = &efa_rdm_mr->efa_mr;
+	efa_rdm_mr->peer.flags = flags;
+
+	if (attr->iface == FI_HMEM_SYSTEM) {
+		efa_rdm_mr->peer.iface = FI_HMEM_SYSTEM;
+		return FI_SUCCESS;
+	}
+
+	if (efa_mr->domain->util_domain.info_domain_caps & FI_HMEM) {
+		if (g_efa_hmem_info[attr->iface].initialized) {
+			efa_rdm_mr->peer.iface = attr->iface;
+		} else {
+			EFA_WARN(FI_LOG_MR,
+				"%s is not initialized\n",
+				fi_tostr(&attr->iface, FI_TYPE_HMEM_IFACE));
+			return -FI_ENOSYS;
+		}
+	} else {
+		/*
+		 * It's possible that attr->iface is not initialized when
+		 * FI_HMEM is off, so this can't be a fatal error. Print a
+		 * warning in case this value is not FI_HMEM_SYSTEM for
+		 * whatever reason.
+		 */
+		EFA_WARN_ONCE(FI_LOG_MR,
+		             "FI_HMEM support is disabled, assuming FI_HMEM_SYSTEM instead of %s\n",
+		             fi_tostr(&attr->iface, FI_TYPE_HMEM_IFACE));
+		efa_rdm_mr->peer.iface = FI_HMEM_SYSTEM;
+	}
+
+	efa_rdm_mr->peer.device = 0;
+	efa_rdm_mr->peer.flags &= ~OFI_HMEM_DATA_DEV_REG_HANDLE;
+	efa_rdm_mr->peer.hmem_data = NULL;
+	if (efa_rdm_mr->peer.iface == FI_HMEM_CUDA) {
+		efa_rdm_mr->needs_sync = true;
+		efa_rdm_mr->peer.device = attr->device.cuda;
+
+		/* Only attempt GDRCopy registrations for efa rdm path */
+		if (efa_mr->domain->info_type == EFA_INFO_RDM && !(flags & FI_MR_DMABUF) && cuda_is_gdrcopy_enabled()) {
+			mr_iov = *attr->mr_iov;
+			err = ofi_hmem_dev_register(FI_HMEM_CUDA, mr_iov.iov_base, mr_iov.iov_len,
+						    (uint64_t *)&efa_rdm_mr->peer.hmem_data);
+			efa_rdm_mr->peer.flags |= OFI_HMEM_DATA_DEV_REG_HANDLE;
+			if (err) {
+				EFA_WARN(FI_LOG_MR,
+				         "Unable to register handle for GPU memory. err: %d buf: %p len: %zu\n",
+				         err, mr_iov.iov_base, mr_iov.iov_len);
+				/* When gdrcopy pin buf failed, fallback to cudaMemcpy */
+				efa_rdm_mr->peer.hmem_data = NULL;
+				efa_rdm_mr->peer.flags &= ~OFI_HMEM_DATA_DEV_REG_HANDLE;
+			}
+		}
+	} else if (attr->iface == FI_HMEM_ROCR) {
+		efa_rdm_mr->peer.device = attr->device.rocr;
+	} else if (attr->iface == FI_HMEM_NEURON) {
+		efa_rdm_mr->peer.device = attr->device.neuron;
+	} else if (attr->iface == FI_HMEM_SYNAPSEAI) {
+		efa_rdm_mr->peer.device = attr->device.synapseai;
+	}
+
+	return FI_SUCCESS;
 }
 
 /* RDM MR registration implementation - wraps core EFA MR registration */
@@ -433,13 +511,23 @@ static int efa_rdm_mr_reg_impl(struct efa_rdm_mr *efa_rdm_mr, uint64_t flags,
 	if (efa_rdm_mr->efa_mr.domain->cache)
 		ofi_mr_cache_flush(efa_rdm_mr->efa_mr.domain->cache, false);
 
+	/* Initialize RDM-specific fields */
+	efa_rdm_mr->inserted_to_mr_map = false;
+	efa_rdm_mr->needs_sync = false;
+	efa_rdm_mr->shm_mr = NULL;
+	efa_rdm_mr->entry = NULL;
+
+	/* setup efa_mr_peer */
+	ret = efa_rdm_mr_hmem_setup(efa_rdm_mr, mr_attr, flags);
+	if (ret)
+		return ret;
 	/*
-	 * For FI_HMEM_CUDA iface when p2p is unavailable, skip ibv_reg_mr() and
+	 * For iface when p2p is unavailable, skip ibv_reg_mr() and
 	 * generate proprietary mr_fid key.
 	 */
 	if ((mr_attr->iface == FI_HMEM_CUDA || mr_attr->iface == FI_HMEM_ROCR)
 		&& !g_efa_hmem_info[mr_attr->iface].p2p_supported_by_device) {
-		efa_rdm_mr->efa_mr.mr_fid.key = efa_rdm_mr_non_p2p_keygen();
+		efa_rdm_mr->efa_mr.mr_fid.key = efa_mr_non_p2p_keygen();
 	} else {
 		/* base mr registration (ibv mr), must be called the first before RDM specific fields are setup */
 		ret = efa_mr_reg_impl(&efa_rdm_mr->efa_mr, flags, mr_attr);
@@ -447,39 +535,11 @@ static int efa_rdm_mr_reg_impl(struct efa_rdm_mr *efa_rdm_mr, uint64_t flags,
 			return ret;
 	}
 
-	/* Initialize RDM-specific fields */
-	efa_rdm_mr->inserted_to_mr_map = false;
-	efa_rdm_mr->needs_sync = false;
-	efa_rdm_mr->shm_mr = NULL;
-	efa_rdm_mr->entry = NULL;
-	efa_rdm_mr->hmem_data = NULL;
-	efa_rdm_mr->flags = flags;
-
-	/* RDM-specific: GDRCopy registration for CUDA */
-	if (mr_attr->iface == FI_HMEM_CUDA) {
-		efa_rdm_mr->needs_sync = true;
-
-		if (!(flags & FI_MR_DMABUF) && cuda_is_gdrcopy_enabled()) {
-			struct iovec mr_iov = *mr_attr->mr_iov;
-			int err = ofi_hmem_dev_register(FI_HMEM_CUDA, mr_iov.iov_base, mr_iov.iov_len,
-							(uint64_t *)&efa_rdm_mr->hmem_data);
-			efa_rdm_mr->flags |= OFI_HMEM_DATA_DEV_REG_HANDLE;
-			if (err) {
-				EFA_WARN(FI_LOG_MR,
-					 "Unable to register handle for GPU memory. err: %d buf: %p len: %zu\n",
-					 err, mr_iov.iov_base, mr_iov.iov_len);
-				/* When gdrcopy pin buf failed, fallback to cudaMemcpy */
-				efa_rdm_mr->hmem_data = NULL;
-				efa_rdm_mr->flags &= ~OFI_HMEM_DATA_DEV_REG_HANDLE;
-			}
-		}
-	}
-
 	/* RDM-specific: Update domain MR map */
 	assert(efa_rdm_mr->efa_mr.mr_fid.key != FI_KEY_NOTAVAIL);
 	ret = efa_rdm_mr_update_domain_mr_map(efa_rdm_mr, (struct fi_mr_attr *)mr_attr, flags);
 	if (ret) {
-		ret = efa_rdm_mr_dereg_impl(efa_rdm_mr);
+		(void) efa_rdm_mr_dereg_impl(efa_rdm_mr);
 		return ret;
 	}
 

@@ -8,18 +8,26 @@
 
 extern struct fi_ops_mr efa_domain_mr_cache_ops;
 
+/*
+ * Descriptor returned for FI_HMEM peer memory registrations
+ */
+struct efa_mr_peer {
+	enum fi_hmem_iface  iface;
+	uint64_t			device;
+	uint64_t            flags;
+	void                *hmem_data;
+};
+
 struct efa_rdm_mr {
 	struct efa_mr		efa_mr;
+	/* Peer memory descriptor for HMEM */
+	struct efa_mr_peer	peer;
 	/* Used only in MR cache */
 	struct ofi_mr_entry	*entry;
 	/* Used only in rdm */
 	struct fid_mr		*shm_mr;
 	bool			inserted_to_mr_map;
 	bool 			needs_sync;
-	/* RDM-specific HMEM data handle */
-	void			*hmem_data;
-	/* RDM-specific flags */
-	uint64_t			flags;
 };
 
 /* Compile-time assertion to ensure safe casting between efa_mr and efa_rdm_mr */
