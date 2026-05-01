@@ -568,6 +568,8 @@ void test_efa_rdm_rma_post_remote_read_partial_fail_no_txe_release();
 void test_efa_rdm_rma_partial_post_retry_no_double_free();
 void test_efa_rdm_rma_partial_post_retry_no_double_free_read();
 void test_efa_rdm_msg_send_multi_pkt_sendv_fail_no_inflight();
+void test_efa_ibv_post_write_high_pps_calls_processing_hint();
+void test_efa_ibv_post_write_high_pps_not_called_when_disabled();
 /* end efa_unit_test_rdm_rma.c */
 
 static inline
