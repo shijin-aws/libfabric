@@ -88,4 +88,16 @@ struct fi_efa_feature_ops {
 	bool (*query)(const char *feature);
 };
 
+
+/*
+ * EFA provider-specific operation flags (bits 60-63).
+ * These flags can be passed in the 'flags' argument of data transfer calls
+ * such as fi_writemsg().
+ */
+
+/**
+ * Hint the device to optimize for higher message rate.
+ */
+#define FI_EFA_WR_HIGH_PPS (1ULL << 60)
+
 #endif /* _FI_EXT_EFA_H_ */
