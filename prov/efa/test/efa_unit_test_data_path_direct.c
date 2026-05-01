@@ -233,3 +233,35 @@ void test_efa_data_path_direct_qp_gen_increments_across_qps(struct efa_resource 
 	skip();
 #endif
 }
+
+/**
+ * @brief Test that efa_send_wr_set_processing_hint_mask sets the processing
+ * hint bits in ctrl3 of the TX WQE metadata descriptor.
+ */
+void test_efa_data_path_direct_write_high_pps_hint_set(struct efa_resource **state)
+{
+#if HAVE_EFA_DATA_PATH_DIRECT
+	struct efa_io_tx_meta_desc meta_desc = {0};
+
+	efa_send_wr_set_processing_hint_mask(&meta_desc);
+
+	assert_true(EFA_GET(&meta_desc.ctrl3, EFA_IO_TX_META_DESC_PROCESSING_HINTS) != 0);
+#else
+	skip();
+#endif
+}
+
+/**
+ * @brief Test that ctrl3 processing hint bits are zero by default
+ * (i.e., not set without calling efa_send_wr_set_processing_hint_mask).
+ */
+void test_efa_data_path_direct_write_high_pps_hint_not_set_when_disabled(struct efa_resource **state)
+{
+#if HAVE_EFA_DATA_PATH_DIRECT
+	struct efa_io_tx_meta_desc meta_desc = {0};
+
+	assert_true(EFA_GET(&meta_desc.ctrl3, EFA_IO_TX_META_DESC_PROCESSING_HINTS) == 0);
+#else
+	skip();
+#endif
+}
