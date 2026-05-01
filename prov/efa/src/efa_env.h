@@ -79,6 +79,11 @@ struct efa_env {
 	 * operations still reference an MR when it is closed.
 	 */
 	int track_mr;
+	/**
+	 * Enable high PPS (packets per second) optimization hints.
+	 * This feature allows applications to provide hints for burst PPS sensitive workloads.
+	 */
+	int enable_high_pps;
 };
 
 extern struct efa_env efa_env;
