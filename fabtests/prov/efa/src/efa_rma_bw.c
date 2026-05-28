@@ -72,6 +72,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <getopt.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 #include <rdma/fi_errno.h>
 #include <rdma/fi_ext.h>
@@ -104,8 +106,38 @@ static struct efa_rma_bw_ctx *rx_ctx_pool;
 static int use_high_pps;
 static int post_list = 1;
 static int num_eps = 1;
+static int use_threads;
 static struct fid_ep *eps[EFA_RMA_BW_MAX_EPS];
 static fi_addr_t remote_addrs[EFA_RMA_BW_MAX_EPS];
+
+/*
+ * Shared state for multi-threaded mode.
+ * 1 CQ poller thread polls the shared CQ and updates per_ep_completed
+ * atomically. N EP threads each post operations on their own EP, reading
+ * their per_ep_completed slot for flow control.
+ */
+struct thread_shared_state {
+	atomic_int per_ep_completed[EFA_RMA_BW_MAX_EPS];
+	atomic_int completed_cnt;
+	int total_iterations;	/* per-EP iteration target */
+	int total_posts;	/* total across all EPs */
+	size_t rma_start_offset;
+	struct fi_rma_iov *remote;
+	int error;		/* set by any thread on failure */
+};
+
+struct ep_thread_args {
+	struct thread_shared_state *state;
+	int ep_idx;
+	int per_ep_posted;
+};
+
+struct cq_thread_args {
+	struct thread_shared_state *state;
+	struct fid_cq *cq;
+	uint64_t *cq_cntr;
+	int *per_ep_completed_nonatomic; /* for non-threaded path */
+};
 
 static ssize_t post_rma(struct fid_ep *target_ep, fi_addr_t target_addr,
 			char *buf, size_t size,
@@ -226,6 +258,162 @@ static int post_rx(int ep_idx, int *per_ep_posted, int *per_ep_completed,
 	return 0;
 }
 
+/*
+ * CQ poller thread: polls the shared CQ and atomically updates
+ * per_ep_completed[] so EP threads can make progress. Runs until
+ * all expected completions have been harvested.
+ */
+static void *cq_poller_thread(void *arg)
+{
+	struct cq_thread_args *cq_args = arg;
+	struct thread_shared_state *state = cq_args->state;
+	struct fi_cq_data_entry comp[EFA_RMA_BW_CQ_POLL_BATCH];
+	struct efa_rma_bw_ctx *ctx;
+	int ret, i;
+
+	while (atomic_load(&state->completed_cnt) < state->total_posts &&
+	       !state->error) {
+		ret = fi_cq_read(cq_args->cq, comp, EFA_RMA_BW_CQ_POLL_BATCH);
+		if (ret > 0) {
+			for (i = 0; i < ret; i++) {
+				if (comp[i].op_context) {
+					ctx = EFA_RMA_BW_CTX_FROM_OP_CONTEXT(
+						comp[i].op_context);
+					atomic_fetch_add(
+						&state->per_ep_completed[ctx->ep_idx], 1);
+				}
+			}
+			atomic_fetch_add(&state->completed_cnt, ret);
+			(*cq_args->cq_cntr) += ret;
+		} else if (ret == -FI_EAVAIL) {
+			ft_cq_readerr(cq_args->cq);
+			state->error = ret;
+			break;
+		} else if (ret < 0 && ret != -FI_EAGAIN) {
+			state->error = ret;
+			break;
+		}
+	}
+	return NULL;
+}
+
+/*
+ * EP posting thread (tx/initiator): posts RMA operations on a single EP
+ * until its iteration quota is met. Reads per_ep_completed atomically
+ * for window flow control.
+ */
+static void *ep_tx_thread(void *arg)
+{
+	struct ep_thread_args *ep_args = arg;
+	struct thread_shared_state *state = ep_args->state;
+	int ep_idx = ep_args->ep_idx;
+	int per_ep_posted = 0;
+	int total_iterations = state->total_iterations;
+	size_t offset;
+	char *buf;
+	uint64_t flags;
+	int ret;
+
+	while (per_ep_posted < total_iterations && !state->error) {
+		int completed = atomic_load(&state->per_ep_completed[ep_idx]);
+
+		if ((per_ep_posted - completed) >= opts.window_size)
+			continue;
+
+		int slot = ep_idx * opts.window_size +
+			   (per_ep_posted % opts.window_size);
+
+		offset = state->rma_start_offset +
+			 (per_ep_posted % opts.window_size) * opts.transfer_size;
+
+		buf = (opts.rma_op == FT_RMA_READ) ?
+		      rx_buf + offset : tx_buf + offset;
+
+		tx_ctx_pool[slot].ep_idx = ep_idx;
+		per_ep_posted++;
+
+		flags = 0;
+		if (post_list > 1 &&
+		    per_ep_posted % post_list &&
+		    per_ep_posted < total_iterations &&
+		    (per_ep_posted - completed) < opts.window_size)
+			flags = FI_MORE;
+
+		ret = post_rma(eps[ep_idx], remote_addrs[ep_idx],
+				buf, opts.transfer_size, state->remote,
+				&tx_ctx_pool[slot].context, flags);
+		if (ret == -FI_EAGAIN) {
+			per_ep_posted--;
+			continue;
+		}
+		if (ret) {
+			state->error = ret;
+			break;
+		}
+	}
+
+	ep_args->per_ep_posted = per_ep_posted;
+	return NULL;
+}
+
+/*
+ * EP posting thread (rx/writedata server): posts receive buffers on a
+ * single EP, replenishing as completions arrive. Reads per_ep_completed
+ * atomically for window flow control.
+ */
+static void *ep_rx_thread(void *arg)
+{
+	struct ep_thread_args *ep_args = arg;
+	struct thread_shared_state *state = ep_args->state;
+	int ep_idx = ep_args->ep_idx;
+	int per_ep_posted = ep_args->per_ep_posted; /* from pre-post */
+	int total_iterations = state->total_iterations;
+	int ret;
+
+	while (per_ep_posted < total_iterations && !state->error) {
+		int completed = atomic_load(&state->per_ep_completed[ep_idx]);
+
+		if ((per_ep_posted - completed) >= opts.window_size)
+			continue;
+
+		int slot = ep_idx * opts.window_size +
+			   (per_ep_posted % opts.window_size);
+		struct iovec iov = {
+			.iov_base = rx_buf,
+			.iov_len = FT_MAX_CTRL_MSG + ft_rx_prefix_size(),
+		};
+		struct fi_msg msg = {
+			.msg_iov = &iov,
+			.desc = &mr_desc,
+			.iov_count = 1,
+			.addr = FI_ADDR_UNSPEC,
+			.context = &rx_ctx_pool[slot].context,
+		};
+
+		rx_ctx_pool[slot].ep_idx = ep_idx;
+		per_ep_posted++;
+
+		uint64_t rx_flags = 0;
+		if (post_list > 1 &&
+		    per_ep_posted % post_list &&
+		    per_ep_posted < total_iterations &&
+		    (per_ep_posted - completed) < opts.window_size)
+			rx_flags = FI_MORE;
+
+		ret = fi_recvmsg(eps[ep_idx], &msg, rx_flags);
+		if (ret) {
+			per_ep_posted--;
+			if (ret == -FI_EAGAIN)
+				continue;
+			state->error = ret;
+			break;
+		}
+	}
+
+	ep_args->per_ep_posted = per_ep_posted;
+	return NULL;
+}
+
 static int bandwidth_rma_efa(struct fi_rma_iov *remote)
 {
 	int ret, posted_cnt = 0, completed_cnt = 0;
@@ -254,7 +442,63 @@ static int bandwidth_rma_efa(struct fi_rma_iov *remote)
 	rma_start_offset = FT_RMA_SYNC_MSG_BYTES +
 			   MAX(ft_tx_prefix_size(), ft_rx_prefix_size());
 
-	if (opts.rma_op == FT_RMA_WRITEDATA && !opts.dst_addr) {
+	if (use_threads && num_eps > 1) {
+		/* Multi-threaded path: 1 CQ poller + N EP posting threads */
+		struct thread_shared_state state = {0};
+		struct ep_thread_args ep_args[EFA_RMA_BW_MAX_EPS] = {0};
+		struct cq_thread_args cq_args = {0};
+		pthread_t cq_tid;
+		pthread_t ep_tids[EFA_RMA_BW_MAX_EPS];
+		bool is_rx = (opts.rma_op == FT_RMA_WRITEDATA && !opts.dst_addr);
+
+		state.total_iterations = total_iterations;
+		state.total_posts = total_posts;
+		state.rma_start_offset = rma_start_offset;
+		state.remote = remote;
+
+		/* Pre-post receives for writedata rx */
+		if (is_rx && (fi->rx_attr->mode & FI_RX_CQ_DATA)) {
+			for (int ep_idx = 0; ep_idx < num_eps; ep_idx++) {
+				while (per_ep_posted[ep_idx] < opts.window_size) {
+					ret = post_rx(ep_idx, per_ep_posted,
+						      per_ep_completed,
+						      &posted_cnt, 0);
+					if (ret)
+						goto out_free;
+				}
+			}
+		}
+
+		ft_start();
+
+		/* Set up CQ poller thread */
+		cq_args.state = &state;
+		cq_args.cq = is_rx ? rxcq : txcq;
+		cq_args.cq_cntr = is_rx ? &rx_cq_cntr : &tx_cq_cntr;
+		pthread_create(&cq_tid, NULL, cq_poller_thread, &cq_args);
+
+		/* Launch EP posting threads */
+		for (int i = 0; i < num_eps; i++) {
+			ep_args[i].state = &state;
+			ep_args[i].ep_idx = i;
+			ep_args[i].per_ep_posted = is_rx ? per_ep_posted[i] : 0;
+			pthread_create(&ep_tids[i], NULL,
+				       is_rx ? ep_rx_thread : ep_tx_thread,
+				       &ep_args[i]);
+		}
+
+		/* Wait for all threads */
+		for (int i = 0; i < num_eps; i++)
+			pthread_join(ep_tids[i], NULL);
+		pthread_join(cq_tid, NULL);
+
+		if (state.error) {
+			ret = state.error;
+			goto out_free;
+		}
+
+		completed_cnt = atomic_load(&state.completed_cnt);
+	} else if (opts.rma_op == FT_RMA_WRITEDATA && !opts.dst_addr) {
 		/* Server side for writedata: pre-post rx buffers round-robin. */
 		if (fi->rx_attr->mode & FI_RX_CQ_DATA) {
 			for (int ep_idx = 0; ep_idx < num_eps; ep_idx++) {
@@ -483,12 +727,14 @@ enum {
 	OPT_HIGH_PPS = 256,
 	OPT_POST_LIST,
 	OPT_NUM_EPS,
+	OPT_USE_THREADS,
 };
 
 static struct option efa_extra_opts[] = {
 	{"high-pps", no_argument, NULL, OPT_HIGH_PPS},
 	{"post-list", required_argument, NULL, OPT_POST_LIST},
 	{"num-eps", required_argument, NULL, OPT_NUM_EPS},
+	{"use-threads", no_argument, NULL, OPT_USE_THREADS},
 	{0, 0, 0, 0}
 };
 
@@ -553,6 +799,9 @@ int main(int argc, char **argv)
 				return EXIT_FAILURE;
 			}
 			break;
+		case OPT_USE_THREADS:
+			use_threads = 1;
+			break;
 		case '?':
 		case 'h':
 			ft_csusage(argv[0],
@@ -566,6 +815,8 @@ int main(int argc, char **argv)
 				"Batch n posts per doorbell using FI_MORE (default: 1)");
 			FT_PRINT_OPTS_USAGE("-q <n>, --num-eps <n>",
 				"Number of endpoints/QPs (default: 1)");
+			FT_PRINT_OPTS_USAGE("--use-threads",
+				"Use per-EP posting threads + CQ poller thread");
 			fprintf(stderr, "Note: read/write bw tests are bidirectional.\n"
 					"      writedata bw test is unidirectional"
 					" from the client side.\n");
@@ -589,6 +840,9 @@ int main(int argc, char **argv)
 	hints->tx_attr->tclass = FI_TC_BULK_DATA;
 	/* Using OOB sync to not mess up with the tx/rx seq cntrs in fabtests common code */
 	opts.options |= FT_OPT_OOB_SYNC;
+
+	if (use_threads)
+		hints->domain_attr->threading = FI_THREAD_SAFE;
 
 	const char *op_str = "WRITE";
 	if (opts.rma_op == FT_RMA_WRITEDATA)
