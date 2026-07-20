@@ -858,6 +858,10 @@ void test_efa_domain_open_ops_cntr_open_ext(void **state)
 	attr.events = FI_CNTR_EVENTS_COMP;
 	ret = efa_gda_ops->cntr_open_ext(resource->domain, &attr, &cntr_fid,
 					  NULL, &efa_attr);
+
+	if (ret == -FI_EOPNOTSUPP)
+		skip();
+
 #if HAVE_EFADV_CREATE_COMP_CNTR
 	assert_int_equal(ret, FI_SUCCESS);
 	assert_non_null(cntr_fid);

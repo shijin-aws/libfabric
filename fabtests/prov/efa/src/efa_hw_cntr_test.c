@@ -89,6 +89,12 @@ static int open_cntr(struct fid_cntr **cntr, volatile uint64_t **cntr_ptr)
 	}
 
 	if (ret) {
+		if (ret == -FI_EOPNOTSUPP) {
+			FT_INFO("cntr_open_ext not supported, skipping test");
+			free(efa_attr.comp_cntr_ext_mem.ptr);
+			free(efa_attr.err_cntr_ext_mem.ptr);
+			return -FI_ENODATA;
+		}
 		FT_WARN("hw cntr open failed (%s)\n", fi_strerror(-ret));
 		free(efa_attr.comp_cntr_ext_mem.ptr);
 		free(efa_attr.err_cntr_ext_mem.ptr);

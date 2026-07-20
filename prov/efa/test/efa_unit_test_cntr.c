@@ -526,6 +526,8 @@ void test_efa_hw_cntr_wait_success(void **state)
 	int ret;
 
 	ret = test_efa_hw_cntr_open_with_wait_obj(resource, FI_WAIT_UNSPEC, &cntr_fid);
+	if (ret == -FI_EOPNOTSUPP)
+		skip();
 	assert_int_equal(ret, FI_SUCCESS);
 
 	g_efa_unit_test_mocks.ibv_read_comp_cntr = efa_mock_ibv_read_comp_cntr_return_mock;
@@ -551,6 +553,8 @@ void test_efa_hw_cntr_wait_returns_einval_with_wait_none(void **state)
 	int ret;
 
 	ret = test_efa_hw_cntr_open_with_wait_obj(resource, FI_WAIT_NONE, &cntr_fid);
+	if (ret == -FI_EOPNOTSUPP)
+		skip();
 	assert_int_equal(ret, FI_SUCCESS);
 
 	ret = fi_cntr_wait(cntr_fid, 10, 1000);
