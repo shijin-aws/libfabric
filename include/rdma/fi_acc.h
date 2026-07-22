@@ -120,11 +120,14 @@ struct fi_acc_info {
  * =============================================================================
  */
 
+#ifndef FI_ACC_SCOPE_DEFINED
+#define FI_ACC_SCOPE_DEFINED
 enum fi_acc_scope {
 	FI_ACC_WORK_ITEM,    /* Single thread */
 	FI_ACC_SUBGROUP,     /* Warp (CUDA) / Subgroup (SYCL) */
 	FI_ACC_WORK_GROUP,   /* Thread block (CUDA) / Work-group (SYCL) */
 };
+#endif
 
 /*
  * =============================================================================

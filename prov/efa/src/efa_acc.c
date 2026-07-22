@@ -31,8 +31,8 @@
 #include "efa_conn.h"
 #include "fi_ext_efa.h"
 
-/* Include device struct definitions for building blobs */
-#include <rdma/fi_acc_device.h>
+/* Include EFA device struct definitions for building opaque blobs */
+#include "acc_cuda/fi_acc_efa_device.h"
 
 #if HAVE_EFADV_QUERY_QP_WQS
 #include <infiniband/efadv.h>
@@ -88,7 +88,7 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 	struct fi_acc_info *ai;
 	struct efadv_wq_attr qp_sq_attr = {};
 	struct efadv_wq_attr qp_rq_attr = {};
-	struct fi_acc_dev_ep h_ep = {};
+	struct fi_acc_efa_ep h_ep = {};
 	long page_size;
 	int ret;
 
@@ -179,7 +179,7 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 	ret = acc_gpu_alloc_and_copy(ai, &h_ep, sizeof(h_ep), acc_ep);
 	if (ret) return ret;
 
-	*size = sizeof(struct fi_acc_dev_ep);
+	*size = sizeof(struct fi_acc_efa_ep);
 	return FI_SUCCESS;
 #else
 	return -FI_EOPNOTSUPP;
@@ -199,7 +199,7 @@ int efa_acc_cq_export(struct fid_cq *cq_fid, uint64_t flags,
 	struct efa_acc_state *acc;
 	struct fi_acc_info *ai;
 	struct efadv_cq_attr efadv_attr = {};
-	struct fi_acc_dev_cq h_cq = {};
+	struct fi_acc_efa_cq h_cq = {};
 	int ret;
 
 	if (!cq_fid || !acc_cq || !size)
@@ -235,7 +235,7 @@ int efa_acc_cq_export(struct fid_cq *cq_fid, uint64_t flags,
 	ret = acc_gpu_alloc_and_copy(ai, &h_cq, sizeof(h_cq), acc_cq);
 	if (ret) return ret;
 
-	*size = sizeof(struct fi_acc_dev_cq);
+	*size = sizeof(struct fi_acc_efa_cq);
 	return FI_SUCCESS;
 #else
 	return -FI_EOPNOTSUPP;
@@ -253,7 +253,7 @@ int efa_acc_cntr_export(struct fid_cntr *cntr_fid, uint64_t flags,
 	struct efa_cntr *efa_cntr;
 	struct efa_acc_state *acc;
 	struct fi_acc_info *ai;
-	struct fi_acc_dev_cntr h_cntr = {};
+	struct fi_acc_efa_cntr h_cntr = {};
 	int ret;
 
 	if (!cntr_fid || !acc_cntr || !size)
@@ -270,7 +270,7 @@ int efa_acc_cntr_export(struct fid_cntr *cntr_fid, uint64_t flags,
 	ret = acc_gpu_alloc_and_copy(ai, &h_cntr, sizeof(h_cntr), acc_cntr);
 	if (ret) return ret;
 
-	*size = sizeof(struct fi_acc_dev_cntr);
+	*size = sizeof(struct fi_acc_efa_cntr);
 	return FI_SUCCESS;
 }
 
@@ -283,7 +283,7 @@ int efa_acc_mr_export(struct fid_mr *mr_fid, uint64_t flags,
 		      void **acc_desc, size_t *size)
 {
 	struct efa_mr *efa_mr;
-	struct fi_acc_dev_desc h_desc = {};
+	struct fi_acc_efa_desc h_desc = {};
 	struct efa_base_ep *base_ep;
 	struct efa_acc_state *acc;
 	struct fi_acc_info *ai;
@@ -311,7 +311,7 @@ int efa_acc_mr_export(struct fid_mr *mr_fid, uint64_t flags,
 	ret = acc_gpu_alloc_and_copy(ai, &h_desc, sizeof(h_desc), acc_desc);
 	if (ret) return ret;
 
-	*size = sizeof(struct fi_acc_dev_desc);
+	*size = sizeof(struct fi_acc_efa_desc);
 	return FI_SUCCESS;
 }
 
@@ -325,7 +325,7 @@ int efa_acc_av_export(struct fid_av *av_fid, fi_addr_t fi_addr,
 {
 	struct efa_av *efa_av;
 	struct efa_conn *conn;
-	struct fi_acc_dev_peer h_peer = {};
+	struct fi_acc_efa_peer h_peer = {};
 	struct efa_acc_state *acc;
 	struct fi_acc_info *ai;
 	int ret;
@@ -357,7 +357,7 @@ int efa_acc_av_export(struct fid_av *av_fid, fi_addr_t fi_addr,
 	ret = acc_gpu_alloc_and_copy(ai, &h_peer, sizeof(h_peer), acc_peer);
 	if (ret) return ret;
 
-	*size = sizeof(struct fi_acc_dev_peer);
+	*size = sizeof(struct fi_acc_efa_peer);
 	return FI_SUCCESS;
 }
 
@@ -371,7 +371,7 @@ int efa_acc_av_export_batch(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
 			    void **acc_peers, size_t *size)
 {
 	struct efa_av *efa_av;
-	struct fi_acc_dev_peer *h_peers;
+	struct fi_acc_efa_peer *h_peers;
 	struct efa_acc_state *acc;
 	struct fi_acc_info *ai;
 	size_t i;
@@ -417,7 +417,7 @@ int efa_acc_av_export_batch(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
 	free(h_peers);
 	if (ret) return ret;
 
-	*size = count * sizeof(struct fi_acc_dev_peer);
+	*size = count * sizeof(struct fi_acc_efa_peer);
 	return FI_SUCCESS;
 }
 
