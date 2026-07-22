@@ -55,6 +55,7 @@ _efa_files = \
 	prov/efa/src/efa_env.c	\
 	prov/efa/src/efa_cntr.c	\
 	prov/efa/src/efa_hw_cntr.c \
+	prov/efa/src/efa_acc.c \
 	prov/efa/src/efa_msg.c \
 	prov/efa/src/efa_rma.c \
 	prov/efa/src/efa_cq.c \

@@ -7,6 +7,8 @@
 #include "efa.h"
 
 #include "efa_data_path_direct_structs.h"
+
+struct efa_acc_state;
 enum ibv_cq_ex_type {
 	IBV_CQ,
 	EFADV_CQ
@@ -42,6 +44,8 @@ struct efa_cq {
 	/* Only used by efa-direct cq on util cq bypass path */
 	void (*read_entry)(struct efa_ibv_cq *ibv_cq, void *buf, int opcode);
 	char *err_buf;
+	/* OFI Accelerator API state (non-NULL if created with FI_ACC) */
+	struct efa_acc_state *acc_state;
 };
 
 extern struct fi_ops_cq efa_cq_ops;
