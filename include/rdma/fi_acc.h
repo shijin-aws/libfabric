@@ -44,27 +44,21 @@ extern "C" {
 
 /*
  * =============================================================================
- * OFI Accelerator API
+ * OFI Accelerator API — Host-Side
  *
- * Enables GPU/accelerator-initiated communication (GPU Direct Async — Kernel
- * Initiated). The accelerator bypasses the CPU on the data path by directly
- * constructing WQEs, writing to NIC work queues, and ringing doorbells.
+ * Enables GPU/accelerator-initiated communication. The provider handles all
+ * hardware details (BAR MMIO mapping, WQE format, doorbell protocol) and
+ * exports opaque device-accessible handles. The accelerator kernel uses
+ * high-level device functions (fi_acc_write, fi_acc_cq_poll, etc.) from
+ * fi_acc_device.h against these opaque handles.
  *
- * Host-side:
- *   - Create resources (EP, CQ, counters, AV) with FI_ACC flag
- *   - Provider maps queues into accelerator address space
- *   - Export structured resource descriptors for device-side use
- *
- * Device-side:
- *   - Accelerator kernel uses exported descriptors to post WQEs,
- *     poll CQ, and read counters without CPU involvement
+ * The consumer never sees ring buffers, doorbells, WQE layouts, or phase bits.
  * =============================================================================
  */
 
 /*
- * Capability / flag bit for accelerator support.
- * Used in fi_info->caps, fi_cq_attr->flags, fi_cntr_attr->flags, etc.
- * Defined in rdma/fabric.h as (1ULL << 44).
+ * Capability flag. Used in fi_info->caps to request accelerator support.
+ * Defined in fabric.h as (1ULL << 44).
  */
 #ifndef FI_ACC
 #define FI_ACC			(1ULL << 44)
@@ -74,9 +68,10 @@ extern "C" {
  * =============================================================================
  * Accelerator memory info
  *
- * Passed as part of object attributes when creating accelerator-accessible
- * resources. The provider calls these callbacks to allocate/import memory
- * accessible from both the NIC and the accelerator device.
+ * Passed during object creation (CQ, counter, EP). The provider calls these
+ * callbacks internally to allocate/import device-accessible memory.
+ * The consumer never calls import/alloc directly after object creation —
+ * fi_acc_*_export() does it.
  * =============================================================================
  */
 
@@ -91,48 +86,16 @@ struct fi_acc_info {
 	enum fi_acc_mem_type mem_type;
 
 	union {
-		/* FI_ACC_MEM_USER_ALLOC: consumer provides allocation hooks */
 		struct {
-			/**
-			 * alloc - Allocate accelerator-accessible memory.
-			 * @device:    Accelerator device ordinal
-			 * @size:      Requested size in bytes
-			 * @alignment: Required alignment (0 = provider choice)
-			 * @flags:     FI_ACC_ALLOC_* flags
-			 * @addr:      [out] Device-accessible virtual address
-			 * @fd:        [out] DMA-BUF fd (-1 if not applicable)
-			 * @offset:    [out] Offset within DMA-BUF
-			 *
-			 * Used for hardware counters — NIC writes directly
-			 * to accelerator memory via DMA-BUF.
-			 */
 			int (*alloc)(uint64_t device, uint64_t size,
 				     uint64_t alignment, uint64_t flags,
 				     void **addr, int *fd, uint64_t *offset);
-
-			/**
-			 * import - Map provider-owned region into accelerator.
-			 * @device:  Accelerator device ordinal
-			 * @fd:      File descriptor (or -1 for host VA import)
-			 * @offset:  Offset within the fd-backed region
-			 * @size:    Size of the region in bytes
-			 * @flags:   FI_ACC_IMPORT_* flags
-			 * @addr:    [in/out] Host VA in, device VA out
-			 *
-			 * Used for SQ buffer (BAR MMIO), doorbell (BAR MMIO),
-			 * and CQ buffer (host RAM) mapping.
-			 */
 			int (*import)(uint64_t device, int fd,
 				      uint64_t offset, uint64_t size,
 				      uint64_t flags, void **addr);
-
-			/**
-			 * free - Release memory allocated by alloc.
-			 */
 			void (*free)(uint64_t device, void *addr);
 		} user;
 
-		/* FI_ACC_MEM_DMABUF: provider fills after object creation */
 		struct {
 			int      fd;
 			uint64_t offset;
@@ -143,219 +106,130 @@ struct fi_acc_info {
 
 /* Flags for fi_acc_info.user.alloc */
 #define FI_ACC_ALLOC_GPU_HBM       (1ULL << 0)
-#define FI_ACC_ALLOC_BAR_MAPPABLE  (1ULL << 1)
 
-/* Flags for fi_acc_info.user.import */
-#define FI_ACC_IMPORT_IOMEMORY     (1ULL << 0)  /* Region is device MMIO */
-#define FI_ACC_IMPORT_DEVICEMAP    (1ULL << 1)  /* Map into accelerator AS */
+/* Flags for fi_acc_info.user.import (provider uses internally) */
+#define FI_ACC_IMPORT_IOMEMORY     (1ULL << 0)
+#define FI_ACC_IMPORT_DEVICEMAP    (1ULL << 1)
 
-/* Flags for fi_acc_cntr_attr */
-#define FI_ACC_CNTR_EXTERNAL_MEM   (1ULL << 0)  /* Counter in ext. device mem */
-
-/*
- * =============================================================================
- * Exported resource structures (structured, not opaque)
- *
- * Returned by fi_*_export_acc(). Contains all information the accelerator
- * kernel needs to directly operate the hardware queues.
- * =============================================================================
- */
-
-/** Work Queue (SQ or RQ) attributes — one per direction */
-struct fi_acc_wq_attr {
-	void     *buffer;       /* Device-accessible ptr to ring buffer */
-	void     *doorbell;     /* Device-accessible ptr to doorbell reg */
-	uint32_t  num_entries;  /* Ring depth (power of 2) */
-	uint32_t  entry_size;   /* Bytes per WQE/RQE */
-	uint32_t  max_batch;    /* Max WQEs per doorbell ring (HW limit) */
-};
-
-/** Exported endpoint: SQ + RQ queue geometry */
-struct fi_acc_ep_attr {
-	struct fi_acc_wq_attr sq;
-	struct fi_acc_wq_attr rq;
-	uint32_t max_inline_data;
-	uint32_t max_rdma_sges;
-};
-
-/** Exported CQ: completion ring buffer geometry */
-struct fi_acc_cq_attr {
-	void     *buffer;       /* Device-accessible ptr to CQ ring */
-	uint32_t  entry_size;   /* Bytes per CQE */
-	uint32_t  num_entries;  /* Ring depth (power of 2) */
-};
-
-/** Exported counter: device-resident counter value pointer */
-struct fi_acc_cntr_attr {
-	volatile uint64_t *value;  /* Device ptr to NIC-written counter */
-};
-
-/** Exported MR: local key for WQE SGE construction */
-struct fi_acc_mr_attr {
-	uint32_t lkey;          /* Local key for use in WQE SGE fields */
-};
-
-/** Exported peer address: raw HW addressing for WQE destination */
-struct fi_acc_peer_addr {
-	uint16_t address_handle;   /* NIC-level address handle (AHN) */
-	uint16_t remote_qpn;       /* Remote queue pair number */
-	uint32_t remote_qkey;      /* Queue key */
-};
+/* Flags for counter creation */
+#define FI_ACC_CNTR_EXTERNAL_MEM   (1ULL << 0)
 
 /*
  * =============================================================================
- * Scope definitions — cooperative thread model for device-side operations
+ * Scope — cooperative thread model hint for device-side operations
  * =============================================================================
  */
 
 enum fi_acc_scope {
-	FI_ACC_WORK_ITEM,    /* Single thread (CUDA thread / SYCL work-item) */
+	FI_ACC_WORK_ITEM,    /* Single thread */
 	FI_ACC_SUBGROUP,     /* Warp (CUDA) / Subgroup (SYCL) */
 	FI_ACC_WORK_GROUP,   /* Thread block (CUDA) / Work-group (SYCL) */
 };
 
 /*
  * =============================================================================
- * Host-side API — Resource export functions
+ * Host-side export functions — return OPAQUE device-accessible handles
  *
- * These are called after fi_enable() to extract device-accessible resource
- * descriptors. The provider uses the fi_acc_info callbacks to perform
- * accelerator-specific memory mapping (BAR MMIO, DMA-BUF, etc.).
+ * All returned pointers are device-accessible (GPU memory). The consumer
+ * passes them directly to device-side fi_acc_* functions without inspecting
+ * or constructing the contents.
  * =============================================================================
  */
 
 /**
- * fi_acc_ep_export - Export endpoint queue resources for accelerator access.
- * @ep:     Enabled endpoint (created/opened with FI_ACC hint)
- * @flags:  Reserved, must be 0
- * @attr:   [out] Structured SQ/RQ queue attributes with device pointers
+ * fi_acc_ep_export - Export endpoint for accelerator access.
+ * @ep:       Enabled endpoint (created with FI_ACC hint)
+ * @flags:    Reserved, must be 0
+ * @acc_ep:   [out] Opaque device-accessible EP handle (GPU memory)
+ * @size:     [out] Size of the exported handle in bytes
  *
  * The provider internally:
- *   1. Queries underlying HW queue geometry (buffer VA, doorbell VA, depth)
- *   2. Calls acc_info->import() to map BAR MMIO into accelerator
- *   3. Returns device-accessible pointers in attr
+ *   - Queries HW queue geometry
+ *   - Maps SQ/RQ/doorbell into accelerator address space
+ *   - Allocates and populates a GPU-resident descriptor
+ *   - Returns a pointer the device kernel can use with fi_acc_write() etc.
  */
 int fi_acc_ep_export(struct fid_ep *ep, uint64_t flags,
-		     struct fi_acc_ep_attr *attr);
+		     void **acc_ep, size_t *size);
 
 /**
- * fi_acc_cq_export - Export CQ ring buffer for accelerator polling.
- * @cq:     CQ (created with FI_ACC flag)
- * @flags:  Reserved, must be 0
- * @attr:   [out] CQ ring buffer attributes with device pointer
+ * fi_acc_cq_export - Export CQ for accelerator completion polling.
+ * @cq:       CQ (created with FI_ACC)
+ * @flags:    Reserved, must be 0
+ * @acc_cq:   [out] Opaque device-accessible CQ handle (GPU memory)
+ * @size:     [out] Size of the exported handle
  */
 int fi_acc_cq_export(struct fid_cq *cq, uint64_t flags,
-		     struct fi_acc_cq_attr *attr);
+		     void **acc_cq, size_t *size);
 
 /**
  * fi_acc_cntr_export - Export counter for accelerator access.
- * @cntr:   Counter (created with FI_ACC + FI_ACC_CNTR_EXTERNAL_MEM)
- * @flags:  Reserved, must be 0
- * @attr:   [out] Device pointer to NIC-written counter value
+ * @cntr:     Counter (created with FI_ACC + FI_ACC_CNTR_EXTERNAL_MEM)
+ * @flags:    Reserved, must be 0
+ * @acc_cntr: [out] Opaque device-accessible counter handle (GPU memory)
+ * @size:     [out] Size of the exported handle
  *
- * The counter value lives in accelerator memory (GPU HBM).
- * The NIC writes directly via DMA-BUF. The accelerator kernel reads
- * the value without CPU involvement.
+ * The counter value lives in accelerator memory (GPU HBM). The NIC
+ * writes directly. fi_acc_cntr_read() on the device reads it in one
+ * instruction with zero overhead.
  */
 int fi_acc_cntr_export(struct fid_cntr *cntr, uint64_t flags,
-		       struct fi_acc_cntr_attr *attr);
+		       void **acc_cntr, size_t *size);
 
 /**
- * fi_acc_mr_export - Export MR local key for accelerator WQE construction.
- * @mr:     Registered memory region
- * @flags:  Reserved, must be 0
- * @attr:   [out] Local key for SGE fields in WQEs
+ * fi_acc_mr_export - Export MR descriptor for accelerator WQE construction.
+ * @mr:       Registered memory region
+ * @flags:    Reserved, must be 0
+ * @acc_desc: [out] Opaque device-accessible MR descriptor
+ * @size:     [out] Size of the exported descriptor
+ *
+ * The device kernel passes this as `desc` to fi_acc_write/send/read.
  */
 int fi_acc_mr_export(struct fid_mr *mr, uint64_t flags,
-		     struct fi_acc_mr_attr *attr);
+		     void **acc_desc, size_t *size);
 
 /**
- * fi_acc_av_lookup - Export resolved peer address for accelerator WQE.
+ * fi_acc_av_export - Export resolved peer address for accelerator use.
  * @av:       Address vector
  * @fi_addr:  Address previously inserted via fi_av_insert
  * @flags:    Reserved, must be 0
- * @addr:     [out] Raw HW addressing tuple (AHN, QPN, QKEY)
+ * @acc_peer: [out] Opaque device-accessible peer handle
+ * @size:     [out] Size of the exported peer handle
  *
- * The accelerator kernel writes these values directly into WQE
- * destination fields for remote peer addressing.
+ * The device kernel passes this as `acc_peer` to fi_acc_write/send.
+ * The provider stamps the raw HW addressing into WQEs internally.
  */
-int fi_acc_av_lookup(struct fid_av *av, fi_addr_t fi_addr,
-		     uint64_t flags, struct fi_acc_peer_addr *addr);
+int fi_acc_av_export(struct fid_av *av, fi_addr_t fi_addr,
+		     uint64_t flags, void **acc_peer, size_t *size);
 
 /**
- * fi_acc_av_lookup_batch - Export multiple peer addresses at once.
- * @av:       Address vector
- * @fi_addrs: Array of fi_addr_t previously inserted
- * @count:    Number of entries in fi_addrs[] and addrs[]
- * @flags:    Reserved, must be 0
- * @addrs:    [out] Array of raw HW addressing tuples
+ * fi_acc_av_export_batch - Export multiple peer addresses at once.
+ * @av:        Address vector
+ * @fi_addrs:  Array of fi_addr_t
+ * @count:     Number of entries
+ * @flags:     Reserved, must be 0
+ * @acc_peers: [out] Array of opaque peer handles (GPU memory, contiguous)
+ * @size:      [out] Total size of the exported array
  *
- * Bulk version for building target addressing tables (e.g.,
- * [total_slots * nranks] for GDAKI). Entries whose fi_addr is
- * FI_ADDR_UNSPEC are left zeroed in output.
+ * For building target addressing tables. FI_ADDR_UNSPEC entries are
+ * zeroed and safe to pass to device functions (they will return error).
  */
-int fi_acc_av_lookup_batch(struct fid_av *av, const fi_addr_t *fi_addrs,
+int fi_acc_av_export_batch(struct fid_av *av, const fi_addr_t *fi_addrs,
 			   size_t count, uint64_t flags,
-			   struct fi_acc_peer_addr *addrs);
-
-/*
- * =============================================================================
- * Remote MR info for accelerator-side RDMA targeting
- *
- * When the accelerator kernel constructs RDMA write/read WQEs, it needs
- * the remote peer's (virtual_address, rkey). This struct and function
- * support key exchange (allgather of MR info across ranks).
- * =============================================================================
- */
-
-/** Per-peer remote MR metadata for WQE construction */
-struct fi_acc_mr_peer {
-	uint64_t remote_addr;   /* Remote base virtual address */
-	uint32_t rkey;          /* Remote key */
-	uint32_t pad;           /* Alignment padding */
-};
+			   void **acc_peers, size_t *size);
 
 /**
  * fi_acc_mr_get_info - Get local MR info for key exchange / allgather.
  * @mr:    Registered memory region
  * @flags: Reserved, must be 0
- * @lkey:  [out] Local key (for local SGE in WQEs)
+ * @lkey:  [out] Local key (passed via acc_desc on device side)
  * @addr:  [out] Local base virtual address (FI_MR_VIRT_ADDR)
- * @rkey:  [out] Remote key (peers use this in their RDMA WQEs)
+ * @rkey:  [out] Remote key (peers use in their fi_acc_write rkey param)
  *
- * The consumer calls this per-MR, allgathers (addr, rkey) across ranks,
- * and builds GPU-resident per-peer fi_acc_mr_peer arrays.
+ * Used for allgather-based key exchange (regMrSym pattern).
  */
 int fi_acc_mr_get_info(struct fid_mr *mr, uint64_t flags,
 		       uint32_t *lkey, uint64_t *addr, uint64_t *rkey);
-
-/*
- * =============================================================================
- * Notes on multi-endpoint / multi-context GDAKI patterns
- *
- * The OFI Accelerator API is per-object (EP, CQ, counter, MR, AV).
- * For GDAKI-style contexts with multiple endpoints:
- *
- *   - Data EP:     fi_endpoint + fi_ep_bind(FI_WRITE cntr) + fi_enable
- *                  → fi_acc_ep_export() → data.qp/cq/sq_size
- *   - PutValue EP: same creation flow, separate EP
- *                  → fi_acc_ep_export() → pvdata.qp/cq/sq_size
- *   - SC EPs:      fi_endpoint + fi_ep_bind(FI_WRITE cntr)
- *                                       + fi_ep_bind(FI_REMOTE_WRITE cntr)
- *                  → fi_acc_ep_export() → per-SC qp/cq/sq_size
- *
- * Each EP is exported independently. The consumer builds the composite
- * device handle (nccl_ofi_gin_gdaki_dev_handle equivalent) by assembling
- * exported attrs from multiple EPs + counters + MRs + peer addresses.
- *
- * Multi-rail: each rail has its own domain → its own set of EPs/CQs/MRs.
- * The consumer creates resources per-rail and exports each set.
- * rail_id = contextId % num_rails.
- *
- * Target addressing: the consumer calls fi_acc_av_lookup_batch() per EP
- * to build the [total_slots * nranks] table mapping (slot, peer) → HW addr.
- * =============================================================================
- */
 
 #ifdef __cplusplus
 }
