@@ -31,8 +31,9 @@
 #include "efa_conn.h"
 #include "fi_ext_efa.h"
 
-/* Include EFA device struct definitions for building opaque blobs */
-#include "acc_cuda/fi_acc_efa_device.h"
+/* Include EFA device struct definitions for building opaque blobs.
+ * This is the same header consumers include from their .cu files. */
+#include "acc_cuda/fi_acc_efa_device.cuh"
 
 #if HAVE_EFADV_QUERY_QP_WQS
 #include <infiniband/efadv.h>
