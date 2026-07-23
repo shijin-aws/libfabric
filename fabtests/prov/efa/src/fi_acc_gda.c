@@ -182,12 +182,38 @@ int main(int argc, char **argv)
 	if (ret) return ret;
 
 	/*
-	 * === Create HW counters (GPU HBM via alloc callback) ===
+	 * === Create GPU-backed CQs (via acc_info.alloc) ===
 	 *
-	 * When use_hw_cntr is set, we create counters with FI_ACC flag.
-	 * The provider calls acc_info.alloc() to get GPU HBM + DMA-BUF,
-	 * then passes it to efadv_create_comp_cntr internally.
-	 * This replaces: create_hw_cntr() in efa_gda.c
+	 * Replaces efa_gda.c's create_ext_cq(). The provider calls
+	 * acc_info.alloc() to get GPU memory + DMA-BUF fd, then
+	 * creates the CQ backed by that external memory.
+	 * The GPU kernel polls this CQ directly from GPU.
+	 */
+	{
+		struct fi_cq_attr acc_cq_attr = {};
+		acc_cq_attr.format = FI_CQ_FORMAT_MSG;
+		acc_cq_attr.wait_obj = FI_WAIT_NONE;
+		acc_cq_attr.size = fi->tx_attr->size;
+		acc_cq_attr.flags = FI_ACC;
+		acc_cq_attr.acc_info = &acc_info;
+
+		/* Close the standard CQs from ft_init_fabric and replace */
+		fi_close(&txcq->fid);
+		ret = fi_cq_open(domain, &acc_cq_attr, &txcq, NULL);
+		if (ret) { FT_PRINTERR("fi_cq_open (tx, FI_ACC)", -ret); return ret; }
+
+		acc_cq_attr.size = fi->rx_attr->size;
+		fi_close(&rxcq->fid);
+		ret = fi_cq_open(domain, &acc_cq_attr, &rxcq, NULL);
+		if (ret) { FT_PRINTERR("fi_cq_open (rx, FI_ACC)", -ret); return ret; }
+	}
+
+	/*
+	 * === Create HW counters in GPU HBM (via acc_info.alloc) ===
+	 *
+	 * Replaces efa_gda.c's create_hw_cntr(). Provider calls
+	 * acc_info.alloc() for GPU HBM + DMA-BUF, then passes fd
+	 * to efadv_create_comp_cntr internally.
 	 */
 	if (use_hw_cntr) {
 		struct fi_cntr_attr cntr_attr = {};
