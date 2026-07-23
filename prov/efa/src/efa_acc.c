@@ -5,11 +5,11 @@
 /*
  * EFA provider: OFI Accelerator API implementation (opaque export model).
  *
- * fi_acc_ep_export():  builds GPU-resident fi_acc_dev_ep and returns void*
- * fi_acc_cq_export():  builds GPU-resident fi_acc_dev_cq and returns void*
- * fi_acc_cntr_export(): returns GPU-resident fi_acc_dev_cntr as void*
- * fi_acc_mr_export():  builds GPU-resident fi_acc_dev_desc and returns void*
- * fi_acc_av_export():  builds GPU-resident fi_acc_dev_peer and returns void*
+ * fi_ep_export_acc():  builds GPU-resident fi_acc_dev_ep and returns void*
+ * fi_cq_export_acc():  builds GPU-resident fi_acc_dev_cq and returns void*
+ * fi_cntr_export_acc(): returns GPU-resident fi_acc_dev_cntr as void*
+ * fi_mr_export_acc():  builds GPU-resident fi_acc_dev_desc and returns void*
+ * fi_av_export_acc():  builds GPU-resident fi_acc_dev_peer and returns void*
  *
  * The consumer never sees the struct internals — only fi_acc_device.h's
  * inline device functions dereference them.
@@ -77,7 +77,7 @@ static int acc_gpu_alloc_and_copy(struct fi_acc_info *ai, const void *host_data,
 
 /*
  * =============================================================================
- * fi_acc_ep_export — Build opaque GPU-resident EP descriptor
+ * fi_ep_export_acc — Build opaque GPU-resident EP descriptor
  * =============================================================================
  */
 int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
@@ -189,7 +189,7 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 
 /*
  * =============================================================================
- * fi_acc_cq_export — Build opaque GPU-resident CQ descriptor
+ * fi_cq_export_acc — Build opaque GPU-resident CQ descriptor
  * =============================================================================
  */
 int efa_acc_cq_export(struct fid_cq *cq_fid, uint64_t flags,
@@ -245,7 +245,7 @@ int efa_acc_cq_export(struct fid_cq *cq_fid, uint64_t flags,
 
 /*
  * =============================================================================
- * fi_acc_cntr_export — Return opaque GPU-resident counter handle
+ * fi_cntr_export_acc — Return opaque GPU-resident counter handle
  * =============================================================================
  */
 int efa_acc_cntr_export(struct fid_cntr *cntr_fid, uint64_t flags,
@@ -277,7 +277,7 @@ int efa_acc_cntr_export(struct fid_cntr *cntr_fid, uint64_t flags,
 
 /*
  * =============================================================================
- * fi_acc_mr_export — Return opaque GPU-resident MR descriptor
+ * fi_mr_export_acc — Return opaque GPU-resident MR descriptor
  * =============================================================================
  */
 int efa_acc_mr_export(struct fid_mr *mr_fid, uint64_t flags,
@@ -318,7 +318,7 @@ int efa_acc_mr_export(struct fid_mr *mr_fid, uint64_t flags,
 
 /*
  * =============================================================================
- * fi_acc_av_export — Return opaque GPU-resident peer address handle
+ * fi_av_export_acc — Return opaque GPU-resident peer address handle
  * =============================================================================
  */
 int efa_acc_av_export(struct fid_av *av_fid, fi_addr_t fi_addr,
@@ -364,7 +364,7 @@ int efa_acc_av_export(struct fid_av *av_fid, fi_addr_t fi_addr,
 
 /*
  * =============================================================================
- * fi_acc_av_export_batch — Bulk peer export (target addressing table)
+ * fi_av_export_acc_batch — Bulk peer export (target addressing table)
  * =============================================================================
  */
 int efa_acc_av_export_batch(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
@@ -424,7 +424,7 @@ int efa_acc_av_export_batch(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
 
 /*
  * =============================================================================
- * fi_acc_mr_get_info — Export MR info for key exchange
+ * fi_mr_get_acc_info — Export MR info for key exchange
  * =============================================================================
  */
 int efa_acc_mr_get_info(struct fid_mr *mr_fid, uint64_t flags,

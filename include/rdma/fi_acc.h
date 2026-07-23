@@ -140,7 +140,7 @@ enum fi_acc_scope {
  */
 
 /**
- * fi_acc_ep_export - Export endpoint for accelerator access.
+ * fi_ep_export_acc - Export endpoint for accelerator access.
  * @ep:       Enabled endpoint (created with FI_ACC hint)
  * @flags:    Reserved, must be 0
  * @acc_ep:   [out] Opaque device-accessible EP handle (GPU memory)
@@ -152,21 +152,21 @@ enum fi_acc_scope {
  *   - Allocates and populates a GPU-resident descriptor
  *   - Returns a pointer the device kernel can use with fi_acc_write() etc.
  */
-int fi_acc_ep_export(struct fid_ep *ep, uint64_t flags,
+int fi_ep_export_acc(struct fid_ep *ep, uint64_t flags,
 		     void **acc_ep, size_t *size);
 
 /**
- * fi_acc_cq_export - Export CQ for accelerator completion polling.
+ * fi_cq_export_acc - Export CQ for accelerator completion polling.
  * @cq:       CQ (created with FI_ACC)
  * @flags:    Reserved, must be 0
  * @acc_cq:   [out] Opaque device-accessible CQ handle (GPU memory)
  * @size:     [out] Size of the exported handle
  */
-int fi_acc_cq_export(struct fid_cq *cq, uint64_t flags,
+int fi_cq_export_acc(struct fid_cq *cq, uint64_t flags,
 		     void **acc_cq, size_t *size);
 
 /**
- * fi_acc_cntr_export - Export counter for accelerator access.
+ * fi_cntr_export_acc - Export counter for accelerator access.
  * @cntr:     Counter (created with FI_ACC + FI_ACC_CNTR_EXTERNAL_MEM)
  * @flags:    Reserved, must be 0
  * @acc_cntr: [out] Opaque device-accessible counter handle (GPU memory)
@@ -176,11 +176,11 @@ int fi_acc_cq_export(struct fid_cq *cq, uint64_t flags,
  * writes directly. fi_acc_cntr_read() on the device reads it in one
  * instruction with zero overhead.
  */
-int fi_acc_cntr_export(struct fid_cntr *cntr, uint64_t flags,
+int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
 		       void **acc_cntr, size_t *size);
 
 /**
- * fi_acc_mr_export - Export MR descriptor for accelerator WQE construction.
+ * fi_mr_export_acc - Export MR descriptor for accelerator WQE construction.
  * @mr:       Registered memory region
  * @flags:    Reserved, must be 0
  * @acc_desc: [out] Opaque device-accessible MR descriptor
@@ -188,11 +188,11 @@ int fi_acc_cntr_export(struct fid_cntr *cntr, uint64_t flags,
  *
  * The device kernel passes this as `desc` to fi_acc_write/send/read.
  */
-int fi_acc_mr_export(struct fid_mr *mr, uint64_t flags,
+int fi_mr_export_acc(struct fid_mr *mr, uint64_t flags,
 		     void **acc_desc, size_t *size);
 
 /**
- * fi_acc_av_export - Export resolved peer address for accelerator use.
+ * fi_av_export_acc - Export resolved peer address for accelerator use.
  * @av:       Address vector
  * @fi_addr:  Address previously inserted via fi_av_insert
  * @flags:    Reserved, must be 0
@@ -202,11 +202,11 @@ int fi_acc_mr_export(struct fid_mr *mr, uint64_t flags,
  * The device kernel passes this as `acc_peer` to fi_acc_write/send.
  * The provider stamps the raw HW addressing into WQEs internally.
  */
-int fi_acc_av_export(struct fid_av *av, fi_addr_t fi_addr,
+int fi_av_export_acc(struct fid_av *av, fi_addr_t fi_addr,
 		     uint64_t flags, void **acc_peer, size_t *size);
 
 /**
- * fi_acc_av_export_batch - Export multiple peer addresses at once.
+ * fi_av_export_acc_batch - Export multiple peer addresses at once.
  * @av:        Address vector
  * @fi_addrs:  Array of fi_addr_t
  * @count:     Number of entries
@@ -217,12 +217,12 @@ int fi_acc_av_export(struct fid_av *av, fi_addr_t fi_addr,
  * For building target addressing tables. FI_ADDR_UNSPEC entries are
  * zeroed and safe to pass to device functions (they will return error).
  */
-int fi_acc_av_export_batch(struct fid_av *av, const fi_addr_t *fi_addrs,
+int fi_av_export_acc_batch(struct fid_av *av, const fi_addr_t *fi_addrs,
 			   size_t count, uint64_t flags,
 			   void **acc_peers, size_t *size);
 
 /**
- * fi_acc_mr_get_info - Get local MR info for key exchange / allgather.
+ * fi_mr_get_acc_info - Get local MR info for key exchange / allgather.
  * @mr:    Registered memory region
  * @flags: Reserved, must be 0
  * @lkey:  [out] Local key (passed via acc_desc on device side)
@@ -231,7 +231,7 @@ int fi_acc_av_export_batch(struct fid_av *av, const fi_addr_t *fi_addrs,
  *
  * Used for allgather-based key exchange (regMrSym pattern).
  */
-int fi_acc_mr_get_info(struct fid_mr *mr, uint64_t flags,
+int fi_mr_get_acc_info(struct fid_mr *mr, uint64_t flags,
 		       uint32_t *lkey, uint64_t *addr, uint64_t *rkey);
 
 #ifdef __cplusplus

@@ -82,26 +82,26 @@ int main(int argc, char **argv)
 
 	/* === Export all resources as opaque device handles === */
 
-	ret = fi_acc_ep_export(ep, 0, &d_ep, &export_size);
-	if (ret) { FT_PRINTERR("fi_acc_ep_export", -ret); return ret; }
+	ret = fi_ep_export_acc(ep, 0, &d_ep, &export_size);
+	if (ret) { FT_PRINTERR("fi_ep_export_acc", -ret); return ret; }
 
-	ret = fi_acc_cq_export(txcq, 0, &d_send_cq, &export_size);
-	if (ret) { FT_PRINTERR("fi_acc_cq_export tx", -ret); return ret; }
+	ret = fi_cq_export_acc(txcq, 0, &d_send_cq, &export_size);
+	if (ret) { FT_PRINTERR("fi_cq_export_acc tx", -ret); return ret; }
 
-	ret = fi_acc_cq_export(rxcq, 0, &d_recv_cq, &export_size);
-	if (ret) { FT_PRINTERR("fi_acc_cq_export rx", -ret); return ret; }
+	ret = fi_cq_export_acc(rxcq, 0, &d_recv_cq, &export_size);
+	if (ret) { FT_PRINTERR("fi_cq_export_acc rx", -ret); return ret; }
 
-	ret = fi_acc_mr_export(mr, 0, &d_mr_desc, &export_size);
-	if (ret) { FT_PRINTERR("fi_acc_mr_export", -ret); return ret; }
+	ret = fi_mr_export_acc(mr, 0, &d_mr_desc, &export_size);
+	if (ret) { FT_PRINTERR("fi_mr_export_acc", -ret); return ret; }
 
-	ret = fi_acc_av_export(av, remote_fi_addr, 0, &d_peer, &export_size);
-	if (ret) { FT_PRINTERR("fi_acc_av_export", -ret); return ret; }
+	ret = fi_av_export_acc(av, remote_fi_addr, 0, &d_peer, &export_size);
+	if (ret) { FT_PRINTERR("fi_av_export_acc", -ret); return ret; }
 
 	if (use_hw_cntr) {
-		ret = fi_acc_cntr_export(txcntr, 0, &d_send_cntr, &export_size);
-		if (ret) { FT_PRINTERR("fi_acc_cntr_export tx", -ret); return ret; }
-		ret = fi_acc_cntr_export(rxcntr, 0, &d_recv_cntr, &export_size);
-		if (ret) { FT_PRINTERR("fi_acc_cntr_export rx", -ret); return ret; }
+		ret = fi_cntr_export_acc(txcntr, 0, &d_send_cntr, &export_size);
+		if (ret) { FT_PRINTERR("fi_cntr_export_acc tx", -ret); return ret; }
+		ret = fi_cntr_export_acc(rxcntr, 0, &d_recv_cntr, &export_size);
+		if (ret) { FT_PRINTERR("fi_cntr_export_acc rx", -ret); return ret; }
 	}
 
 	printf("OFI Accelerator API GDA Test (opaque handles)\n");
