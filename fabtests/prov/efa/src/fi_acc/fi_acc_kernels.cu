@@ -6,7 +6,7 @@
  * All operations go through fi_acc_write/send/cq_poll/cntr_read.
  */
 
-#include <rdma/providers/fi_acc_efa_device.cuh>
+#include <rdma/fi_ext_efa_acc.cuh>
 #include "fi_acc_kernels.h"
 
 /*

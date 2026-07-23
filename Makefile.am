@@ -254,12 +254,12 @@ rdmainclude_HEADERS += \
 	$(top_srcdir)/include/rdma/fi_trigger.h \
 	$(top_srcdir)/include/rdma/fi_profile.h \
 	$(top_srcdir)/include/rdma/fi_acc.h \
-	$(top_srcdir)/include/rdma/fi_acc_device.h
+	$(top_srcdir)/include/rdma/fi_acc_device.h \
+	$(top_srcdir)/prov/efa/src/acc_cuda/fi_ext_efa_acc.cuh
 providersinclude_HEADERS += \
 	$(top_srcdir)/include/rdma/providers/fi_log.h \
 	$(top_srcdir)/include/rdma/providers/fi_peer.h \
-	$(top_srcdir)/include/rdma/providers/fi_prov.h \
-	$(top_srcdir)/prov/efa/src/acc_cuda/fi_acc_efa_device.cuh
+	$(top_srcdir)/include/rdma/providers/fi_prov.h
 
 if HAVE_DIRECT
 nodist_rdmainclude_HEADERS = \
