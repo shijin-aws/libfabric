@@ -8,12 +8,9 @@
  * touches WQE formats, ring buffers, doorbells, or phase bits.
  */
 
-#include "hmem.h"
-#include <cuda.h>
 #include <cuda_runtime.h>
 #include <getopt.h>
 #include <rdma/fi_acc.h>
-#include <rdma/fi_acc_device.h>
 #include <shared.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,41 +31,12 @@ static void *d_peer;
 static bool use_hw_cntr;
 static int  gda_op; /* 0=send, 1=write, 2=write_imm, 3=read */
 
-/*
- * acc_info callbacks — consumer's GPU memory management
- */
-static int acc_alloc(uint64_t device, uint64_t size, uint64_t alignment,
-		     uint64_t flags, void **addr, int *fd, uint64_t *offset)
-{
-	int ret;
-	void *buf;
-	ret = ft_hmem_alloc(FI_HMEM_CUDA, device, &buf, (size_t)size);
-	if (ret) return ret;
-	ret = ft_hmem_get_dmabuf_fd(FI_HMEM_CUDA, buf, (size_t)size, fd, offset);
-	if (ret) { ft_hmem_free(FI_HMEM_CUDA, buf); return ret; }
-	*addr = buf;
-	return 0;
-}
-
-static int acc_import(uint64_t device, int fd, uint64_t offset,
-		      uint64_t size, uint64_t flags, void **addr)
-{
-	unsigned int cuda_flags = CU_MEMHOSTREGISTER_DEVICEMAP;
-	CUdeviceptr dev_ptr = 0;
-	if (flags & FI_ACC_IMPORT_IOMEMORY)
-		cuda_flags |= CU_MEMHOSTREGISTER_IOMEMORY;
-	if (cuMemHostRegister(*addr, (size_t)size, cuda_flags) != CUDA_SUCCESS)
-		return -FI_EIO;
-	if (cuMemHostGetDevicePointer(&dev_ptr, *addr, 0) != CUDA_SUCCESS)
-		return -FI_EIO;
-	*addr = (void *)dev_ptr;
-	return 0;
-}
-
-static void acc_free(uint64_t device, void *addr)
-{
-	ft_hmem_free(FI_HMEM_CUDA, addr);
-}
+/* Accelerator info — tells provider which device to target.
+ * Callbacks NULL = provider uses its own HMEM subsystem. */
+static struct fi_acc_info acc_info = {
+	.iface   = FI_HMEM_CUDA,
+	.device  = 0,
+};
 
 int main(int argc, char **argv)
 {
@@ -107,6 +75,7 @@ int main(int argc, char **argv)
 	hints->caps |= FI_MSG | FI_RMA | FI_HMEM | FI_ACC;
 	hints->domain_attr->mr_mode = FI_MR_ALLOCATED | FI_MR_LOCAL |
 				      FI_MR_VIRT_ADDR | FI_MR_PROV_KEY | FI_MR_HMEM;
+	hints->ep_attr->acc_info = &acc_info;
 
 	ret = ft_init_fabric();
 	if (ret) return ret;

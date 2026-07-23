@@ -42,7 +42,7 @@
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 
-
+struct fi_acc_info;
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -259,6 +259,7 @@ struct fi_cq_attr {
 	int			signaling_vector;
 	enum fi_cq_wait_cond	wait_cond;
 	struct fid_wait		*wait_set;	/* deprecated */
+	struct fi_acc_info	*acc_info;	/* OFI Accelerator API */
 };
 
 struct fi_ops_cq {
@@ -298,6 +299,7 @@ struct fi_cntr_attr {
 	enum fi_wait_obj	wait_obj;
 	struct fid_wait		*wait_set;	/* deprecated */
 	uint64_t		flags;
+	struct fi_acc_info	*acc_info;	/* OFI Accelerator API */
 };
 
 struct fi_ops_cntr {

@@ -412,6 +412,8 @@ struct fi_rx_attr {
 	size_t			iov_limit;
 };
 
+struct fi_acc_info;
+
 struct fi_ep_attr {
 	enum fi_ep_type		type;
 	uint32_t		protocol;
@@ -426,6 +428,7 @@ struct fi_ep_attr {
 	size_t			rx_ctx_cnt;
 	size_t			auth_key_size;
 	uint8_t			*auth_key;
+	struct fi_acc_info	*acc_info;	/* OFI Accelerator API */
 };
 
 struct fi_domain_attr {
