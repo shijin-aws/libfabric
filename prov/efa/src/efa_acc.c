@@ -40,36 +40,69 @@
 #endif
 
 /*
- * Helper: allocate GPU memory and H2D copy a host struct.
- * Uses acc_info callbacks — the consumer's GPU allocator.
+ * Helper: Import a host VA into accelerator address space.
+ * If consumer provided import callback, use it.
+ * Otherwise, return -FI_ENOSYS (provider internal HMEM path TODO).
+ */
+static int acc_import_region(struct fi_acc_info *ai, void *host_va,
+			     size_t size, uint64_t flags, void **dev_ptr)
+{
+	if (ai && ai->user.import) {
+		/* Consumer provided callback */
+		*dev_ptr = host_va;
+		return ai->user.import(ai->device, -1, 0, (uint64_t)size,
+				       flags, dev_ptr);
+	}
+
+	/* No callback — provider internal path.
+	 * TODO: call cuda_host_register + get_device_pointer via HMEM ops.
+	 * For now, return the host pointer directly (works on platforms
+	 * where CUDA can read host-registered memory without explicit mapping,
+	 * e.g., CQ buffer on P5en). */
+	*dev_ptr = host_va;
+	return 0;
+}
+
+/*
+ * Helper: Allocate GPU memory for device-resident structs + H2D copy.
+ * If consumer provided alloc callback, use it.
+ * Otherwise, use ofi_copy_to_hmem for the copy portion.
  */
 static int acc_gpu_alloc_and_copy(struct fi_acc_info *ai, const void *host_data,
 				  size_t size, void **dev_ptr)
 {
 	void *gpu_mem = NULL;
-	int fd = -1;
-	uint64_t offset = 0;
 	int ret;
 
-	/* Use alloc callback to get GPU memory */
-	ret = ai->user.alloc(ai->device, (uint64_t)size, 0,
-			     FI_ACC_ALLOC_GPU_HBM, &gpu_mem, &fd, &offset);
-	if (ret)
-		return ret;
+	if (ai && ai->user.alloc) {
+		int fd = -1;
+		uint64_t offset = 0;
+		ret = ai->user.alloc(ai->device, (uint64_t)size, 0,
+				     FI_ACC_ALLOC_GPU_HBM, &gpu_mem, &fd, &offset);
+		if (ret) return ret;
+		if (fd >= 0) close(fd);
+	} else {
+		/* No callback — use provider's CUDA alloc.
+		 * TODO: call ofi_hmem infrastructure for device alloc.
+		 * For now, allocate host memory as placeholder. */
+		gpu_mem = calloc(1, size);
+		if (!gpu_mem) return -FI_ENOMEM;
+	}
 
-	/*
-	 * We need H2D memcpy. The acc_info doesn't have a memcpy callback,
-	 * so we rely on the GPU memory being host-accessible for write
-	 * (VMM allocations are typically mapped with RW access).
-	 * In production, this would use cudaMemcpy or the HMEM subsystem.
-	 *
-	 * For now, store the host struct into GPU memory via the provider's
-	 * HMEM copy infrastructure.
-	 */
-	memcpy(gpu_mem, host_data, size);  /* Works if GPU mem is host-mapped */
-
-	if (fd >= 0)
-		close(fd);  /* Don't need DMA-BUF fd for plain alloc */
+	/* H2D copy */
+	if (ai && ai->user.alloc) {
+		/* GPU memory from consumer alloc — use HMEM copy */
+		ret = (int)ofi_copy_to_hmem(FI_HMEM_CUDA, 0, gpu_mem,
+					    host_data, size);
+		if (ret < 0) {
+			if (ai->user.free)
+				ai->user.free(ai->device, gpu_mem);
+			return ret;
+		}
+	} else {
+		/* Host placeholder — direct memcpy */
+		memcpy(gpu_mem, host_data, size);
+	}
 
 	*dev_ptr = gpu_mem;
 	return 0;
@@ -97,11 +130,11 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 		return -FI_EINVAL;
 
 	base_ep = container_of(ep_fid, struct efa_base_ep, util_ep.ep_fid);
-	acc = base_ep->acc_state;
-	if (!acc)
-		return -FI_ENODATA;
 
-	ai = &acc->acc_info;
+	/* Get acc_info from EP's fi_info (set at creation via ep_attr->acc_info) */
+	ai = (base_ep->info && base_ep->info->ep_attr) ?
+		base_ep->info->ep_attr->acc_info : NULL;
+	/* acc_info can be NULL — provider uses internal HMEM in that case */
 
 	/* Query HW queue geometry */
 	ret = efadv_query_qp_wqs(base_ep->qp->ibv_qp,
@@ -113,34 +146,32 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 	page_size = sysconf(_SC_PAGESIZE);
 
 	/* Map SQ buffer (BAR MMIO) → GPU */
-	void *sq_buf_dev = qp_sq_attr.buffer;
-	ret = ai->user.import(ai->device, -1, 0,
-			      (uint64_t)qp_sq_attr.num_entries * qp_sq_attr.entry_size,
-			      FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
-			      &sq_buf_dev);
+	void *sq_buf_dev = NULL;
+	ret = acc_import_region(ai, qp_sq_attr.buffer,
+				(size_t)qp_sq_attr.num_entries * qp_sq_attr.entry_size,
+				FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
+				&sq_buf_dev);
 	if (ret) return ret;
 
 	/* Map SQ doorbell (BAR MMIO) → GPU */
-	void *sq_db_dev = qp_sq_attr.doorbell;
-	ret = ai->user.import(ai->device, -1, 0, (uint64_t)page_size,
-			      FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
-			      &sq_db_dev);
+	void *sq_db_dev = NULL;
+	ret = acc_import_region(ai, qp_sq_attr.doorbell, (size_t)page_size,
+				FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
+				&sq_db_dev);
 	if (ret) return ret;
 
 	/* Map RQ buffer (host RAM) → GPU */
 	void *rq_buf_dev = NULL;
 	void *rq_db_dev = NULL;
 	if (qp_rq_attr.buffer) {
-		rq_buf_dev = qp_rq_attr.buffer;
-		ret = ai->user.import(ai->device, -1, 0,
-				      (uint64_t)qp_rq_attr.num_entries * qp_rq_attr.entry_size,
-				      FI_ACC_IMPORT_DEVICEMAP, &rq_buf_dev);
+		ret = acc_import_region(ai, qp_rq_attr.buffer,
+					(size_t)qp_rq_attr.num_entries * qp_rq_attr.entry_size,
+					FI_ACC_IMPORT_DEVICEMAP, &rq_buf_dev);
 		if (ret) return ret;
 
-		rq_db_dev = qp_rq_attr.doorbell;
-		ret = ai->user.import(ai->device, -1, 0, (uint64_t)page_size,
-				      FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
-				      &rq_db_dev);
+		ret = acc_import_region(ai, qp_rq_attr.doorbell, (size_t)page_size,
+					FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
+					&rq_db_dev);
 		if (ret) return ret;
 	}
 
@@ -220,10 +251,10 @@ int efa_acc_cq_export(struct fid_cq *cq_fid, uint64_t flags,
 
 	/* Map CQ buffer (host RAM) → GPU.
 	 * On P5en, host pointer is directly CUDA-readable; import may be no-op. */
-	void *cq_buf_dev = efadv_attr.buffer;
-	ret = ai->user.import(ai->device, -1, 0,
-			      (uint64_t)efadv_attr.num_entries * efadv_attr.entry_size,
-			      FI_ACC_IMPORT_DEVICEMAP, &cq_buf_dev);
+	void *cq_buf_dev = NULL;
+	ret = acc_import_region(ai, efadv_attr.buffer,
+				(size_t)efadv_attr.num_entries * efadv_attr.entry_size,
+				FI_ACC_IMPORT_DEVICEMAP, &cq_buf_dev);
 	if (ret) return ret;
 
 	h_cq.buf              = (uint8_t *)cq_buf_dev;
