@@ -689,22 +689,25 @@ fi_acc_ep_export(ep, 0, &acc_ep, &size);
 fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer, scope, flags);
 ```
 
+**No parallel `*_open_acc` API needed.** Objects are created with the standard
+calls (`fi_cq_open()`, `fi_cntr_open()`, `fi_endpoint()`) — the `FI_ACC` flag
+plus `acc_info` tell the provider the object will be exported. All accelerator-
+specific setup happens inside the export call. For example, inside
+`fi_acc_cntr_export()`:
+1. `acc_info.alloc(8 bytes, FI_ACC_ALLOC_DMABUF)` → GPU HBM pointer + DMA-BUF fd
+2. Bind the fd to the NIC counter (e.g., `efadv_create_comp_cntr(fd, offset)`) so
+   the NIC DMAs counter updates directly into GPU memory
+3. Return the opaque handle wrapping the GPU pointer
 
-### 3. Add Hardware Counter Export (P0 — Central to Everything)
+Similarly `fi_acc_cq_export()` can place the CQ ring in GPU HBM (alloc + DMA-BUF
+→ NIC writes CQEs directly to GPU memory) or map the host ring via `import()` —
+the provider picks per its hardware. The provider may defer creating the
+underlying HW resource until export time if the HW requires the external memory
+at creation.
 
-Counters are THE completion mechanism in NCCL GIN. Not CQ polling.
+**Counter semantics** (counters are THE completion mechanism in NCCL GIN — not CQ polling):
 
-```c
-int fi_cntr_open_acc(struct fid_domain *domain,
-                     struct fi_cntr_attr *attr,
-                     struct fi_acc_cntr_attrs *acc_attr,
-                     struct fid_cntr **cntr, void *context);
-
-int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
-                       void **acc_cntr, size_t *acc_cntr_size);
-```
-
-**Why:** NCCL GIN uses counters for:
+NCCL GIN uses counters for:
 - **SQ backpressure (FI_WRITE)**: `(chunk_next - (uint32_t)hwCounterLoad(cntr)) & 0x7FFFFFFF ≤ sq_size`
 - **Flush/completion (FI_WRITE)**: `(submitted - *cntr) & 0x7FFFFFFF == 0`
 - **Signal delivery (FI_REMOTE_WRITE)**: peer polls counter to detect arrival
@@ -715,9 +718,7 @@ The API must also document:
 - Counter wraps at 2^31 (EFA-specific but needs a generic way to query)
 - Counter is NIC-owned; software cannot write it (offset-based reset only)
 
-
-
-### 4. Address Resolution Export
+### 3. Address Resolution Export
 
 ```c
 struct fi_acc_peer_addr {
@@ -738,7 +739,7 @@ int fi_av_export_acc_batch(struct fid_av *av, fi_addr_t *addrs, int count,
 
 
 
-### 5. Device-Side Post API
+### 4. Device-Side Post API
 
 The post API encapsulates NCCL GIN's warp-cooperative posting protocol inside
 provider-inlined functions. The `scope` parameter controls how threads cooperate
@@ -834,7 +835,7 @@ fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer,
 ```
 
 
-### 6. Device-Side Completion API
+### 5. Device-Side Completion API
 
 The completion API provides two mechanisms: counters (primary, used by NCCL GIN)
 and CQ polling (secondary, used by perftest). No scope parameter needed — these
@@ -887,7 +888,7 @@ NCCL GIN detects errors via counter timeout (counter stops advancing).
 Host-side health monitoring is more practical for production error recovery.
 
 
-### 7. The Abstraction Level Decision
+### 6. The Abstraction Level Decision
 
 NCCL GIN's warp-cooperative protocol is sophisticated, but its underlying
 operations (reserve slots, write WQE, fence, ring doorbell, check counter)
@@ -926,7 +927,7 @@ with `scope` + `FI_MORE` achieves the same throughput. Layer 2 exists as a futur
 escape hatch for consumers with requirements beyond what scope+flags can express.
 
 
-### 8. Multi-Rail Support
+### 7. Multi-Rail Support
 
 ```c
 /* Per-rail: open separate domain/EP per rail, export each independently.
@@ -938,7 +939,7 @@ Each rail has its own domain → endpoint → QP/CQ/counter chain. The API doesn
 explicit multi-rail — it works by creating N independent EP/CQ/counter sets.
 
 
-### 9. Version/Compatibility Negotiation
+### 8. Version/Compatibility Negotiation
 
 The provider's device-side structs are compiled into the consumer's binary via
 inlined `.cuh` headers. If the provider upgrades and changes struct layout, old
