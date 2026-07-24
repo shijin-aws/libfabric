@@ -670,9 +670,17 @@ int fi_acc_cntr_export(struct fid_cntr *cntr, uint64_t flags,
 int fi_acc_mr_export(struct fid_mr *mr, uint64_t flags,
                      void **acc_desc, size_t *acc_desc_size);
 
-int fi_acc_av_export(struct fid_av *av, fi_addr_t addr, uint64_t flags,
-                     void **acc_peer, size_t *acc_peer_size);
+/* Batch-native: resolves `count` fi_addrs into one GPU-resident peer table.
+ * count == 1 is the trivial case; no separate single-address API. */
+int fi_acc_av_export(struct fid_av *av, fi_addr_t *addrs, size_t count,
+                     uint64_t flags, void **acc_peers, size_t *acc_peers_size);
 ```
+
+**AV export is batch-native:** NCCL GIN builds `[total_slots × nranks]` target
+tables of (AHN, QPN, QKEY) tuples — the GPU kernel indexes the table to select
+the remote target per write. Passing the full `fi_addr_t` array in one call lets
+the provider resolve all peers and build one GPU-resident table with a single
+alloc + H2D copy. A single address is just `count = 1`.
 
 **What the provider does inside `fi_acc_ep_export()`:**
 1. Calls `efadv_query_qp_wqs()` → gets host VAs of SQ buffer, doorbell, RQ
@@ -731,28 +739,7 @@ The API must also document:
 - Counter wraps at 2^31 (EFA-specific but needs a generic way to query)
 - Counter is NIC-owned; software cannot write it (offset-based reset only)
 
-### 3. Address Resolution Export
-
-```c
-struct fi_acc_peer_addr {
-    uint16_t address_handle;   /* NIC-level address handle */
-    uint16_t remote_qpn;       /* Remote queue pair number */
-    uint32_t remote_qkey;      /* Queue key */
-};
-
-int fi_av_export_acc(struct fid_av *av, fi_addr_t addr,
-                     struct fi_acc_peer_addr *acc_addr);
-
-/* Batch version for building target tables: */
-int fi_av_export_acc_batch(struct fid_av *av, fi_addr_t *addrs, int count,
-                           struct fi_acc_peer_addr *out);
-```
-
-**Why:** NCCL GIN builds `[total_slots × nranks]` target tables with per-slot (ahn, qpn, qkey) tuples. The GPU kernel indexes this table to select the remote target per write.
-
-
-
-### 4. Device-Side Post API
+### 3. Device-Side Post API
 
 The post API encapsulates NCCL GIN's warp-cooperative posting protocol inside
 provider-inlined functions. The `scope` parameter controls how threads cooperate
@@ -848,7 +835,7 @@ fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer,
 ```
 
 
-### 5. Device-Side Completion API
+### 4. Device-Side Completion API
 
 The completion API provides two mechanisms: counters (primary, used by NCCL GIN)
 and CQ polling (secondary, used by perftest). No scope parameter needed — these
@@ -901,7 +888,7 @@ NCCL GIN detects errors via counter timeout (counter stops advancing).
 Host-side health monitoring is more practical for production error recovery.
 
 
-### 6. The Abstraction Level Decision
+### 5. The Abstraction Level Decision
 
 NCCL GIN's warp-cooperative protocol is sophisticated, but its underlying
 operations (reserve slots, write WQE, fence, ring doorbell, check counter)
@@ -940,7 +927,7 @@ with `scope` + `FI_MORE` achieves the same throughput. Layer 2 exists as a futur
 escape hatch for consumers with requirements beyond what scope+flags can express.
 
 
-### 7. Multi-Rail Support
+### 6. Multi-Rail Support
 
 ```c
 /* Per-rail: open separate domain/EP per rail, export each independently.
@@ -952,7 +939,7 @@ Each rail has its own domain → endpoint → QP/CQ/counter chain. The API doesn
 explicit multi-rail — it works by creating N independent EP/CQ/counter sets.
 
 
-### 8. Version/Compatibility Negotiation
+### 7. Version/Compatibility Negotiation
 
 The provider's device-side structs are compiled into the consumer's binary via
 inlined `.cuh` headers. If the provider upgrades and changes struct layout, old
