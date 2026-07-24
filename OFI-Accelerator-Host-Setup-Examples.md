@@ -401,9 +401,8 @@ pattern.
 /* ===== Accelerator memory specification ===== */
 
 enum fi_acc_mem_type {
-    FI_ACC_MEM_PROVIDER,    /* Provider allocates & maps (simplest) */
-    FI_ACC_MEM_CALLBACKS,   /* App provides alloc/import callbacks */
-    FI_ACC_MEM_DMABUF,      /* App provides DMA-BUF fd (for HBM-resident) */
+    FI_ACC_MEM_USER_ALLOC,  /* App provides alloc/import callbacks (primary) */
+    FI_ACC_MEM_HMEM,        /* Provider allocates via HMEM interface */
 };
 
 struct fi_acc_info {

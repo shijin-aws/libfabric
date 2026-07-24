@@ -89,7 +89,7 @@ struct efa_cntr {
 |--------|-------------|
 | `FI_ACC` | Capability flag (1ULL << 44) |
 | `struct fi_acc_info` | Memory allocation callbacks (alloc/import/free) passed at object creation |
-| `enum fi_acc_mem_type` | `FI_ACC_MEM_USER_ALLOC` or `FI_ACC_MEM_DMABUF` |
+| `enum fi_acc_mem_type` | `FI_ACC_MEM_USER_ALLOC` or `FI_ACC_MEM_HMEM` |
 | `FI_ACC_IMPORT_IOMEMORY` | Import flag for BAR MMIO regions |
 | `FI_ACC_IMPORT_DEVICEMAP` | Import flag for device address space mapping |
 | `FI_ACC_CNTR_EXTERNAL_MEM` | Counter lives in external device memory |
