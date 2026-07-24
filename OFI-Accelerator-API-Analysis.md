@@ -587,17 +587,15 @@ The API must also document:
 - Counter wraps at 2^31 (EFA-specific but needs a generic way to query)
 - Counter is NIC-owned; software cannot write it (offset-based reset only)
 
-### 3. Device-Side API
+### 3. Device-Side Post API
 
-The device-side API encapsulates NCCL GIN's warp-cooperative posting protocol
-inside provider-inlined functions. The consumer calls high-level operations;
-the provider implements reservation, WQE construction, backpressure, doorbell
-control, and completion internally.
+The post API encapsulates NCCL GIN's warp-cooperative posting protocol inside
+provider-inlined functions. The `scope` parameter controls how threads cooperate
+on SQ submission; `FI_MORE` controls doorbell deferral.
 
-#### Operations
+#### Functions
 
 ```c
-// === Data transfer ===
 int fi_acc_write(void *acc_ep, const void *buf, size_t len, void *desc,
                  uint64_t raddr, uint32_t rkey, void *acc_peer,
                  enum fi_acc_scope scope, uint64_t flags);
@@ -609,27 +607,19 @@ int fi_acc_read(void *acc_ep, void *buf, size_t len, void *desc,
                 uint64_t raddr, uint32_t rkey, void *acc_peer,
                 enum fi_acc_scope scope, uint64_t flags);
 
-// === Counter (primary completion mechanism) ===
-uint64_t fi_acc_cntr_read(void *acc_cntr);
-void     fi_acc_cntr_wait(void *acc_cntr, uint64_t target);
+// Receive posting (for send/recv and write+IMM patterns)
+int  fi_acc_post_recv(void *acc_ep, void *buf, size_t len, void *desc);
+void fi_acc_flush_recv(void *acc_ep);
 
-// === CQ (for consumers that need per-operation completion) ===
-void    *fi_acc_cq_poll(void *acc_cq, uint32_t position);
-void     fi_acc_cq_pop(void *acc_cq, uint32_t amount);
-
-// === Receive posting (for send/recv and write+IMM patterns) ===
-int      fi_acc_post_recv(void *acc_ep, void *buf, size_t len, void *desc);
-void     fi_acc_flush_recv(void *acc_ep);
-
-// === Serialization (multi-CTA on same EP) ===
-void     fi_acc_ep_lock(void *acc_ep);
-void     fi_acc_ep_unlock(void *acc_ep);
-
-// === Error detection ===
-uint32_t fi_acc_wc_read_vendor_err(void *cqe);
+// Serialization (multi-CTA on same EP)
+void fi_acc_ep_lock(void *acc_ep);
+void fi_acc_ep_unlock(void *acc_ep);
 ```
 
 #### Scope Parameter
+
+All threads in the declared scope must issue the same operation. The provider
+uses this to coalesce SQ slot reservation and amortize doorbells.
 
 | Scope | CUDA | SYCL | Behavior |
 |-------|------|------|----------|
@@ -644,7 +634,7 @@ uint32_t fi_acc_wc_read_vendor_err(void *cqe);
 | `FI_MORE` | Defer doorbell — provider writes WQE but does not ring until a subsequent call without `FI_MORE` (or max_batch reached) |
 | (none) | Ring doorbell immediately after this WQE batch |
 
-#### How NCCL GIN's Pattern Maps to the API
+#### How NCCL GIN's Pattern Maps to the Post API
 
 | NCCL GIN does manually | `fi_acc_write()` encapsulates via |
 |---|---|
@@ -678,13 +668,6 @@ The consumer never sees `sq_size`, `submitted_count`, or `max_batch`. The
 provider owns all the state. The consumer observes backpressure only as
 `fi_acc_write()` spinning when the SQ is full.
 
-#### Error Handling
-
-NCCL GIN does not poll CQ on the data path, so device-side error detection is
-limited to counter-based timeout (counter stops advancing). `fi_acc_wc_read_vendor_err()`
-is available for consumers that do poll CQ (e.g., perftest). Host-side health
-monitoring is more practical for production error recovery.
-
 #### Example
 
 ```c
@@ -700,7 +683,59 @@ fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer,
 //   5. Leader: fence, advance cursors, hand off in slot order
 ```
 
-### 4. Support DMA-BUF as a First-Class Memory Allocation Method
+### 4. Device-Side Completion API
+
+The completion API provides two mechanisms: counters (primary, used by NCCL GIN)
+and CQ polling (secondary, used by perftest). No scope parameter needed — these
+are simple reads/waits.
+
+#### Functions
+
+```c
+// Counter — primary completion mechanism (NCCL GIN path)
+uint64_t fi_acc_cntr_read(void *acc_cntr);
+void     fi_acc_cntr_wait(void *acc_cntr, uint64_t target);
+
+// CQ — per-operation completion (perftest path)
+void    *fi_acc_cq_poll(void *acc_cq, uint32_t position);
+void     fi_acc_cq_pop(void *acc_cq, uint32_t amount);
+
+// Error detection (for CQ consumers)
+uint32_t fi_acc_wc_read_vendor_err(void *cqe);
+```
+
+#### Counter Completion (NCCL GIN Pattern)
+
+NCCL GIN uses counters exclusively — no CQ polling on data path:
+
+- **Flush (wait for local completion):**
+  `while ((submitted - fi_acc_cntr_read(cntr)) & 0x7FFFFFFF != 0) spin;`
+- **Signal detection (wait for remote arrival):**
+  `while (fi_acc_cntr_read(signal_cntr) - offset < expected) spin;`
+- **Reset-without-zeroing:**
+  Snapshot counter value as offset; subsequent reads subtract offset.
+
+Counter semantics:
+- NIC-owned — software cannot write it
+- Wraps at 2^31 (EFA) — all arithmetic uses `(a - b) & 0x7FFFFFFF`
+- Read via system-scope acquire (bypasses GPU caches, coherent with NIC PCIe writes)
+
+#### CQ Completion (Perftest Pattern)
+
+For consumers that need per-operation status (opcode, error, imm data):
+
+- `fi_acc_cq_poll(cq, position)` — position-based parallel polling
+  (thread N polls position N for cooperative bandwidth kernels)
+- `fi_acc_cq_pop(cq, amount)` — advance CQ consumer pointer after processing
+- Phase-bit protocol handled internally by the provider
+
+#### Error Handling
+
+NCCL GIN detects errors via counter timeout (counter stops advancing).
+`fi_acc_wc_read_vendor_err()` is available for CQ-based consumers.
+Host-side health monitoring is more practical for production error recovery.
+
+### 5. Support DMA-BUF as a First-Class Memory Allocation Method
 
 ```c
 enum fi_acc_mem_type {
@@ -712,7 +747,7 @@ enum fi_acc_mem_type {
 
 **Why:** HW counters use DMA-BUF (NIC writes to GPU HBM). SQ/doorbell use BAR MMIO mapping. The API needs both.
 
-### 5. Address Resolution Export
+### 6. Address Resolution Export
 
 ```c
 struct fi_acc_peer_addr {
@@ -731,7 +766,7 @@ int fi_av_export_acc_batch(struct fid_av *av, fi_addr_t *addrs, int count,
 
 **Why:** NCCL GIN builds `[total_slots × nranks]` target tables with per-slot (ahn, qpn, qkey) tuples. The GPU kernel indexes this table to select the remote target per write.
 
-### 6. The Abstraction Level Decision
+### 7. The Abstraction Level Decision
 
 NCCL GIN's warp-cooperative protocol is sophisticated, but its underlying
 operations (reserve slots, write WQE, fence, ring doorbell, check counter)
@@ -770,7 +805,7 @@ Layer 2 (Optional raw export — for custom posting protocols):
 with `scope` + `FI_MORE` achieves the same throughput. Layer 2 exists as a future
 escape hatch for consumers with requirements beyond what scope+flags can express.
 
-### 7. Multi-Rail Support
+### 8. Multi-Rail Support
 
 ```c
 /* Per-rail: open separate domain/EP per rail, export each independently.
@@ -781,7 +816,7 @@ NCCL GIN's pattern: `rail_id` is baked into the device handle at createContext t
 Each rail has its own domain → endpoint → QP/CQ/counter chain. The API doesn't need
 explicit multi-rail — it works by creating N independent EP/CQ/counter sets.
 
-### 8. Version/Compatibility Negotiation
+### 9. Version/Compatibility Negotiation
 
 The provider's device-side structs are compiled into the consumer's binary via
 inlined `.cuh` headers. If the provider upgrades and changes struct layout, old
