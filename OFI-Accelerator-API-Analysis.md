@@ -701,9 +701,15 @@ specific setup happens inside the export call. For example, inside
 
 Similarly `fi_acc_cq_export()` can place the CQ ring in GPU HBM (alloc + DMA-BUF
 → NIC writes CQEs directly to GPU memory) or map the host ring via `import()` —
-the provider picks per its hardware. The provider may defer creating the
-underlying HW resource until export time if the HW requires the external memory
-at creation.
+the provider picks per its hardware.
+
+**Lazy HW creation:** Some HW resources require the external memory at creation
+time — on EFA, both `efadv_create_comp_cntr(fd, offset)` and
+`efadv_create_cq(EXT_MEM_DMABUF)` take the DMA-BUF fd as a creation parameter.
+In that case `fi_cntr_open(FI_ACC)` / `fi_cq_open(FI_ACC)` return the fid but
+the provider defers creating the underlying HW counter/CQ until the export
+call, when `acc_info.alloc(FI_ACC_ALLOC_DMABUF)` produces the fd. This is a
+provider-internal detail invisible to the consumer.
 
 **Counter semantics** (counters are THE completion mechanism in NCCL GIN — not CQ polling):
 
