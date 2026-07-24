@@ -558,13 +558,13 @@ enum fi_acc_mem_type {
                             * Limitation: HMEM today cannot register BAR MMIO
                             * with IOMEMORY semantics, so this mode may not
                             * support SQ/doorbell mapping on all platforms */
-    FI_ACC_MEM_DMABUF,     /* Consumer pre-allocates GPU memory and provides
-                            * a DMA-BUF fd+offset directly (no callbacks) */
 };
 ```
 
 `FI_ACC_MEM_USER_ALLOC` is the primary mode: the provider stays GPU-runtime-agnostic
-and the consumer's callbacks translate to CUDA/HIP/Level Zero calls.
+and the consumer's callbacks translate to CUDA/HIP/Level Zero calls. DMA-BUF is
+not a separate mode — it flows through the `alloc` callback (the consumer exports
+the fd when `FI_ACC_ALLOC_NIC_ACCESS` is set).
 
 #### Callback Flags — Libfabric-Defined, Not Platform-Specific
 
