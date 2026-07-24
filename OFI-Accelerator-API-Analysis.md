@@ -526,21 +526,59 @@ encapsulates this pattern inside `fi_acc_write()` via `scope` and `flags` parame
 so the consumer gets the same performance without managing ring buffers directly.
 
 
-### 1. Memory Callbacks with Libfabric-Defined Flags
+### 1. The `fi_acc_info` Struct
+
+`fi_acc_info` is the consumer's description of the accelerator, passed at object
+creation (CQ/counter/EP with `FI_ACC`). It carries the GPU identity, the memory
+handling mode, and the callbacks the provider invokes during creation and export.
+
+```c
+struct fi_acc_info {
+    enum fi_hmem_iface   iface;      /* FI_HMEM_CUDA, FI_HMEM_ROCR, FI_HMEM_ZE */
+    uint64_t             device;     /* GPU device ordinal */
+    enum fi_acc_mem_type mem_type;   /* how memory is allocated/mapped */
+    /* Callbacks (used when mem_type == FI_ACC_MEM_USER_ALLOC): */
+    int  (*alloc)(uint64_t device, uint64_t size, uint64_t alignment,
+                  uint64_t flags, void **addr, int *fd, uint64_t *offset);
+    int  (*import)(uint64_t device, void *host_addr, uint64_t size,
+                   uint64_t flags, void **dev_addr);
+    void (*free)(uint64_t device, void *addr);
+};
+```
+
+#### Memory Type Enum
+
+Selects who allocates GPU memory and how the provider gets device pointers:
+
+```c
+enum fi_acc_mem_type {
+    FI_ACC_MEM_USER_ALLOC, /* Consumer provides alloc/import/free callbacks
+                            * (primary mode — works for any GPU runtime) */
+    FI_ACC_MEM_HMEM,       /* Provider allocates via libfabric HMEM interface.
+                            * Limitation: HMEM today cannot register BAR MMIO
+                            * with IOMEMORY semantics, so this mode may not
+                            * support SQ/doorbell mapping on all platforms */
+    FI_ACC_MEM_DMABUF,     /* Consumer pre-allocates GPU memory and provides
+                            * a DMA-BUF fd+offset directly (no callbacks) */
+};
+```
+
+`FI_ACC_MEM_USER_ALLOC` is the primary mode: the provider stays GPU-runtime-agnostic
+and the consumer's callbacks translate to CUDA/HIP/Level Zero calls.
+
+#### Callback Flags — Libfabric-Defined, Not Platform-Specific
 
 The `import` and `alloc` callbacks use **libfabric-defined flags** rather than
-platform-specific ones (e.g., CUDA's `CU_MEMHOSTREGISTER_IOMEMORY`). This keeps
-the provider portable across GPU runtimes — the provider expresses what it needs
-semantically, and the consumer's callback translates to platform-specific calls.
+platform-specific ones (e.g., CUDA's `CU_MEMHOSTREGISTER_IOMEMORY`). The provider
+expresses *what* it needs semantically; the consumer's callback translates to
+platform-specific calls.
 
-#### Import Callback Flags
+**Import flags** (map provider-owned host memory into GPU address space):
 
 | Flag | Meaning | CUDA equivalent | HIP equivalent |
 |------|---------|-----------------|----------------|
 | `FI_ACC_IMPORT_IOMEMORY` | Host address points to PCIe BAR MMIO (device I/O memory on the NIC) | `CU_MEMHOSTREGISTER_IOMEMORY` | `hipHostRegisterIoMemory` |
 | `FI_ACC_IMPORT_DEVICEMAP` | Make memory visible in GPU device address space | `CU_MEMHOSTREGISTER_DEVICEMAP` | `hipHostRegisterMapped` |
-
-The provider calls `import` with these flags to describe the memory type:
 
 ```c
 // Provider (inside fi_acc_ep_export):
@@ -555,7 +593,7 @@ acc_info->import(device, rq_host_va, rq_size,
                  &rq_dev_ptr);
 ```
 
-The consumer's callback translates:
+The consumer's CUDA callback translates:
 
 ```c
 int my_import(uint64_t device, void *host_addr,
@@ -575,7 +613,7 @@ int my_import(uint64_t device, void *host_addr,
 }
 ```
 
-#### Alloc Callback Flags
+**Alloc flags** (allocate fresh GPU memory):
 
 | Flag | Meaning | DMA-BUF fd required? |
 |------|---------|---------------------|
@@ -596,21 +634,11 @@ acc_info->alloc(device, sizeof(fi_acc_dev_ep), 8, 0,
 // Provider H2D copies the built struct to gpu_ptr
 ```
 
-**Why distinguish:** Exporting a DMA-BUF fd (`cuMemGetDmaBufFd`) has real cost
-and constraints — memory must be allocated with RDMA-capable properties (e.g.,
-CUDA VMM with `gpuDirectRDMACapable`). The blobs from `fi_acc_ep_export`,
-`fi_acc_av_export`, and `fi_acc_mr_export` never need NIC access, so a plain
-`cudaMalloc` suffices. The flag lets the consumer pick the cheap path.
-
-#### Memory Type Enum
-
-```c
-enum fi_acc_mem_type {
-    FI_ACC_MEM_HMEM,       /* Provider allocates via HMEM interface */
-    FI_ACC_MEM_USER_ALLOC, /* User provides alloc/import callbacks */
-    FI_ACC_MEM_DMABUF,     /* Provider exports DMA-BUF fd+offset */
-};
-```
+**Why distinguish NIC-access from plain:** Exporting a DMA-BUF fd
+(`cuMemGetDmaBufFd`) has real cost and constraints — memory must be allocated
+with RDMA-capable properties (e.g., CUDA VMM with `gpuDirectRDMACapable`). The
+blobs from `fi_acc_ep_export`, `fi_acc_av_export`, and `fi_acc_mr_export` never
+need NIC access, so a plain `cudaMalloc` suffices.
 
 **Why libfabric flags instead of passing CUDA flags directly:**
 - Provider code never links CUDA/HIP/Level Zero — it's built with gcc
