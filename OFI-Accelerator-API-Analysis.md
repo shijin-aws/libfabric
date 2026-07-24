@@ -553,8 +553,7 @@ Selects who allocates GPU memory and how the provider gets device pointers:
 ```c
 enum fi_acc_mem_type {
     FI_ACC_MEM_USER,     /* Consumer handles memory via alloc/import/free
-                          * callbacks (primary mode — works for any GPU
-                          * runtime) */
+                          * callbacks — works for any GPU runtime */
     FI_ACC_MEM_PROVIDER, /* Provider handles memory internally (e.g., via
                           * libfabric HMEM interface). Limitation: HMEM today
                           * cannot register BAR MMIO with IOMEMORY semantics,
@@ -563,8 +562,8 @@ enum fi_acc_mem_type {
 };
 ```
 
-`FI_ACC_MEM_USER` is the primary mode: the provider stays GPU-runtime-agnostic
-and the consumer's callbacks translate to CUDA/HIP/Level Zero calls. DMA-BUF is
+With `FI_ACC_MEM_USER`, the provider stays GPU-runtime-agnostic and the
+consumer's callbacks translate to CUDA/HIP/Level Zero calls. DMA-BUF is
 not a separate mode — it flows through the `alloc` callback (the consumer exports
 the fd when `FI_ACC_ALLOC_DMABUF` is set).
 

@@ -401,7 +401,7 @@ pattern.
 /* ===== Accelerator memory specification ===== */
 
 enum fi_acc_mem_type {
-    FI_ACC_MEM_USER,     /* App handles memory via alloc/import callbacks (primary) */
+    FI_ACC_MEM_USER,     /* App handles memory via alloc/import callbacks */
     FI_ACC_MEM_PROVIDER, /* Provider handles memory internally (e.g., HMEM) */
 };
 
