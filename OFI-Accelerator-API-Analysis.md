@@ -525,6 +525,7 @@ library and implements its own warp-cooperative SQ posting protocol. Our API
 encapsulates this pattern inside `fi_acc_write()` via `scope` and `flags` parameters,
 so the consumer gets the same performance without managing ring buffers directly.
 
+
 ### 1. Structured Host-Side Export (Provider Builds Opaque Device Blob)
 
 The host-side export returns structured attributes that the **provider** uses to
@@ -562,6 +563,7 @@ device blob (populates `fi_acc_dev_ep` with buffer/doorbell/mask/max_batch).
 Additionally, a Layer 2 (raw export) mode can return these directly for consumers
 who want to implement their own posting protocol (future option, not required for NCCL).
 
+
 ### 2. Add Hardware Counter Export (P0 — Central to Everything)
 
 Counters are THE completion mechanism in NCCL GIN. Not CQ polling.
@@ -587,7 +589,108 @@ The API must also document:
 - Counter wraps at 2^31 (EFA-specific but needs a generic way to query)
 - Counter is NIC-owned; software cannot write it (offset-based reset only)
 
-### 3. Device-Side Post API
+
+### 3. Memory Callbacks with Libfabric-Defined Flags
+
+The `import` and `alloc` callbacks use **libfabric-defined flags** rather than
+platform-specific ones (e.g., CUDA's `CU_MEMHOSTREGISTER_IOMEMORY`). This keeps
+the provider portable across GPU runtimes — the provider expresses what it needs
+semantically, and the consumer's callback translates to platform-specific calls.
+
+#### Import Callback Flags
+
+| Flag | Meaning | CUDA equivalent | HIP equivalent |
+|------|---------|-----------------|----------------|
+| `FI_ACC_IMPORT_IOMEMORY` | Host address points to PCIe BAR MMIO (device I/O memory on the NIC) | `CU_MEMHOSTREGISTER_IOMEMORY` | `hipHostRegisterIoMemory` |
+| `FI_ACC_IMPORT_DEVICEMAP` | Make memory visible in GPU device address space | `CU_MEMHOSTREGISTER_DEVICEMAP` | `hipHostRegisterMapped` |
+
+The provider calls `import` with these flags to describe the memory type:
+
+```c
+// Provider (inside fi_acc_ep_export):
+//   SQ buffer is BAR MMIO → needs both flags
+acc_info->import(device, sq_host_va, sq_size,
+                 FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
+                 &sq_dev_ptr);
+
+//   RQ buffer is regular host memory → only DEVICEMAP
+acc_info->import(device, rq_host_va, rq_size,
+                 FI_ACC_IMPORT_DEVICEMAP,
+                 &rq_dev_ptr);
+```
+
+The consumer's callback translates:
+
+```c
+int my_import(uint64_t device, void *host_addr,
+              uint64_t size, uint64_t flags, void **dev_addr)
+{
+    unsigned int cuda_flags = 0;
+    if (flags & FI_ACC_IMPORT_IOMEMORY)
+        cuda_flags |= CU_MEMHOSTREGISTER_IOMEMORY;
+    if (flags & FI_ACC_IMPORT_DEVICEMAP)
+        cuda_flags |= CU_MEMHOSTREGISTER_DEVICEMAP;
+
+    cuMemHostRegister(host_addr, size, cuda_flags);
+    CUdeviceptr ptr;
+    cuMemHostGetDevicePointer(&ptr, host_addr, 0);
+    *dev_addr = (void *)ptr;
+    return 0;
+}
+```
+
+#### Alloc Callback Flags
+
+| Flag | Meaning |
+|------|---------|
+| `FI_ACC_ALLOC_GPU_HBM` | Allocate in GPU high-bandwidth memory; return DMA-BUF fd for NIC access |
+
+```c
+// Provider (inside fi_cntr_open with FI_ACC):
+acc_info->alloc(device, 8, 8, FI_ACC_ALLOC_GPU_HBM,
+                &gpu_ptr, &dmabuf_fd, &offset);
+// Provider passes dmabuf_fd to NIC driver (efadv_create_comp_cntr)
+// GPU kernel reads *gpu_ptr directly
+```
+
+#### Memory Type Enum
+
+```c
+enum fi_acc_mem_type {
+    FI_ACC_MEM_HMEM,       /* Provider allocates via HMEM interface */
+    FI_ACC_MEM_USER_ALLOC, /* User provides alloc/import callbacks */
+    FI_ACC_MEM_DMABUF,     /* Provider exports DMA-BUF fd+offset */
+};
+```
+
+**Why libfabric flags instead of passing CUDA flags directly:**
+- Provider code never links CUDA/HIP/Level Zero — it's built with gcc
+- A HIP consumer translates `FI_ACC_IMPORT_IOMEMORY` → `hipHostRegisterIoMemory`
+- A Level Zero consumer translates differently (`zeMemOpenIpcHandle` or `zexDriverImportExternalPointer`)
+- The provider expresses *what* (BAR MMIO vs host RAM) — the consumer expresses *how*
+
+
+### 4. Address Resolution Export
+
+```c
+struct fi_acc_peer_addr {
+    uint16_t address_handle;   /* NIC-level address handle */
+    uint16_t remote_qpn;       /* Remote queue pair number */
+    uint32_t remote_qkey;      /* Queue key */
+};
+
+int fi_av_export_acc(struct fid_av *av, fi_addr_t addr,
+                     struct fi_acc_peer_addr *acc_addr);
+
+/* Batch version for building target tables: */
+int fi_av_export_acc_batch(struct fid_av *av, fi_addr_t *addrs, int count,
+                           struct fi_acc_peer_addr *out);
+```
+
+**Why:** NCCL GIN builds `[total_slots × nranks]` target tables with per-slot (ahn, qpn, qkey) tuples. The GPU kernel indexes this table to select the remote target per write.
+
+
+### 5. Device-Side Post API
 
 The post API encapsulates NCCL GIN's warp-cooperative posting protocol inside
 provider-inlined functions. The `scope` parameter controls how threads cooperate
@@ -683,7 +786,8 @@ fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer,
 //   5. Leader: fence, advance cursors, hand off in slot order
 ```
 
-### 4. Device-Side Completion API
+
+### 6. Device-Side Completion API
 
 The completion API provides two mechanisms: counters (primary, used by NCCL GIN)
 and CQ polling (secondary, used by perftest). No scope parameter needed — these
@@ -735,103 +839,6 @@ NCCL GIN detects errors via counter timeout (counter stops advancing).
 `fi_acc_wc_read_vendor_err()` is available for CQ-based consumers.
 Host-side health monitoring is more practical for production error recovery.
 
-### 5. Memory Callbacks with Libfabric-Defined Flags
-
-The `import` and `alloc` callbacks use **libfabric-defined flags** rather than
-platform-specific ones (e.g., CUDA's `CU_MEMHOSTREGISTER_IOMEMORY`). This keeps
-the provider portable across GPU runtimes — the provider expresses what it needs
-semantically, and the consumer's callback translates to platform-specific calls.
-
-#### Import Callback Flags
-
-| Flag | Meaning | CUDA equivalent | HIP equivalent |
-|------|---------|-----------------|----------------|
-| `FI_ACC_IMPORT_IOMEMORY` | Host address points to PCIe BAR MMIO (device I/O memory on the NIC) | `CU_MEMHOSTREGISTER_IOMEMORY` | `hipHostRegisterIoMemory` |
-| `FI_ACC_IMPORT_DEVICEMAP` | Make memory visible in GPU device address space | `CU_MEMHOSTREGISTER_DEVICEMAP` | `hipHostRegisterMapped` |
-
-The provider calls `import` with these flags to describe the memory type:
-
-```c
-// Provider (inside fi_acc_ep_export):
-//   SQ buffer is BAR MMIO → needs both flags
-acc_info->import(device, sq_host_va, sq_size,
-                 FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
-                 &sq_dev_ptr);
-
-//   RQ buffer is regular host memory → only DEVICEMAP
-acc_info->import(device, rq_host_va, rq_size,
-                 FI_ACC_IMPORT_DEVICEMAP,
-                 &rq_dev_ptr);
-```
-
-The consumer's callback translates:
-
-```c
-int my_import(uint64_t device, void *host_addr,
-              uint64_t size, uint64_t flags, void **dev_addr)
-{
-    unsigned int cuda_flags = 0;
-    if (flags & FI_ACC_IMPORT_IOMEMORY)
-        cuda_flags |= CU_MEMHOSTREGISTER_IOMEMORY;
-    if (flags & FI_ACC_IMPORT_DEVICEMAP)
-        cuda_flags |= CU_MEMHOSTREGISTER_DEVICEMAP;
-
-    cuMemHostRegister(host_addr, size, cuda_flags);
-    CUdeviceptr ptr;
-    cuMemHostGetDevicePointer(&ptr, host_addr, 0);
-    *dev_addr = (void *)ptr;
-    return 0;
-}
-```
-
-#### Alloc Callback Flags
-
-| Flag | Meaning |
-|------|---------|
-| `FI_ACC_ALLOC_GPU_HBM` | Allocate in GPU high-bandwidth memory; return DMA-BUF fd for NIC access |
-
-```c
-// Provider (inside fi_cntr_open with FI_ACC):
-acc_info->alloc(device, 8, 8, FI_ACC_ALLOC_GPU_HBM,
-                &gpu_ptr, &dmabuf_fd, &offset);
-// Provider passes dmabuf_fd to NIC driver (efadv_create_comp_cntr)
-// GPU kernel reads *gpu_ptr directly
-```
-
-#### Memory Type Enum
-
-```c
-enum fi_acc_mem_type {
-    FI_ACC_MEM_HMEM,       /* Provider allocates via HMEM interface */
-    FI_ACC_MEM_USER_ALLOC, /* User provides alloc/import callbacks */
-    FI_ACC_MEM_DMABUF,     /* Provider exports DMA-BUF fd+offset */
-};
-```
-
-**Why libfabric flags instead of passing CUDA flags directly:**
-- Provider code never links CUDA/HIP/Level Zero — it's built with gcc
-- A HIP consumer translates `FI_ACC_IMPORT_IOMEMORY` → `hipHostRegisterIoMemory`
-- A Level Zero consumer translates differently (`zeMemOpenIpcHandle` or `zexDriverImportExternalPointer`)
-- The provider expresses *what* (BAR MMIO vs host RAM) — the consumer expresses *how*
-
-### 6. Address Resolution Export
-
-```c
-struct fi_acc_peer_addr {
-    uint16_t address_handle;   /* NIC-level address handle */
-    uint16_t remote_qpn;       /* Remote queue pair number */
-    uint32_t remote_qkey;      /* Queue key */
-};
-
-int fi_av_export_acc(struct fid_av *av, fi_addr_t addr,
-                     struct fi_acc_peer_addr *acc_addr);
-
-/* Batch version for building target tables: */
-int fi_av_export_acc_batch(struct fid_av *av, fi_addr_t *addrs, int count,
-                           struct fi_acc_peer_addr *out);
-```
-
-**Why:** NCCL GIN builds `[total_slots × nranks]` target tables with per-slot (ahn, qpn, qkey) tuples. The GPU kernel indexes this table to select the remote target per write.
 
 ### 7. The Abstraction Level Decision
 
@@ -872,6 +879,7 @@ Layer 2 (Optional raw export — for custom posting protocols):
 with `scope` + `FI_MORE` achieves the same throughput. Layer 2 exists as a future
 escape hatch for consumers with requirements beyond what scope+flags can express.
 
+
 ### 8. Multi-Rail Support
 
 ```c
@@ -882,6 +890,7 @@ escape hatch for consumers with requirements beyond what scope+flags can express
 NCCL GIN's pattern: `rail_id` is baked into the device handle at createContext time.
 Each rail has its own domain → endpoint → QP/CQ/counter chain. The API doesn't need
 explicit multi-rail — it works by creating N independent EP/CQ/counter sets.
+
 
 ### 9. Version/Compatibility Negotiation
 
