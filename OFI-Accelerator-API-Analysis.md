@@ -526,71 +526,7 @@ encapsulates this pattern inside `fi_acc_write()` via `scope` and `flags` parame
 so the consumer gets the same performance without managing ring buffers directly.
 
 
-### 1. Structured Host-Side Export (Provider Builds Opaque Device Blob)
-
-The host-side export returns structured attributes that the **provider** uses to
-build an opaque device-side blob. The consumer on the host needs to see ring
-geometry for diagnostics/configuration, but the device-side consumer calls
-`fi_acc_write()` and never touches ring fields directly.
-
-NCCL GIN today directly accesses `efa_cuda_qp` fields, but this is because it
-implements its own SQ management. With our API, the provider's `fi_acc_write()`
-inlined implementation accesses those same fields internally:
-- `qp->sq.wq.pc` (atomic reservation cursor)
-- `qp->sq.wq.buf` (BAR MMIO ring buffer)
-- `qp->sq.wq.db` (doorbell MMIO register)
-- `qp->sq.wq.queue_mask` / `queue_size_shift` (ring indexing)
-- `qp->sq.wq.max_batch` (EFA staging limit)
-- `qp->sq.wq.wqes_completed` / `wqes_posted` (rendezvous/doorbell cursors)
-- `qp->sq.wq.wqes_completed` / `wqes_posted` (rendezvous/doorbell cursors)
-
-**Host-side structured export (for provider's internal use + optional Layer 2):**
-
-```c
-struct fi_acc_ep_attrs {
-    struct fi_acc_wq_attrs sq;   /* SQ buffer, doorbell, entry_size, num_entries, max_batch */
-    struct fi_acc_wq_attrs rq;   /* RQ buffer, doorbell, entry_size, num_entries */
-    uint32_t max_inline_data;
-    uint32_t max_rdma_sges;
-};
-
-int fi_ep_export_acc(struct fid_ep *ep, uint64_t flags,
-                     struct fi_acc_ep_attrs *attrs);  /* structured output */
-```
-
-**Why structured:** The provider uses these values internally to build the opaque
-device blob (populates `fi_acc_dev_ep` with buffer/doorbell/mask/max_batch).
-Additionally, a Layer 2 (raw export) mode can return these directly for consumers
-who want to implement their own posting protocol (future option, not required for NCCL).
-
-
-### 2. Add Hardware Counter Export (P0 — Central to Everything)
-
-Counters are THE completion mechanism in NCCL GIN. Not CQ polling.
-
-```c
-int fi_cntr_open_acc(struct fid_domain *domain,
-                     struct fi_cntr_attr *attr,
-                     struct fi_acc_cntr_attrs *acc_attr,
-                     struct fid_cntr **cntr, void *context);
-
-int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
-                       void **acc_cntr, size_t *acc_cntr_size);
-```
-
-**Why:** NCCL GIN uses counters for:
-- **SQ backpressure (FI_WRITE)**: `(chunk_next - (uint32_t)hwCounterLoad(cntr)) & 0x7FFFFFFF ≤ sq_size`
-- **Flush/completion (FI_WRITE)**: `(submitted - *cntr) & 0x7FFFFFFF == 0`
-- **Signal delivery (FI_REMOTE_WRITE)**: peer polls counter to detect arrival
-- **Counter-tracked puts**: counterId selects which EP's FI_WRITE to observe
-- **Reset-without-zeroing**: software `cntr_offset` baseline, since NIC counter is read-only
-
-The API must also document:
-- Counter wraps at 2^31 (EFA-specific but needs a generic way to query)
-- Counter is NIC-owned; software cannot write it (offset-based reset only)
-
-
-### 3. Memory Callbacks with Libfabric-Defined Flags
+### 1. Memory Callbacks with Libfabric-Defined Flags
 
 The `import` and `alloc` callbacks use **libfabric-defined flags** rather than
 platform-specific ones (e.g., CUDA's `CU_MEMHOSTREGISTER_IOMEMORY`). This keeps
@@ -670,6 +606,75 @@ enum fi_acc_mem_type {
 - The provider expresses *what* (BAR MMIO vs host RAM) — the consumer expresses *how*
 
 
+
+### 2. Opaque Handle Export
+
+The host-side export returns opaque `void*` device handles. The provider builds
+the device-side blob internally (populates ring geometry, doorbell pointers,
+phase state, backpressure fields) using the memory callbacks from section 1.
+The consumer never inspects or constructs these structs — it passes the opaque
+handles directly to the device-side API (`fi_acc_write()`, `fi_acc_cntr_read()`, etc.).
+
+```c
+int fi_acc_ep_export(struct fid_ep *ep, uint64_t flags,
+                     void **acc_ep, size_t *acc_ep_size);
+
+int fi_acc_cq_export(struct fid_cq *cq, uint64_t flags,
+                     void **acc_cq, size_t *acc_cq_size);
+
+int fi_acc_cntr_export(struct fid_cntr *cntr, uint64_t flags,
+                       void **acc_cntr, size_t *acc_cntr_size);
+
+int fi_acc_mr_export(struct fid_mr *mr, uint64_t flags,
+                     void **acc_desc, size_t *acc_desc_size);
+
+int fi_acc_av_export(struct fid_av *av, fi_addr_t addr, uint64_t flags,
+                     void **acc_peer, size_t *acc_peer_size);
+```
+
+**What the provider does inside `fi_acc_ep_export()`:**
+1. Calls `efadv_query_qp_wqs()` → gets host VAs of SQ buffer, doorbell, RQ
+2. Calls `acc_info.import()` with `FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP` → gets device pointers
+3. Allocates GPU memory for the internal `fi_acc_dev_ep` struct (via `acc_info.alloc()`)
+4. Fills the struct with device pointers, ring geometry, phase state, max_batch, sq_size
+5. H2D copies → returns opaque `void*` to consumer
+
+The consumer only ever does:
+```c
+void *acc_ep;
+fi_acc_ep_export(ep, 0, &acc_ep, &size);
+// ... pass acc_ep to GPU kernel ...
+fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer, scope, flags);
+```
+
+
+### 3. Add Hardware Counter Export (P0 — Central to Everything)
+
+Counters are THE completion mechanism in NCCL GIN. Not CQ polling.
+
+```c
+int fi_cntr_open_acc(struct fid_domain *domain,
+                     struct fi_cntr_attr *attr,
+                     struct fi_acc_cntr_attrs *acc_attr,
+                     struct fid_cntr **cntr, void *context);
+
+int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
+                       void **acc_cntr, size_t *acc_cntr_size);
+```
+
+**Why:** NCCL GIN uses counters for:
+- **SQ backpressure (FI_WRITE)**: `(chunk_next - (uint32_t)hwCounterLoad(cntr)) & 0x7FFFFFFF ≤ sq_size`
+- **Flush/completion (FI_WRITE)**: `(submitted - *cntr) & 0x7FFFFFFF == 0`
+- **Signal delivery (FI_REMOTE_WRITE)**: peer polls counter to detect arrival
+- **Counter-tracked puts**: counterId selects which EP's FI_WRITE to observe
+- **Reset-without-zeroing**: software `cntr_offset` baseline, since NIC counter is read-only
+
+The API must also document:
+- Counter wraps at 2^31 (EFA-specific but needs a generic way to query)
+- Counter is NIC-owned; software cannot write it (offset-based reset only)
+
+
+
 ### 4. Address Resolution Export
 
 ```c
@@ -688,6 +693,7 @@ int fi_av_export_acc_batch(struct fid_av *av, fi_addr_t *addrs, int count,
 ```
 
 **Why:** NCCL GIN builds `[total_slots × nranks]` target tables with per-slot (ahn, qpn, qkey) tuples. The GPU kernel indexes this table to select the remote target per write.
+
 
 
 ### 5. Device-Side Post API
