@@ -507,7 +507,7 @@ __global__ void run_iter_bw_kernel(...) {
 | **Doorbell control** | Not elaborated | **Deferred aggregation:** `ncclGinOptFlagsAggregateRequests` skips doorbell; later group drains all deferred WQEs with one ring | `flush_sq_wrs()` after batch of ≤16 WQEs | Hidden inside `fi_acc_write()` — `FI_MORE` flag defers doorbell; provider rings when max_batch reached or `FI_MORE` absent |
 | **Concurrency model** | `FI_ACC_WORK_ITEM/SUBGROUP/WORK_GROUP` scope param | **Warp coalescing:** `cooperative_groups::labeled_partition(qp)` → leader reserves, all lanes write WQEs in parallel, strict slot-order rendezvous | Fixed thread-block: `__syncthreads()` | `FI_ACC_SUBGROUP` scope maps to warp coalescing; provider implements cooperative reservation + rendezvous internally |
 | **Counter support** | Not shown in proposal | **Central to everything:** HW counter in GPU HBM (FI_WRITE for local completion, FI_REMOTE_WRITE for signals), 31-bit wrap semantics | Not used (CQ-only) | **P0 gap** — counters ARE the completion mechanism in production |
-| **Counter wrapping** | Not elaborated | 2^31 wrap: `(producer - consumer) & 0x7FFFFFFF`; in-flight bounded by sq_size (4096) « 2^31 | N/A | Spec must document counter wrap semantics |
+| **Counter wrapping** | Not elaborated | 2^31 wrap: `(producer - consumer) & 0x7FFFFFFF`; in-flight bounded by sq_size (4096) « 2^31 | N/A | Already queryable via existing `domain_attr->max_cntr_value` / `max_err_cntr_value`; acc API just documents device-side modulo arithmetic |
 | **Signal delivery** | Not elaborated | EFA FI_REMOTE_WRITE ticks +1 per write; Add-by-N emulated as N separate 0-byte writes to peer scratch | N/A | Signal semantics are transport-specific |
 | **Multi-endpoint** | Not elaborated | data EP, pvdata EP (PutValue staging), counter EPs (per-counterId), signal EPs (remote target only) | Single QP or multi-QP | Production uses many specialized EPs per context |
 | **Multi-rail** | Not elaborated | `rail_id = contextId % num_rails`; per-rail domains/EPs/MRs; window arrays indexed by rail_id | Multiple QPs sharing single CQ | Important for production bandwidth |
@@ -555,10 +555,7 @@ enum fi_acc_mem_type {
     FI_ACC_MEM_USER,     /* Consumer handles memory via alloc/import/free
                           * callbacks — works for any GPU runtime */
     FI_ACC_MEM_PROVIDER, /* Provider handles memory internally (e.g., via
-                          * libfabric HMEM interface). Limitation: HMEM today
-                          * cannot register BAR MMIO with IOMEMORY semantics,
-                          * so this mode may not support SQ/doorbell mapping
-                          * on all platforms */
+                          * libfabric HMEM interface) */
 };
 ```
 
@@ -598,7 +595,7 @@ acc_info->alloc(device, sizeof(fi_acc_dev_ep), 8, 0,
 **Why distinguish:** Exporting a DMA-BUF fd
 (`cuMemGetDmaBufFd`) has real cost and constraints — memory must be allocated
 with RDMA-capable properties (e.g., CUDA VMM with `gpuDirectRDMACapable`). The
-blobs from `fi_acc_ep_export`, `fi_acc_av_export`, and `fi_acc_mr_export` never
+blobs from `fi_ep_export_acc`, `fi_av_export_acc`, and `fi_mr_export_acc` never
 need NIC access, so a plain `cudaMalloc` suffices.
 
 **Import flags** (map provider-owned host memory into GPU address space):
@@ -609,7 +606,7 @@ need NIC access, so a plain `cudaMalloc` suffices.
 | `FI_ACC_IMPORT_DEVICEMAP` | Make memory visible in GPU device address space | `CU_MEMHOSTREGISTER_DEVICEMAP` | `hipHostRegisterMapped` |
 
 ```c
-// Provider (inside fi_acc_ep_export):
+// Provider (inside fi_ep_export_acc):
 //   SQ buffer is BAR MMIO → needs both flags
 acc_info->import(device, sq_host_va, sq_size,
                  FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
@@ -649,7 +646,7 @@ int my_import(uint64_t device, void *host_addr,
 
 
 
-### 2. Opaque Handle Export
+### 2. Export APIs
 
 The host-side export returns opaque `void*` device handles. The provider builds
 the device-side blob internally (populates ring geometry, doorbell pointers,
@@ -657,32 +654,23 @@ phase state, backpressure fields) using the memory callbacks from section 1.
 The consumer never inspects or constructs these structs — it passes the opaque
 handles directly to the device-side API (`fi_acc_write()`, `fi_acc_cntr_read()`, etc.).
 
+The exports fall into two categories:
+- **Object handle exports** (2a EP, 2b Counter, 2c CQ) — one object → one opaque handle
+- **Table exports (batch-native)** (2d MR, 2e AV) — N items → one GPU-resident table
+
+**No parallel `*_open_acc` API needed.** Objects are created with the standard
+calls (`fi_cq_open()`, `fi_cntr_open()`, `fi_endpoint()`) — the `FI_ACC` flag
+plus `acc_info` tell the provider the object will be exported. All accelerator-
+specific setup happens inside the export call.
+
+#### 2a. Endpoint Export
+
 ```c
-int fi_acc_ep_export(struct fid_ep *ep, uint64_t flags,
+int fi_ep_export_acc(struct fid_ep *ep, uint64_t flags,
                      void **acc_ep, size_t *acc_ep_size);
-
-int fi_acc_cq_export(struct fid_cq *cq, uint64_t flags,
-                     void **acc_cq, size_t *acc_cq_size);
-
-int fi_acc_cntr_export(struct fid_cntr *cntr, uint64_t flags,
-                       void **acc_cntr, size_t *acc_cntr_size);
-
-int fi_acc_mr_export(struct fid_mr *mr, uint64_t flags,
-                     void **acc_desc, size_t *acc_desc_size);
-
-/* Batch-native: resolves `count` fi_addrs into one GPU-resident peer table.
- * count == 1 is the trivial case; no separate single-address API. */
-int fi_acc_av_export(struct fid_av *av, fi_addr_t *addrs, size_t count,
-                     uint64_t flags, void **acc_peers, size_t *acc_peers_size);
 ```
 
-**AV export is batch-native:** NCCL GIN builds `[total_slots × nranks]` target
-tables of (AHN, QPN, QKEY) tuples — the GPU kernel indexes the table to select
-the remote target per write. Passing the full `fi_addr_t` array in one call lets
-the provider resolve all peers and build one GPU-resident table with a single
-alloc + H2D copy. A single address is just `count = 1`.
-
-**What the provider does inside `fi_acc_ep_export()`:**
+**What the provider does inside `fi_ep_export_acc()`:**
 1. Calls `efadv_query_qp_wqs()` → gets host VAs of SQ buffer, doorbell, RQ
 2. Calls `acc_info.import()` with `FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP` → gets device pointers
 3. Allocates GPU memory for the internal `fi_acc_dev_ep` struct (via `acc_info.alloc()`)
@@ -692,29 +680,69 @@ alloc + H2D copy. A single address is just `count = 1`.
 The consumer only ever does:
 ```c
 void *acc_ep;
-fi_acc_ep_export(ep, 0, &acc_ep, &size);
+fi_ep_export_acc(ep, 0, &acc_ep, &size);
 // ... pass acc_ep to GPU kernel ...
 fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer, scope, flags);
 ```
 
-**No parallel `*_open_acc` API needed.** Objects are created with the standard
-calls (`fi_cq_open()`, `fi_cntr_open()`, `fi_endpoint()`) — the `FI_ACC` flag
-plus `acc_info` tell the provider the object will be exported. All accelerator-
-specific setup happens inside the export call. For example, inside
-`fi_acc_cntr_export()`:
-1. `acc_info.alloc(8 bytes, FI_ACC_ALLOC_DMABUF)` → GPU HBM pointer + DMA-BUF fd
-2. Bind the fd to the NIC counter (e.g., `efadv_create_comp_cntr(fd, offset)`) so
-   the NIC DMAs counter updates directly into GPU memory
-3. Return the opaque handle wrapping the GPU pointer
+#### 2b. Counter Export
 
-Similarly `fi_acc_cq_export()` can place the CQ ring in GPU HBM (alloc + DMA-BUF
+```c
+int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
+                       void **acc_cntr, size_t *acc_cntr_size);
+```
+
+**What the provider does inside `fi_cntr_export_acc()`:**
+1. `acc_info.alloc(FI_ACC_ALLOC_DMABUF)` → ONE GPU HBM allocation + ONE DMA-BUF fd,
+   sized to hold both the **completion counter** and (if the HW supports it) the
+   **error counter** at different offsets (EFA: `comp_cntr_ext_mem` +
+   `err_cntr_ext_mem` in `efadv_comp_cntr_init_attr` — same fd, distinct offsets)
+2. Bind the fd to the NIC counter (e.g., `efadv_create_comp_cntr`) so
+   the NIC DMAs both counter updates directly into GPU memory
+3. Return ONE opaque handle wrapping both GPU pointers
+
+The consumer never distinguishes comp vs err memory — both live behind the
+single opaque handle. The device-side API exposes them as separate reads
+(`fi_acc_cntr_read()` for the completion value, `fi_acc_cntr_read_err()` for
+the error value — mirroring host-side `fi_cntr_read()` / `fi_cntr_readerr()`);
+the provider resolves each to the right offset internally.
+On hardware without a device-visible error counter, the provider sizes the
+allocation for comp only and `fi_acc_cntr_read_err()` degrades gracefully
+(returns 0 or a comp_mask bit indicates its absence).
+
+**Counter semantics** (counters are THE completion mechanism in NCCL GIN — not CQ polling):
+
+NCCL GIN uses counters for:
+- **SQ backpressure (FI_WRITE)**: `(chunk_next - (uint32_t)hwCounterLoad(cntr)) & 0x7FFFFFFF ≤ sq_size`
+- **Flush/completion (FI_WRITE)**: `(submitted - *cntr) & 0x7FFFFFFF == 0`
+- **Signal delivery (FI_REMOTE_WRITE)**: peer polls counter to detect arrival
+- **Counter-tracked puts**: counterId selects which EP's FI_WRITE to observe
+- **Reset-without-zeroing**: software `cntr_offset` baseline, since NIC counter is read-only
+
+**Wrap semantics are already covered by the existing cntr API:** the domain
+attributes report `max_cntr_value` / `max_err_cntr_value`
+(`fi_info->domain_attr`), so a consumer can query the wrap point generically
+(EFA would report 2^31 - 1). No new API is needed — the accelerator API only
+needs to document that:
+- Device-side counter arithmetic must be modulo `max_cntr_value + 1`
+  (e.g., `(a - b) & max_cntr_value` when it is a power-of-2 minus 1)
+- Counter is NIC-owned; software cannot write it (offset-based reset only)
+
+#### 2c. CQ Export
+
+```c
+int fi_cq_export_acc(struct fid_cq *cq, uint64_t flags,
+                     void **acc_cq, size_t *acc_cq_size);
+```
+
+`fi_cq_export_acc()` can place the CQ ring in GPU HBM (alloc + DMA-BUF
 → NIC writes CQEs directly to GPU memory) or map the host ring via `import()` —
 the provider picks per its hardware.
 
-**HW creation timing — an implementation trade-off:** `fi_cq_open()` /
-`fi_cntr_open()` are abstractions; the underlying HW resource can be created
-whenever the provider chooses. Since `acc_info` (with the `alloc` callback) is
-available at open time, the provider has two options:
+**HW creation timing — an implementation trade-off** (applies to both counter
+and CQ): `fi_cq_open()` / `fi_cntr_open()` are abstractions; the underlying HW
+resource can be created whenever the provider chooses. Since `acc_info` (with
+the `alloc` callback) is available at open time, the provider has two options:
 
 - **Allocate at open:** `fi_cntr_open(FI_ACC)` / `fi_cq_open(FI_ACC)` call
   `acc_info.alloc(FI_ACC_ALLOC_DMABUF)` immediately and create the HW resource
@@ -726,18 +754,60 @@ available at open time, the provider has two options:
 
 Either way this is provider-internal and invisible to the consumer.
 
-**Counter semantics** (counters are THE completion mechanism in NCCL GIN — not CQ polling):
+#### 2d. MR Export (Batch-Native)
 
-NCCL GIN uses counters for:
-- **SQ backpressure (FI_WRITE)**: `(chunk_next - (uint32_t)hwCounterLoad(cntr)) & 0x7FFFFFFF ≤ sq_size`
-- **Flush/completion (FI_WRITE)**: `(submitted - *cntr) & 0x7FFFFFFF == 0`
-- **Signal delivery (FI_REMOTE_WRITE)**: peer polls counter to detect arrival
-- **Counter-tracked puts**: counterId selects which EP's FI_WRITE to observe
-- **Reset-without-zeroing**: software `cntr_offset` baseline, since NIC counter is read-only
+Unlike the object handle exports in 2a–2c, MR export is a **table builder**,
+not a single-object handle wrapper. It takes an array by default —
+`count == 1` is the trivial case; there is no separate single-item API.
 
-The API must also document:
-- Counter wraps at 2^31 (EFA-specific but needs a generic way to query)
-- Counter is NIC-owned; software cannot write it (offset-based reset only)
+```c
+/* Batch-native: exports local/remote keys for `count` MRs into one
+ * GPU-resident descriptor table. acc_descs_size is the TOTAL table size
+ * (count × per-entry stride). */
+int fi_mr_export_acc(struct fid_mr **mrs, size_t count, uint64_t flags,
+                     void **acc_descs, size_t *acc_descs_size);
+```
+
+**Why batch-native:** NCCL GIN registers per-rail MRs for payload
+buffers, scratch buffers, and PutValue slot pools, and needs their lkeys on the
+GPU for WQE construction. One call exports all descriptors into a single
+GPU-resident table with one alloc + H2D copy.
+
+#### 2e. AV Export (Batch-Native)
+
+Like MR export, AV export is a table builder taking an array by default.
+
+```c
+/* Batch-native: resolves `count` fi_addrs into one GPU-resident peer table.
+ * acc_peers_size is the TOTAL table size (count × per-entry stride). */
+int fi_av_export_acc(struct fid_av *av, fi_addr_t *addrs, size_t count,
+                     uint64_t flags, void **acc_peers, size_t *acc_peers_size);
+```
+
+**Why batch-native:** NCCL GIN builds `[total_slots × nranks]` target
+tables of (AHN, QPN, QKEY) tuples — the GPU kernel indexes the table to select
+the remote target per write. Passing the full `fi_addr_t` array in one call lets
+the provider resolve all peers and build one GPU-resident table with a single
+alloc + H2D copy, instead of `nranks × total_slots` round trips.
+
+**Size and indexing (applies to both MR and AV tables):** the size output is
+the **total table size** — consistent with the object handle exports in 2a–2c,
+where the size output is always the whole blob. The per-entry stride is derived
+as `size / count`, and the consumer indexes the table with plain pointer
+arithmetic — no accessor functions needed. Entry *contents* remain opaque; only
+the stride is derivable:
+
+```c
+// Host side:
+void *acc_peers; size_t peers_size;
+fi_av_export_acc(av, addrs, nranks, 0, &acc_peers, &peers_size);
+size_t peer_stride = peers_size / nranks;   // per-entry stride
+
+// Device side — select peer i and MR j:
+void *peer = (char *)acc_peers + i * peer_stride;
+void *desc = (char *)acc_descs + j * desc_stride;
+fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer, scope, flags);
+```
 
 ### 3. Device-Side Post API
 
@@ -848,6 +918,11 @@ are simple reads/waits.
 uint64_t fi_acc_cntr_read(void *acc_cntr);
 void     fi_acc_cntr_wait(void *acc_cntr, uint64_t target);
 
+// Error counter — device-visible error detection (if HW supports it,
+// e.g., EFA's err_cntr_ext_mem; resolves to the err pointer inside the
+// same opaque handle)
+uint64_t fi_acc_cntr_read_err(void *acc_cntr);
+
 // CQ — per-operation completion (perftest path)
 void    *fi_acc_cq_poll(void *acc_cq, uint32_t position);
 void     fi_acc_cq_pop(void *acc_cq, uint32_t amount);
@@ -869,7 +944,8 @@ NCCL GIN uses counters exclusively — no CQ polling on data path:
 
 Counter semantics:
 - NIC-owned — software cannot write it
-- Wraps at 2^31 (EFA) — all arithmetic uses `(a - b) & 0x7FFFFFFF`
+- Wraps at 2^31 on EFA — all arithmetic uses `(a - b) & 0x7FFFFFFF`; wrap
+  point is queryable via `domain_attr->max_cntr_value`
 - Read via system-scope acquire (bypasses GPU caches, coherent with NIC PCIe writes)
 
 #### CQ Completion (Perftest Pattern)
@@ -884,7 +960,10 @@ For consumers that need per-operation status (opcode, error, imm data):
 #### Error Handling
 
 NCCL GIN detects errors via counter timeout (counter stops advancing).
-`fi_acc_wc_read_vendor_err()` is available for CQ-based consumers.
+`fi_acc_cntr_read_err()` improves on this where the HW exposes a device-visible
+error counter (EFA does): the GPU kernel can distinguish "slow" from "failed"
+without waiting for a timeout. `fi_acc_wc_read_vendor_err()` is available for
+CQ-based consumers.
 Host-side health monitoring is more practical for production error recovery.
 
 
@@ -905,10 +984,10 @@ a higher-level call that INTERNALLY implements the advanced protocol.
 
 ```
 Layer 0 (Host-side export — both NCCL and simple consumers need this):
-    fi_acc_ep_export() → structured attrs (or opaque blob + provider .cuh)
-    fi_acc_cntr_export() → GPU HBM counter pointer (for signal/flush)
-    fi_acc_av_export() → (AHN, QPN, QKEY) per peer
-    fi_acc_mr_export() → lkey
+    fi_ep_export_acc() → structured attrs (or opaque blob + provider .cuh)
+    fi_cntr_export_acc() → GPU HBM counter pointer (for signal/flush)
+    fi_av_export_acc() → (AHN, QPN, QKEY) per peer
+    fi_mr_export_acc() → lkey
 
 Layer 1 (Device-side operations — provider encapsulates the hard stuff):
     fi_acc_write / fi_acc_send / fi_acc_read
@@ -969,7 +1048,7 @@ populates structs accordingly:
 
 ```c
 // Consumer's binary has v1.0 inlined device code:
-fi_acc_ep_export(ep, FI_ACC_VERSION(1, 0), &acc_ep, &size);
+fi_ep_export_acc(ep, FI_ACC_VERSION(1, 0), &acc_ep, &size);
 // Provider populates only v1.0 fields, sets only v1.0 comp_mask bits
 ```
 
@@ -1021,7 +1100,7 @@ struct fi_acc_dev_ep {
 };
 ```
 
-The provider's `fi_acc_ep_export()` zeroes the struct, fills known fields, sets
+The provider's `fi_ep_export_acc()` zeroes the struct, fills known fields, sets
 `comp_mask` bits for features it populated, then H2D copies to GPU memory.
 
 The device-side `fi_acc_write()` checks `comp_mask` only for optional paths:
@@ -1103,9 +1182,9 @@ protocol instead. perftest validates WQE format correctness across all operation
 |------------|---------------|-------------------------|--------------|
 | `fi_acc_info.alloc` | N/A (user provides) | Host plugin: `cuMemHostRegister(IOMEMORY)` for BAR; DMA-BUF for HW counters | `ctx->memory->allocate_buffer` (DMA-BUF) + `cuMemHostRegister` (BAR) |
 | `fi_ep_export_acc` → ring geometry | `efa_cuda_create_qp(attrs)` | Host plugin: `gda_ops->query_qp_wqs()` → fills `efa_cuda_qp` → H2D copy; **Device: directly accesses `qp->sq.wq.*` fields** | `efadv_query_qp_wqs` + `cuMemHostRegister` + `efa_cuda_create_qp` |
-| `fi_acc_cntr_export` | N/A | `gda_ops->cntr_open_ext(DMA-BUF)` → `ep.local_cntr_value` pointer in GPU HBM; read via `hwCounterLoad()` (system-scope acquire) | Not used (CQ-only) |
-| `fi_acc_av_export` → (AHN,QPN,QKEY) | N/A | `gda_ops->query_addr()` → builds `target_address_handles[total_slots*nranks]`, `target_remote_qpns[]`, `target_qkey[]` | Host resolves, passes as kernel args |
-| `fi_acc_mr_export` → lkey | N/A | `gda_ops->get_mr_lkey()` → per-rail `mr_handle.lkey`; allgather for remote `(addr, rkey)` | Direct `ibv_mr->lkey` |
+| `fi_cntr_export_acc` | N/A | `gda_ops->cntr_open_ext(DMA-BUF)` → `ep.local_cntr_value` pointer in GPU HBM; read via `hwCounterLoad()` (system-scope acquire) | Not used (CQ-only) |
+| `fi_av_export_acc` → (AHN,QPN,QKEY) | N/A | `gda_ops->query_addr()` → builds `target_address_handles[total_slots*nranks]`, `target_remote_qpns[]`, `target_qkey[]` | Host resolves, passes as kernel args |
+| `fi_mr_export_acc` → lkey | N/A | `gda_ops->get_mr_lkey()` → per-rail `mr_handle.lkey`; allgather for remote `(addr, rkey)` | Direct `ibv_mr->lkey` |
 | `fi_acc_write()` (high-level) | `init_rdma_write_wr` + `set_sge` + `set_remote` + `place` + `flush` | **NOT used as one call.** NCCL GIN calls WQE builders individually, then its own warp-cooperative SQ management: atomic `pc.fetch_add` → parallel 64B writes → rendezvous → deferred doorbell | Uses full batch API: `start_sq_batch` + `place_wr` + `flush_sq_wrs` |
 | `fi_acc_cq_read()` | `efa_cuda_cq_poll` + `cq_pop` | **NOT used on data path** — counter-only completion. CQ struct exists but is never polled. | `efa_cuda_cq_poll(cq, tid)` + `cq_pop(batch)` |
 | Backpressure | N/A (TODO in source) | **Dual:** (a) `chunk_next - db_rung ≤ max_batch` (EFA staging), (b) `(chunk_next - *hw_cntr) & 0x7FFFFFFF ≤ sq_size` (ring overflow) | CQ-based: `scnt - ccnt < tx_depth` |
