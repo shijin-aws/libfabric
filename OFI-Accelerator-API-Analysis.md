@@ -717,9 +717,12 @@ int fi_acc_read(void *acc_ep, void *buf, size_t len, void *desc,
                 enum fi_acc_scope scope, uint64_t flags);
 
 // Receive posting (for send/recv and write+IMM patterns)
-int  fi_acc_post_recv(void *acc_ep, void *buf, size_t len, void *desc);
-void fi_acc_flush_recv(void *acc_ep);
+int fi_acc_recv(void *acc_ep, void *buf, size_t len, void *desc,
+                enum fi_acc_scope scope, uint64_t flags);
 ```
+
+`FI_MORE` works the same for both TX and RX — defer the doorbell ring until a
+call without `FI_MORE` (or max_batch reached). No separate flush API needed.
 
 #### Scope Parameter
 
@@ -868,7 +871,7 @@ Layer 1 (Device-side operations — provider encapsulates the hard stuff):
     fi_acc_write / fi_acc_send / fi_acc_read
     fi_acc_cntr_read / fi_acc_cntr_wait
     fi_acc_cq_poll / fi_acc_cq_pop
-    fi_acc_post_recv / fi_acc_flush_recv
+    fi_acc_recv (with FI_MORE for batched posting)
 
 Layer 2 (Optional raw export — for custom posting protocols):
     Returns fi_acc_ep_attrs directly to consumer
