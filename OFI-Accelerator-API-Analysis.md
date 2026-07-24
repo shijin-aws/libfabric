@@ -511,7 +511,7 @@ __global__ void run_iter_bw_kernel(...) {
 | **Signal delivery** | Not elaborated | EFA FI_REMOTE_WRITE ticks +1 per write; Add-by-N emulated as N separate 0-byte writes to peer scratch | N/A | Signal semantics are transport-specific |
 | **Multi-endpoint** | Not elaborated | data EP, pvdata EP (PutValue staging), counter EPs (per-counterId), signal EPs (remote target only) | Single QP or multi-QP | Production uses many specialized EPs per context |
 | **Multi-rail** | Not elaborated | `rail_id = contextId % num_rails`; per-rail domains/EPs/MRs; window arrays indexed by rail_id | Multiple QPs sharing single CQ | Important for production bandwidth |
-| **Per-QP serialization** | Not in proposal (our addition) | NOT used by NCCL GIN — uses fine-grained atomics (`pc`, `wqes_completed`, `wqes_posted`) instead of coarse lock | N/A | Provider implements fine-grained atomics internally; `fi_acc_ep_lock()` available as simpler multi-CTA option |
+| **Per-QP serialization** | Not in proposal | NOT used by NCCL GIN — uses fine-grained atomics (`pc`, `wqes_completed`, `wqes_posted`) | N/A | Provider-internal: `fi_acc_write()` is multi-CTA safe via atomic reservation + rendezvous; no public lock API needed |
 | **PutValue staging** | Not elaborated | Dedicated pvdata EP; per-EP slot pool (`pvSliceBase + slot_idx * pvSlotSize`); stages value then RDMA writes from pool | N/A | Application-level pattern, but API must support separate staging EP |
 | **Recv posting on GPU** | Not elaborated | NOT used (NCCL is write-only) | `efa_cuda_post_recv_wr()` + `efa_cuda_flush_rq_wrs()` | perftest demonstrates it's viable; not needed by primary consumer |
 | **GPU-side timing** | Not elaborated | N/A | `clock64()` before/after each op | Useful for benchmarking only |
@@ -719,10 +719,6 @@ int fi_acc_read(void *acc_ep, void *buf, size_t len, void *desc,
 // Receive posting (for send/recv and write+IMM patterns)
 int  fi_acc_post_recv(void *acc_ep, void *buf, size_t len, void *desc);
 void fi_acc_flush_recv(void *acc_ep);
-
-// Serialization (multi-CTA on same EP)
-void fi_acc_ep_lock(void *acc_ep);
-void fi_acc_ep_unlock(void *acc_ep);
 ```
 
 #### Scope Parameter
@@ -873,7 +869,6 @@ Layer 1 (Device-side operations — provider encapsulates the hard stuff):
     fi_acc_cntr_read / fi_acc_cntr_wait
     fi_acc_cq_poll / fi_acc_cq_pop
     fi_acc_post_recv / fi_acc_flush_recv
-    fi_acc_ep_lock / fi_acc_ep_unlock
 
 Layer 2 (Optional raw export — for custom posting protocols):
     Returns fi_acc_ep_attrs directly to consumer
@@ -1048,7 +1043,7 @@ protocol instead. perftest validates WQE format correctness across all operation
 | Backpressure | N/A (TODO in source) | **Dual:** (a) `chunk_next - db_rung ≤ max_batch` (EFA staging), (b) `(chunk_next - *hw_cntr) & 0x7FFFFFFF ≤ sq_size` (ring overflow) | CQ-based: `scnt - ccnt < tx_depth` |
 | Doorbell control | `flush_sq_wrs()` rings immediately | **Deferred aggregation:** `aggregate` flag → write WQEs, hand off WITHOUT ringing; later group drains all deferred WQEs with one doorbell ring, bounded by `max_batch` | `flush_sq_wrs()` after each batch (immediate) |
 | Concurrency | `FI_ACC_WORK_GROUP` scope | `cooperative_groups::labeled_partition(qp)` → dynamic warp groups; leader atomics on `pc`/`wqes_completed`/`wqes_posted`; strict slot-order rendezvous | `__syncthreads()` block sync |
-| Per-QP serialization | `fi_acc_ep_lock()/unlock()` | Fine-grained atomics: `pc` (reserve), `wqes_completed` (handoff turn), `wqes_posted` (db_rung) — encapsulated inside provider's `fi_acc_write()` | Single-thread (no contention) |
+| Per-QP serialization | Provider-internal (no public API) | Fine-grained atomics: `pc` (reserve), `wqes_completed` (handoff turn), `wqes_posted` (db_rung) — encapsulated inside provider's `fi_acc_write()` | Single-thread (no contention) |
 | Counter semantics | (missing) | 2^31 wrap; offset-based reset (NIC counter is read-only); FI_WRITE = local completion, FI_REMOTE_WRITE = remote signal | Not used |
 | Multi-EP | (missing) | data + pvdata + counter_handles[N] + signal_handles[N]; different roles per endpoint | Single QP/CQ pair |
 
