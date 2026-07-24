@@ -537,7 +537,7 @@ struct fi_acc_info {
     enum fi_hmem_iface   iface;      /* FI_HMEM_CUDA, FI_HMEM_ROCR, FI_HMEM_ZE */
     uint64_t             device;     /* GPU device ordinal */
     enum fi_acc_mem_type mem_type;   /* how memory is allocated/mapped */
-    /* Callbacks (used when mem_type == FI_ACC_MEM_USER_ALLOC): */
+    /* Callbacks (used when mem_type == FI_ACC_MEM_USER): */
     int  (*alloc)(uint64_t device, uint64_t size, uint64_t alignment,
                   uint64_t flags, void **addr, int *fd, uint64_t *offset);
     int  (*import)(uint64_t device, void *host_addr, uint64_t size,
@@ -552,16 +552,18 @@ Selects who allocates GPU memory and how the provider gets device pointers:
 
 ```c
 enum fi_acc_mem_type {
-    FI_ACC_MEM_USER_ALLOC, /* Consumer provides alloc/import/free callbacks
-                            * (primary mode — works for any GPU runtime) */
-    FI_ACC_MEM_HMEM,       /* Provider allocates via libfabric HMEM interface.
-                            * Limitation: HMEM today cannot register BAR MMIO
-                            * with IOMEMORY semantics, so this mode may not
-                            * support SQ/doorbell mapping on all platforms */
+    FI_ACC_MEM_USER,     /* Consumer handles memory via alloc/import/free
+                          * callbacks (primary mode — works for any GPU
+                          * runtime) */
+    FI_ACC_MEM_PROVIDER, /* Provider handles memory internally (e.g., via
+                          * libfabric HMEM interface). Limitation: HMEM today
+                          * cannot register BAR MMIO with IOMEMORY semantics,
+                          * so this mode may not support SQ/doorbell mapping
+                          * on all platforms */
 };
 ```
 
-`FI_ACC_MEM_USER_ALLOC` is the primary mode: the provider stays GPU-runtime-agnostic
+`FI_ACC_MEM_USER` is the primary mode: the provider stays GPU-runtime-agnostic
 and the consumer's callbacks translate to CUDA/HIP/Level Zero calls. DMA-BUF is
 not a separate mode — it flows through the `alloc` callback (the consumer exports
 the fd when `FI_ACC_ALLOC_NIC_ACCESS` is set).
