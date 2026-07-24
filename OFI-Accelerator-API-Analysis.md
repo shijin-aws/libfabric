@@ -945,9 +945,12 @@ The provider's device-side structs are compiled into the consumer's binary via
 inlined `.cuh` headers. If the provider upgrades and changes struct layout, old
 consumer binaries break. This requires a multi-level compatibility mechanism:
 
-#### Level 1: `fi_getinfo` — Runtime Version Discovery
+#### Level 1: Version Negotiation — Both Directions
 
-The consumer discovers the provider's accelerator API version at runtime:
+Version exchange must work in **both directions**:
+
+**Provider → Consumer** (via `fi_getinfo`): the consumer discovers what the
+provider supports:
 
 ```c
 hints->caps |= FI_ACC;
@@ -959,6 +962,25 @@ info->acc_api_version = FI_ACC_VERSION(1, 0);  // major.minor
 
 A consumer compiled against v1.1 headers can check `info->acc_api_version` and
 avoid calling v1.1 functions if the provider only supports v1.0.
+
+**Consumer → Provider** (via export flags or attrs): the consumer declares which
+header version its device code was **compiled against**, so the provider
+populates structs accordingly:
+
+```c
+// Consumer's binary has v1.0 inlined device code:
+fi_acc_ep_export(ep, FI_ACC_VERSION(1, 0), &acc_ep, &size);
+// Provider populates only v1.0 fields, sets only v1.0 comp_mask bits
+```
+
+This second direction matters for the **old-consumer-binary scenario**: e.g., an
+application released with v1.0 device structs frozen into its binary later runs
+against a v1.2 provider. Negotiation tells the provider "speak v1.0," but the
+provider must also be ABLE to populate v1.0 structs. With the append-only rule
+(Level 2/3 below), this is nearly free — a v1.0 struct is a prefix of a v1.2
+struct, so the provider fills the prefix and sets only v1.0 comp_mask bits. One
+population code path serves all versions. Without append-only discipline, the
+provider would need separate struct builders per supported version.
 
 #### Level 2: Host-Side Attrs — `comp_mask` for Extensibility
 
