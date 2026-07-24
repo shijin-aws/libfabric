@@ -19,6 +19,7 @@ with a single libfabric-native interface for GPU-initiated RDMA.
 4. `d9dbe4957` — Move EFA device impl to `prov/efa/src/acc_cuda/`
 5. `e0f29b93e` — Rename to `.cuh`, install as header-only via Makefile
 6. `8afee8ab9` — Rename to `fi_ext_efa_acc.cuh`, install in `rdma/` (convention)
+7. *(uncommitted)* — Clean import callback signature: separate `host_addr` (in) / `dev_addr` (out); add `OFI-Accelerator-API-Memory-Callbacks.md`
 
 ## File Layout
 
@@ -75,7 +76,7 @@ Host setup:
 6. **Counter read is opaque** — `fi_acc_cntr_read(acc_cntr)` inlines to single load
 7. **Backpressure inside `fi_acc_write()`** — consumer never sees sq_size/submitted_count
 8. **`fi_acc_ep_lock()`/`unlock()`** — exposed because multi-CTA scheduling is consumer's decision
-9. **Import callbacks** — provider calls `acc_info.import()` internally during export (BAR MMIO mapping)
+9. **Import callbacks** — provider calls `acc_info.import(host_addr, size, flags, &dev_addr)` with separate in/out params (BAR MMIO mapping)
 10. **`acc_info.alloc()`** — used for counter GPU HBM allocation (DMA-BUF + NIC direct write)
 
 ## What's Done ✅

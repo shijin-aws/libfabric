@@ -102,6 +102,7 @@ CUresult CUDAAPI cuCtxCreate_v2(CUcontext *pctx, unsigned int flags, CUdevice de
 	_(cudaGetErrorString)		\
 	_(cudaHostRegister)		\
 	_(cudaHostUnregister)		\
+	_(cudaHostGetDevicePointer)	\
 	_(cudaGetDeviceCount)		\
 	_(cudaGetDevice)		\
 	_(cudaSetDevice)		\
@@ -180,6 +181,8 @@ static struct {
 	cudaError_t (*cudaHostRegister)(void *ptr, size_t size,
 					unsigned int flags);
 	cudaError_t (*cudaHostUnregister)(void *ptr);
+	cudaError_t (*cudaHostGetDevicePointer)(void **pDevice, void *pHost,
+						unsigned int flags);
 	cudaError_t (*cudaGetDeviceCount)(int *count);
 	cudaError_t (*cudaGetDevice)(int *device);
 	cudaError_t (*cudaSetDevice)(int device);
@@ -331,6 +334,12 @@ CUresult ofi_cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice srcDevice,
 cudaError_t ofi_cudaHostRegister(void *ptr, size_t size, unsigned int flags)
 {
 	return cuda_ops.cudaHostRegister(ptr, size, flags);
+}
+
+cudaError_t ofi_cudaHostGetDevicePointer(void **pDevice, void *pHost,
+					 unsigned int flags)
+{
+	return cuda_ops.cudaHostGetDevicePointer(pDevice, pHost, flags);
 }
 
 cudaError_t ofi_cudaHostUnregister(void *ptr)
@@ -1081,6 +1090,65 @@ int cuda_host_unregister(void *ptr)
 		ofi_cudaGetErrorString(cuda_ret));
 
 	return -FI_EIO;
+}
+
+/*
+ * Register a host-side address for GPU access and return the device pointer.
+ * Used by FI_ACC_MEM_PROVIDER path for mapping BAR MMIO and host RAM into
+ * the accelerator's address space.
+ *
+ * flags: FI_ACC_IMPORT_IOMEMORY — BAR MMIO (PCIe device memory)
+ *        flags=0 means regular host RAM (no special treatment needed)
+ */
+int cuda_get_device_ptr(void *host_addr, size_t size,
+			uint64_t flags, void **dev_addr)
+{
+	cudaError_t cuda_ret;
+	unsigned int reg_flags = cudaHostRegisterDefault;
+
+	if (flags & (1ULL << 0)) /* bit 0 = I/O memory (BAR MMIO) */
+		reg_flags |= cudaHostRegisterIoMemory;
+
+	cuda_ret = ofi_cudaHostRegister(host_addr, size, reg_flags);
+	if (cuda_ret != cudaSuccess) {
+		FI_WARN(&core_prov, FI_LOG_CORE,
+			"cudaHostRegister failed for get_device_ptr: %s:%s\n",
+			ofi_cudaGetErrorName(cuda_ret),
+			ofi_cudaGetErrorString(cuda_ret));
+		return -FI_EIO;
+	}
+
+	cuda_ret = ofi_cudaHostGetDevicePointer(dev_addr, host_addr, 0);
+	if (cuda_ret != cudaSuccess) {
+		FI_WARN(&core_prov, FI_LOG_CORE,
+			"cudaHostGetDevicePointer failed: %s:%s\n",
+			ofi_cudaGetErrorName(cuda_ret),
+			ofi_cudaGetErrorString(cuda_ret));
+		ofi_cudaHostUnregister(host_addr);
+		return -FI_EIO;
+	}
+
+	return FI_SUCCESS;
+}
+
+int cuda_dev_alloc(uint64_t device, void **addr, size_t size)
+{
+	cudaError_t cuda_ret;
+
+	cuda_ret = ofi_cudaMalloc(addr, size);
+	if (cuda_ret != cudaSuccess) {
+		FI_WARN(&core_prov, FI_LOG_CORE,
+			"cudaMalloc failed: %s:%s\n",
+			ofi_cudaGetErrorName(cuda_ret),
+			ofi_cudaGetErrorString(cuda_ret));
+		return -FI_ENOMEM;
+	}
+	return FI_SUCCESS;
+}
+
+void cuda_dev_free(void *addr)
+{
+	ofi_cudaFree(addr);
 }
 
 bool cuda_is_ipc_enabled(void)

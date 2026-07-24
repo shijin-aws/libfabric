@@ -35,38 +35,51 @@
  * This is the same header consumers include from their .cu files. */
 #include "acc_cuda/fi_ext_efa_acc.cuh"
 
+/*
+ * Flag passed to import/get_device_ptr to indicate the host VA is
+ * BAR MMIO (PCIe I/O memory) rather than regular host RAM.
+ * Maps to cudaHostRegisterIoMemory on the CUDA path.
+ */
+#define ACC_IOMEMORY	(1ULL << 0)
+
 #if HAVE_EFADV_QUERY_QP_WQS
 #include <infiniband/efadv.h>
 #endif
 
 /*
  * Helper: Import a host VA into accelerator address space.
- * If consumer provided import callback, use it.
- * Otherwise, return -FI_ENOSYS (provider internal HMEM path TODO).
+ *
+ * FI_ACC_MEM_USER_ALLOC: use consumer's import callback.
+ * FI_ACC_MEM_PROVIDER: use provider's HMEM ops (cuda_host_register +
+ *                      cuMemHostGetDevicePointer via HMEM infra).
+ *
+ * host_va: provider-owned host virtual address (BAR MMIO or host RAM)
+ * dev_ptr: [out] resulting device pointer for the same physical memory
  */
 static int acc_import_region(struct fi_acc_info *ai, void *host_va,
 			     size_t size, uint64_t flags, void **dev_ptr)
 {
-	if (ai && ai->user.import) {
-		/* Consumer provided callback */
-		*dev_ptr = host_va;
-		return ai->user.import(ai->device, -1, 0, (uint64_t)size,
-				       flags, dev_ptr);
+	if (!ai)
+		return -FI_EINVAL;
+
+	if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
+		if (!ai->import)
+			return -FI_EINVAL;
+		return ai->import(ai->device, host_va, (uint64_t)size,
+				  flags, dev_ptr);
 	}
 
-	/* No callback — provider internal path.
-	 * TODO: call cuda_host_register + get_device_pointer via HMEM ops.
-	 * For now, return the host pointer directly (works on platforms
-	 * where CUDA can read host-registered memory without explicit mapping,
-	 * e.g., CQ buffer on P5en). */
-	*dev_ptr = host_va;
-	return 0;
+	/* FI_ACC_MEM_PROVIDER: use HMEM infrastructure.
+	 * ofi_hmem_get_device_ptr registers the host VA and returns
+	 * the GPU device pointer (cudaHostRegister + cudaHostGetDevicePointer). */
+	return ofi_hmem_get_device_ptr(ai->iface, host_va, size, flags, dev_ptr);
 }
 
 /*
  * Helper: Allocate GPU memory for device-resident structs + H2D copy.
- * If consumer provided alloc callback, use it.
- * Otherwise, use ofi_copy_to_hmem for the copy portion.
+ *
+ * FI_ACC_MEM_USER_ALLOC: use consumer's alloc callback.
+ * FI_ACC_MEM_PROVIDER: use provider's HMEM ops (ofi_hmem_dev_alloc).
  */
 static int acc_gpu_alloc_and_copy(struct fi_acc_info *ai, const void *host_data,
 				  size_t size, void **dev_ptr)
@@ -74,34 +87,38 @@ static int acc_gpu_alloc_and_copy(struct fi_acc_info *ai, const void *host_data,
 	void *gpu_mem = NULL;
 	int ret;
 
-	if (ai && ai->user.alloc) {
+	if (!ai)
+		return -FI_EINVAL;
+
+	if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
 		int fd = -1;
 		uint64_t offset = 0;
-		ret = ai->user.alloc(ai->device, (uint64_t)size, 0,
-				     FI_ACC_ALLOC_GPU_HBM, &gpu_mem, &fd, &offset);
+
+		if (!ai->alloc)
+			return -FI_EINVAL;
+
+		ret = ai->alloc(ai->device, (uint64_t)size, 0,
+				0, &gpu_mem, &fd, &offset);
 		if (ret) return ret;
 		if (fd >= 0) close(fd);
 	} else {
-		/* No callback — use provider's CUDA alloc.
-		 * TODO: call ofi_hmem infrastructure for device alloc.
-		 * For now, allocate host memory as placeholder. */
-		gpu_mem = calloc(1, size);
-		if (!gpu_mem) return -FI_ENOMEM;
+		/* FI_ACC_MEM_PROVIDER: use HMEM infrastructure */
+		ret = ofi_hmem_dev_alloc(ai->iface, ai->device, &gpu_mem, size);
+		if (ret)
+			return -FI_ENOMEM;
 	}
 
-	/* H2D copy */
-	if (ai && ai->user.alloc) {
-		/* GPU memory from consumer alloc — use HMEM copy */
-		ret = (int)ofi_copy_to_hmem(FI_HMEM_CUDA, 0, gpu_mem,
-					    host_data, size);
-		if (ret < 0) {
-			if (ai->user.free)
-				ai->user.free(ai->device, gpu_mem);
-			return ret;
+	/* H2D copy via HMEM */
+	ret = (int)ofi_copy_to_hmem(ai->iface, ai->device, gpu_mem,
+				    host_data, size);
+	if (ret < 0) {
+		if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
+			if (ai->free)
+				ai->free(ai->device, gpu_mem);
+		} else {
+			ofi_hmem_dev_free(ai->iface, gpu_mem);
 		}
-	} else {
-		/* Host placeholder — direct memcpy */
-		memcpy(gpu_mem, host_data, size);
+		return ret;
 	}
 
 	*dev_ptr = gpu_mem;
@@ -118,7 +135,7 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 {
 #if HAVE_EFADV_QUERY_QP_WQS
 	struct efa_base_ep *base_ep;
-	struct efa_acc_state *acc;
+	struct efa_acc_ep_state *acc;
 	struct fi_acc_info *ai;
 	struct efadv_wq_attr qp_sq_attr = {};
 	struct efadv_wq_attr qp_rq_attr = {};
@@ -130,11 +147,11 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 		return -FI_EINVAL;
 
 	base_ep = container_of(ep_fid, struct efa_base_ep, util_ep.ep_fid);
+	acc = base_ep->acc_state;
+	if (!acc)
+		return -FI_ENODATA;
 
-	/* Get acc_info from EP's fi_info (set at creation via ep_attr->acc_info) */
-	ai = (base_ep->info && base_ep->info->ep_attr) ?
-		base_ep->info->ep_attr->acc_info : NULL;
-	/* acc_info can be NULL — provider uses internal HMEM in that case */
+	ai = &acc->base.acc_info;
 
 	/* Query HW queue geometry */
 	ret = efadv_query_qp_wqs(base_ep->qp->ibv_qp,
@@ -149,14 +166,14 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 	void *sq_buf_dev = NULL;
 	ret = acc_import_region(ai, qp_sq_attr.buffer,
 				(size_t)qp_sq_attr.num_entries * qp_sq_attr.entry_size,
-				FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
+				ACC_IOMEMORY,
 				&sq_buf_dev);
 	if (ret) return ret;
 
 	/* Map SQ doorbell (BAR MMIO) → GPU */
 	void *sq_db_dev = NULL;
 	ret = acc_import_region(ai, qp_sq_attr.doorbell, (size_t)page_size,
-				FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
+				ACC_IOMEMORY,
 				&sq_db_dev);
 	if (ret) return ret;
 
@@ -166,11 +183,11 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 	if (qp_rq_attr.buffer) {
 		ret = acc_import_region(ai, qp_rq_attr.buffer,
 					(size_t)qp_rq_attr.num_entries * qp_rq_attr.entry_size,
-					FI_ACC_IMPORT_DEVICEMAP, &rq_buf_dev);
+					0, &rq_buf_dev);
 		if (ret) return ret;
 
 		ret = acc_import_region(ai, qp_rq_attr.doorbell, (size_t)page_size,
-					FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
+					ACC_IOMEMORY,
 					&rq_db_dev);
 		if (ret) return ret;
 	}
@@ -201,11 +218,23 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 	h_ep.sq_lock          = 0;
 	h_ep.submitted_count  = 0;
 	h_ep.sq_size          = qp_sq_attr.num_entries;
-	h_ep.local_cntr       = NULL; /* Set after counter bind/export */
+	h_ep.local_cntr       = NULL;
 
-	/* If a write counter was bound and exported, link it */
-	if (acc->cntr_value_dev)
-		h_ep.local_cntr = (volatile uint64_t *)acc->cntr_value_dev;
+	/*
+	 * Link to the bound write counter's GPU pointer for SQ backpressure.
+	 * The counter was created with FI_ACC and has its own acc_state
+	 * containing the GPU HBM pointer the NIC writes to.
+	 */
+	{
+		struct util_cntr *wr_cntr = base_ep->util_ep.cntrs[CNTR_WR];
+		if (wr_cntr) {
+			struct efa_cntr *efa_cntr = container_of(
+				wr_cntr, struct efa_cntr, util_cntr);
+			if (efa_cntr->acc_state && efa_cntr->acc_state->cntr_value_dev)
+				h_ep.local_cntr = (volatile uint64_t *)
+					efa_cntr->acc_state->cntr_value_dev;
+		}
+	}
 
 	/* Allocate GPU memory and H2D copy */
 	ret = acc_gpu_alloc_and_copy(ai, &h_ep, sizeof(h_ep), acc_ep);
@@ -228,7 +257,7 @@ int efa_acc_cq_export(struct fid_cq *cq_fid, uint64_t flags,
 {
 #if HAVE_EFADV_QUERY_CQ
 	struct efa_cq *efa_cq;
-	struct efa_acc_state *acc;
+	struct efa_acc_cq_state *acc;
 	struct fi_acc_info *ai;
 	struct efadv_cq_attr efadv_attr = {};
 	struct fi_acc_efa_cq h_cq = {};
@@ -242,20 +271,27 @@ int efa_acc_cq_export(struct fid_cq *cq_fid, uint64_t flags,
 	if (!acc)
 		return -FI_ENODATA;
 
-	ai = &acc->acc_info;
+	ai = &acc->base.acc_info;
 
 	ret = efadv_query_cq(ibv_cq_ex_to_cq(efa_cq->ibv_cq.ibv_cq_ex),
 			     &efadv_attr, sizeof(efadv_attr));
 	if (ret)
 		return (ret == EOPNOTSUPP) ? -FI_EOPNOTSUPP : -FI_EINVAL;
 
-	/* Map CQ buffer (host RAM) → GPU.
-	 * On P5en, host pointer is directly CUDA-readable; import may be no-op. */
+	/*
+	 * If the CQ was created with FI_ACC + alloc (GPU-backed CQ),
+	 * the buffer is already in GPU memory — use the stored pointer.
+	 * Otherwise (standard host CQ), import the host VA into GPU.
+	 */
 	void *cq_buf_dev = NULL;
-	ret = acc_import_region(ai, efadv_attr.buffer,
-				(size_t)efadv_attr.num_entries * efadv_attr.entry_size,
-				FI_ACC_IMPORT_DEVICEMAP, &cq_buf_dev);
-	if (ret) return ret;
+	if (acc->cq_buf_dev) {
+		cq_buf_dev = acc->cq_buf_dev;
+	} else {
+		ret = acc_import_region(ai, efadv_attr.buffer,
+					(size_t)efadv_attr.num_entries * efadv_attr.entry_size,
+					0, &cq_buf_dev);
+		if (ret) return ret;
+	}
 
 	h_cq.buf              = (uint8_t *)cq_buf_dev;
 	h_cq.entry_size       = efadv_attr.entry_size;
@@ -283,7 +319,7 @@ int efa_acc_cntr_export(struct fid_cntr *cntr_fid, uint64_t flags,
 			void **acc_cntr, size_t *size)
 {
 	struct efa_cntr *efa_cntr;
-	struct efa_acc_state *acc;
+	struct efa_acc_cntr_state *acc;
 	struct fi_acc_info *ai;
 	struct fi_acc_efa_cntr h_cntr = {};
 	int ret;
@@ -296,8 +332,9 @@ int efa_acc_cntr_export(struct fid_cntr *cntr_fid, uint64_t flags,
 	if (!acc || !acc->cntr_value_dev)
 		return -FI_ENODATA;
 
-	ai = &acc->acc_info;
+	ai = &acc->base.acc_info;
 	h_cntr.value = (volatile uint64_t *)acc->cntr_value_dev;
+	h_cntr.err_value = (volatile uint64_t *)acc->cntr_err_dev;
 
 	ret = acc_gpu_alloc_and_copy(ai, &h_cntr, sizeof(h_cntr), acc_cntr);
 	if (ret) return ret;
@@ -308,71 +345,76 @@ int efa_acc_cntr_export(struct fid_cntr *cntr_fid, uint64_t flags,
 
 /*
  * =============================================================================
- * fi_mr_export_acc — Return opaque GPU-resident MR descriptor
+ * fi_mr_export_acc — Export MR descriptors as contiguous GPU array
  * =============================================================================
  */
-int efa_acc_mr_export(struct fid_mr *mr_fid, uint64_t flags,
-		      void **acc_desc, size_t *size)
+int efa_acc_mr_export(struct fid_mr **mrs, size_t count, uint64_t flags,
+		      void **acc_descs, size_t *size)
 {
-	struct efa_mr *efa_mr;
-	struct fi_acc_efa_desc h_desc = {};
+	struct fi_acc_efa_desc *h_descs;
 	struct efa_base_ep *base_ep;
-	struct efa_acc_state *acc;
+	struct efa_acc_ep_state *acc;
 	struct fi_acc_info *ai;
+	size_t i;
 	int ret;
 
-	if (!mr_fid || !acc_desc || !size)
+	if (!mrs || !acc_descs || !size || count == 0)
 		return -FI_EINVAL;
 
-	efa_mr = container_of(mr_fid, struct efa_mr, mr_fid);
-	if (!efa_mr->ibv_mr)
-		return -FI_ENODATA;
-
-	h_desc.lkey = efa_mr->ibv_mr->lkey;
-
-	/* Need acc_info to allocate GPU memory for the desc.
-	 * Get it from the MR's domain's first EP with acc_state. */
+	/* Get acc_info from first MR's domain's first EP */
+	struct efa_mr *first_mr = container_of(mrs[0], struct efa_mr, mr_fid);
 	base_ep = container_of(
-		efa_mr->domain->base_ep_list.next,
+		first_mr->domain->base_ep_list.next,
 		struct efa_base_ep, base_ep_entry);
 	acc = base_ep ? base_ep->acc_state : NULL;
 	if (!acc)
 		return -FI_ENODATA;
-	ai = &acc->acc_info;
+	ai = &acc->base.acc_info;
 
-	ret = acc_gpu_alloc_and_copy(ai, &h_desc, sizeof(h_desc), acc_desc);
+	/* Build host array */
+	h_descs = calloc(count, sizeof(*h_descs));
+	if (!h_descs)
+		return -FI_ENOMEM;
+
+	for (i = 0; i < count; i++) {
+		struct efa_mr *efa_mr = container_of(mrs[i], struct efa_mr, mr_fid);
+		if (!efa_mr->ibv_mr) {
+			free(h_descs);
+			return -FI_ENODATA;
+		}
+		h_descs[i].lkey = efa_mr->ibv_mr->lkey;
+	}
+
+	/* Alloc GPU and copy */
+	ret = acc_gpu_alloc_and_copy(ai, h_descs,
+				     count * sizeof(*h_descs), acc_descs);
+	free(h_descs);
 	if (ret) return ret;
 
-	*size = sizeof(struct fi_acc_efa_desc);
+	*size = count * sizeof(struct fi_acc_efa_desc);
 	return FI_SUCCESS;
 }
 
 /*
  * =============================================================================
- * fi_av_export_acc — Return opaque GPU-resident peer address handle
+ * fi_av_export_acc — Export peer addresses as contiguous GPU array
  * =============================================================================
  */
-int efa_acc_av_export(struct fid_av *av_fid, fi_addr_t fi_addr,
-		      uint64_t flags, void **acc_peer, size_t *size)
+int efa_acc_av_export(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
+		      size_t count, uint64_t flags,
+		      void **acc_peers, size_t *size)
 {
 	struct efa_av *efa_av;
-	struct efa_conn *conn;
-	struct fi_acc_efa_peer h_peer = {};
-	struct efa_acc_state *acc;
+	struct fi_acc_efa_peer *h_peers;
+	struct efa_acc_ep_state *acc;
 	struct fi_acc_info *ai;
+	size_t i;
 	int ret;
 
-	if (!av_fid || !acc_peer || !size)
+	if (!av_fid || !fi_addrs || !acc_peers || !size || count == 0)
 		return -FI_EINVAL;
 
 	efa_av = container_of(av_fid, struct efa_av, util_av.av_fid);
-	conn = efa_av_addr_to_conn(efa_av, fi_addr);
-	if (!conn || !conn->ah || !conn->ep_addr)
-		return -FI_ENODATA;
-
-	h_peer.ahn         = conn->ah->ahn;
-	h_peer.remote_qpn  = conn->ep_addr->qpn;
-	h_peer.remote_qkey = conn->ep_addr->qkey;
 
 	/* Get acc_info from domain's first EP */
 	acc = NULL;
@@ -384,47 +426,7 @@ int efa_acc_av_export(struct fid_av *av_fid, fi_addr_t fi_addr,
 	}
 	if (!acc)
 		return -FI_ENODATA;
-	ai = &acc->acc_info;
-
-	ret = acc_gpu_alloc_and_copy(ai, &h_peer, sizeof(h_peer), acc_peer);
-	if (ret) return ret;
-
-	*size = sizeof(struct fi_acc_efa_peer);
-	return FI_SUCCESS;
-}
-
-/*
- * =============================================================================
- * fi_av_export_acc_batch — Bulk peer export (target addressing table)
- * =============================================================================
- */
-int efa_acc_av_export_batch(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
-			    size_t count, uint64_t flags,
-			    void **acc_peers, size_t *size)
-{
-	struct efa_av *efa_av;
-	struct fi_acc_efa_peer *h_peers;
-	struct efa_acc_state *acc;
-	struct fi_acc_info *ai;
-	size_t i;
-	int ret;
-
-	if (!av_fid || !fi_addrs || !acc_peers || !size || count == 0)
-		return -FI_EINVAL;
-
-	efa_av = container_of(av_fid, struct efa_av, util_av.av_fid);
-
-	/* Get acc_info */
-	acc = NULL;
-	if (efa_av->domain && !dlist_empty(&efa_av->domain->base_ep_list)) {
-		struct efa_base_ep *ep = container_of(
-			efa_av->domain->base_ep_list.next,
-			struct efa_base_ep, base_ep_entry);
-		acc = ep->acc_state;
-	}
-	if (!acc)
-		return -FI_ENODATA;
-	ai = &acc->acc_info;
+	ai = &acc->base.acc_info;
 
 	/* Build host array */
 	h_peers = calloc(count, sizeof(*h_peers));
@@ -482,23 +484,68 @@ int efa_acc_mr_get_info(struct fid_mr *mr_fid, uint64_t flags,
  * State lifecycle
  * =============================================================================
  */
-struct efa_acc_state *efa_acc_state_create(const struct fi_acc_info *acc_info)
+struct efa_acc_ep_state *efa_acc_ep_state_create(const struct fi_acc_info *acc_info)
 {
-	struct efa_acc_state *acc;
+	struct efa_acc_ep_state *acc;
 	if (!acc_info) return NULL;
 	acc = calloc(1, sizeof(*acc));
 	if (!acc) return NULL;
-	acc->acc_info = *acc_info;
-	acc->cntr_dmabuf_fd = -1;
+	acc->base.acc_info = *acc_info;
 	return acc;
 }
 
-void efa_acc_state_destroy(struct efa_acc_state *acc)
+struct efa_acc_cq_state *efa_acc_cq_state_create(const struct fi_acc_info *acc_info)
+{
+	struct efa_acc_cq_state *acc;
+	if (!acc_info) return NULL;
+	acc = calloc(1, sizeof(*acc));
+	if (!acc) return NULL;
+	acc->base.acc_info = *acc_info;
+	return acc;
+}
+
+struct efa_acc_cntr_state *efa_acc_cntr_state_create(const struct fi_acc_info *acc_info)
+{
+	struct efa_acc_cntr_state *acc;
+	if (!acc_info) return NULL;
+	acc = calloc(1, sizeof(*acc));
+	if (!acc) return NULL;
+	acc->base.acc_info = *acc_info;
+	return acc;
+}
+
+void efa_acc_ep_state_destroy(struct efa_acc_ep_state *acc)
 {
 	if (!acc) return;
-	if (acc->cntr_alloc_addr && acc->acc_info.user.free)
-		acc->acc_info.user.free(acc->acc_info.device, acc->cntr_alloc_addr);
-	if (acc->cntr_dmabuf_fd >= 0)
-		close(acc->cntr_dmabuf_fd);
+	free(acc);
+}
+
+void efa_acc_cq_state_destroy(struct efa_acc_cq_state *acc)
+{
+	if (!acc) return;
+	free(acc);
+}
+
+void efa_acc_cntr_state_destroy(struct efa_acc_cntr_state *acc)
+{
+	struct fi_acc_info *ai;
+	if (!acc) return;
+	ai = &acc->base.acc_info;
+	if (acc->cntr_alloc_addr) {
+		if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
+			if (ai->free)
+				ai->free(ai->device, acc->cntr_alloc_addr);
+		} else {
+			ofi_hmem_dev_free(ai->iface, acc->cntr_alloc_addr);
+		}
+	}
+	if (acc->cntr_err_alloc_addr) {
+		if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
+			if (ai->free)
+				ai->free(ai->device, acc->cntr_err_alloc_addr);
+		} else {
+			ofi_hmem_dev_free(ai->iface, acc->cntr_err_alloc_addr);
+		}
+	}
 	free(acc);
 }

@@ -9,6 +9,7 @@
 #include "efa_av.h"
 #include "efa_cq.h"
 #include "efa_cntr.h"
+#include "efa_acc.h"
 #include "rdm/efa_rdm_protocol.h"
 #include "efa_data_path_direct.h"
 
@@ -141,6 +142,9 @@ void efa_base_ep_close_util_ep(struct efa_base_ep *base_ep)
 int efa_base_ep_destruct(struct efa_base_ep *base_ep)
 {
 	int err;
+
+	if (base_ep->acc_state)
+		efa_acc_ep_state_destroy(base_ep->acc_state);
 
 	if (efa_env.track_mr && base_ep->efa_qp_enabled) {
 		ofi_genlock_lock(&base_ep->domain->util_domain.lock);

@@ -6,6 +6,7 @@
 #include "efa.h"
 #include "efa_av.h"
 #include "efa_cq.h"
+#include "efa_acc.h"
 
 #include <infiniband/efadv.h>
 
@@ -442,6 +443,18 @@ int efa_ep_open(struct fid_domain *domain_fid, struct fi_info *user_info,
 	ret = efa_base_ep_construct(ep, domain_fid, user_info, efa_ep_progress_no_op, context);
 	if (ret)
 		goto err_ep_destroy;
+
+	/*
+	 * OFI Accelerator API: if acc_info present on ep_attr, store it
+	 * for later use during fi_acc_ep_export().
+	 */
+	if (user_info && user_info->ep_attr && user_info->ep_attr->acc_info) {
+		ep->acc_state = efa_acc_ep_state_create(user_info->ep_attr->acc_info);
+		if (!ep->acc_state) {
+			ret = -FI_ENOMEM;
+			goto err_ep_destroy;
+		}
+	}
 
 	*ep_fid = &ep->util_ep.ep_fid;
 	(*ep_fid)->fid.fclass = FI_CLASS_EP;

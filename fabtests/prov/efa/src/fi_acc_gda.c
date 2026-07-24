@@ -72,29 +72,29 @@ static int acc_alloc(uint64_t device, uint64_t size, uint64_t alignment,
 	return 0;
 }
 
-static int acc_import(uint64_t device, int fd, uint64_t offset,
-		      uint64_t size, uint64_t flags, void **addr)
+static int acc_import(uint64_t device, void *host_addr,
+		      uint64_t size, uint64_t flags, void **dev_addr)
 {
 	unsigned int cuda_flags = CU_MEMHOSTREGISTER_DEVICEMAP;
 	CUdeviceptr dev_ptr = 0;
 	int status;
 
-	if (flags & FI_ACC_IMPORT_IOMEMORY)
+	if (flags & (1ULL << 0)) /* I/O memory (BAR MMIO) */
 		cuda_flags |= CU_MEMHOSTREGISTER_IOMEMORY;
 
-	status = cuMemHostRegister(*addr, (size_t)size, cuda_flags);
+	status = cuMemHostRegister(host_addr, (size_t)size, cuda_flags);
 	if (status != CUDA_SUCCESS) {
 		FT_WARN("cuMemHostRegister failed: %d\n", status);
 		return -FI_EIO;
 	}
 
-	status = cuMemHostGetDevicePointer(&dev_ptr, *addr, 0);
+	status = cuMemHostGetDevicePointer(&dev_ptr, host_addr, 0);
 	if (status != CUDA_SUCCESS) {
 		FT_WARN("cuMemHostGetDevicePointer failed: %d\n", status);
 		return -FI_EIO;
 	}
 
-	*addr = (void *)dev_ptr;
+	*dev_addr = (void *)dev_ptr;
 	return 0;
 }
 
@@ -113,9 +113,9 @@ static void setup_acc_info(void)
 {
 	acc_info.iface = opts.iface;
 	acc_info.device = opts.device;
-	acc_info.user.alloc = acc_alloc;
-	acc_info.user.import = acc_import;
-	acc_info.user.free = acc_free;
+	acc_info.alloc = acc_alloc;
+	acc_info.import = acc_import;
+	acc_info.free = acc_free;
 }
 
 int main(int argc, char **argv)
@@ -248,10 +248,10 @@ int main(int argc, char **argv)
 	ret = fi_cq_export_acc(rxcq, 0, &d_recv_cq, &export_size);
 	if (ret) { FT_PRINTERR("fi_cq_export_acc rx", -ret); return ret; }
 
-	ret = fi_mr_export_acc(mr, 0, &d_mr_desc, &export_size);
+	ret = fi_mr_export_acc(&mr, 1, 0, &d_mr_desc, &export_size);
 	if (ret) { FT_PRINTERR("fi_mr_export_acc", -ret); return ret; }
 
-	ret = fi_av_export_acc(av, remote_fi_addr, 0, &d_peer, &export_size);
+	ret = fi_av_export_acc(av, &remote_fi_addr, 1, 0, &d_peer, &export_size);
 	if (ret) { FT_PRINTERR("fi_av_export_acc", -ret); return ret; }
 
 	if (use_hw_cntr) {

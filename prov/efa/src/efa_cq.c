@@ -13,6 +13,7 @@
 #include "efa_data_path_ops.h"
 #include <infiniband/verbs.h>
 #include "efa_data_path_direct.h"
+#include "efa_acc.h"
 
 
 static inline uint64_t efa_cq_opcode_to_fi_flags(enum ibv_wc_opcode opcode) {
@@ -911,6 +912,9 @@ int efa_cq_close(fid_t fid)
 
 	cq = container_of(fid, struct efa_cq, util_cq.cq_fid.fid);
 
+	if (cq->acc_state)
+		efa_acc_cq_state_destroy(cq->acc_state);
+
 	/* Store ibv_cq locally before cleanup */
 	ibv_cq_ex = cq->ibv_cq.ibv_cq_ex;
 	if (ibv_cq_ex)
@@ -1156,9 +1160,74 @@ int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 
 	cq->poll_ibv_cq = efa_cq_poll_ibv_cq;
 
+	/*
+	 * OFI Accelerator API: if FI_ACC flag + acc_info present,
+	 * allocate GPU memory for the CQ buffer via acc_info.alloc()
+	 * and pass the DMA-BUF fd so the NIC writes completions
+	 * directly to GPU-accessible memory.
+	 */
+	if (attr && (attr->flags & FI_ACC) && attr->acc_info) {
+		struct fi_acc_info *ai = attr->acc_info;
+		size_t cq_size = attr->size ? attr->size : EFA_DEF_CQ_SIZE;
+		/* CQ entry size is 32 bytes (EFA CQE format) */
+		size_t buf_size = cq_size * 32;
+		void *gpu_ptr = NULL;
+		int fd = -1;
+		uint64_t offset = 0;
+
+		if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
+			if (!ai->alloc) {
+				free(cq);
+				return -FI_EINVAL;
+			}
+			err = ai->alloc(ai->device, (uint64_t)buf_size, 4096,
+					0, &gpu_ptr, &fd, &offset);
+		} else {
+			/* FI_ACC_MEM_PROVIDER */
+			err = ofi_hmem_dev_alloc(ai->iface, ai->device, &gpu_ptr, buf_size);
+			if (!err)
+				err = ofi_hmem_get_dmabuf_fd(
+					ai->iface, gpu_ptr, (uint64_t)buf_size,
+					&fd, &offset);
+		}
+		if (err) {
+			EFA_WARN(FI_LOG_CQ,
+				 "Failed to allocate GPU memory for CQ buffer: %d\n", err);
+			free(cq);
+			return err;
+		}
+
+		/* Zero the CQ buffer (required for phase-bit protocol).
+		 * cudaMalloc returns zeroed memory; for user alloc we rely
+		 * on the same behavior from the consumer's allocator. */
+
+		efa_cq_init_attr.flags |= FI_EFA_CQ_INIT_FLAGS_EXT_MEM_DMABUF;
+		efa_cq_init_attr.ext_mem_dmabuf.fd = fd;
+		efa_cq_init_attr.ext_mem_dmabuf.offset = offset;
+		efa_cq_init_attr.ext_mem_dmabuf.length = buf_size;
+		efa_cq_init_attr.ext_mem_dmabuf.buffer = gpu_ptr;
+
+		/* Store acc_state for later fi_acc_cq_export() */
+		cq->acc_state = efa_acc_cq_state_create(ai);
+		if (!cq->acc_state) {
+			if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
+				if (ai->free)
+					ai->free(ai->device, gpu_ptr);
+			} else {
+				ofi_hmem_dev_free(ai->iface, gpu_ptr);
+			}
+			if (fd >= 0)
+				close(fd);
+			free(cq);
+			return -FI_ENOMEM;
+		}
+		cq->acc_state->cq_buf_dev = gpu_ptr;
+	}
+
 	/* efa uses its own implementation of wait objects for CQ */
 	tmp_attr = *attr;
 	tmp_attr.wait_obj = FI_WAIT_NONE;
+	tmp_attr.flags &= ~FI_ACC; /* Strip FI_ACC — handled above */
 	err = ofi_cq_init(&efa_prov, domain_fid, &tmp_attr, &cq->util_cq,
 					  &efa_cq_progress, context);
 	if (err) {

@@ -8,7 +8,7 @@
 #ifndef _EFA_CNTR_H_
 #define _EFA_CNTR_H_
 
-struct efa_acc_state;
+struct efa_acc_cntr_state;
 
 struct efa_cntr {
 	struct util_cntr util_cntr;
@@ -22,7 +22,7 @@ struct efa_cntr {
 	/* Wait object type from fi_cntr_attr */
 	enum fi_wait_obj wait_obj;
 	/* OFI Accelerator API state (non-NULL if created with FI_ACC) */
-	struct efa_acc_state *acc_state;
+	struct efa_acc_cntr_state *acc_state;
 };
 
 int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,

@@ -57,7 +57,7 @@ struct efa_qp {
 
 struct efa_av;
 
-struct efa_acc_state;
+struct efa_acc_ep_state;
 
 struct efa_recv_wr {
 	/** @brief Work request struct used by rdma-core */
@@ -105,7 +105,7 @@ struct efa_base_ep {
 	struct dlist_entry base_ep_entry;
 
 	/* OFI Accelerator API state (non-NULL if created with FI_ACC) */
-	struct efa_acc_state *acc_state;
+	struct efa_acc_ep_state *acc_state;
 };
 
 int efa_base_ep_bind_av(struct efa_base_ep *base_ep, struct efa_av *av);

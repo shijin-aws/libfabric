@@ -84,7 +84,8 @@ struct fi_acc_efa_cq {
 };
 
 struct fi_acc_efa_cntr {
-	volatile uint64_t *value;
+	volatile uint64_t *value;     /* completion counter */
+	volatile uint64_t *err_value; /* error counter */
 };
 
 struct fi_acc_efa_peer {
@@ -265,6 +266,13 @@ fi_acc_cntr_read(void *acc_cntr)
 {
 	struct fi_acc_efa_cntr *c = (struct fi_acc_efa_cntr *)acc_cntr;
 	return *c->value;
+}
+
+FI_ACC_DEV uint64_t
+fi_acc_cntr_readerr(void *acc_cntr)
+{
+	struct fi_acc_efa_cntr *c = (struct fi_acc_efa_cntr *)acc_cntr;
+	return *c->err_value;
 }
 
 FI_ACC_DEV void

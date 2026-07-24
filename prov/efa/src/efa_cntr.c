@@ -7,6 +7,7 @@
 #include "efa_cntr.h"
 #include "efa_hw_cntr.h"
 #include "efa_cq.h"
+#include "efa_acc.h"
 
 int efa_cntr_wait(struct fid_cntr *cntr_fid, uint64_t threshold, int timeout)
 {
@@ -67,6 +68,9 @@ static int efa_cntr_close(struct fid *fid)
 	struct efa_cntr *cntr;
 
 	cntr = container_of(fid, struct efa_cntr, util_cntr.cntr_fid.fid);
+
+	if (cntr->acc_state)
+		efa_acc_cntr_state_destroy(cntr->acc_state);
 
 	efa_cntr_destruct(cntr);
 	free(cntr);
@@ -137,6 +141,131 @@ int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 	{
 		struct efadv_comp_cntr_init_attr efa_cc_attr = {0};
 
+		/*
+		 * OFI Accelerator API: if FI_ACC flag + acc_info present,
+		 * allocate GPU HBM for counter via acc_info.alloc() and
+		 * pass DMA-BUF fd to efadv_create_comp_cntr so the NIC
+		 * writes counter values directly to GPU memory.
+		 */
+		if (attr && (attr->flags & FI_ACC) && attr->acc_info) {
+			struct fi_acc_info *ai = attr->acc_info;
+			struct fi_cntr_attr acc_attr = *attr;
+			void *comp_ptr = NULL;
+			void *err_ptr = NULL;
+			int comp_fd = -1, err_fd = -1;
+			uint64_t comp_offset = 0, err_offset = 0;
+
+			/* Clear FI_ACC from flags before passing to hw_cntr_open
+			 * (it rejects unknown flags) */
+			acc_attr.flags &= ~FI_ACC;
+
+			/* Allocate GPU HBM for completion counter (8 bytes) */
+			if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
+				if (!ai->alloc) {
+					free(cntr);
+					return -FI_EINVAL;
+				}
+				ret = ai->alloc(ai->device, 8, 8, 0,
+						&comp_ptr, &comp_fd, &comp_offset);
+			} else {
+				ret = ofi_hmem_dev_alloc(ai->iface, ai->device,
+							 &comp_ptr, 8);
+				if (!ret)
+					ret = ofi_hmem_get_dmabuf_fd(
+						ai->iface, comp_ptr, 8,
+						&comp_fd, &comp_offset);
+			}
+			if (ret) {
+				EFA_WARN(FI_LOG_CNTR,
+					 "Failed to allocate GPU HBM for comp counter: %d\n", ret);
+				free(cntr);
+				return ret;
+			}
+
+			/* Allocate GPU HBM for error counter (8 bytes) */
+			if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
+				ret = ai->alloc(ai->device, 8, 8, 0,
+						&err_ptr, &err_fd, &err_offset);
+			} else {
+				ret = ofi_hmem_dev_alloc(ai->iface, ai->device,
+							 &err_ptr, 8);
+				if (!ret)
+					ret = ofi_hmem_get_dmabuf_fd(
+						ai->iface, err_ptr, 8,
+						&err_fd, &err_offset);
+			}
+			if (ret) {
+				EFA_WARN(FI_LOG_CNTR,
+					 "Failed to allocate GPU HBM for err counter: %d\n", ret);
+				if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
+					if (ai->free)
+						ai->free(ai->device, comp_ptr);
+				} else {
+					ofi_hmem_dev_free(ai->iface, comp_ptr);
+				}
+				if (comp_fd >= 0)
+					close(comp_fd);
+				free(cntr);
+				return ret;
+			}
+
+			/* Configure efadv to use external DMA-BUF for both */
+			efa_cc_attr.flags |= EFADV_COMP_CNTR_INIT_WITH_COMP_EXTERNAL_MEM;
+			efa_cc_attr.comp_cntr_ext_mem.type = EFADV_MEMORY_LOCATION_DMABUF;
+			efa_cc_attr.comp_cntr_ext_mem.dmabuf.fd = comp_fd;
+			efa_cc_attr.comp_cntr_ext_mem.dmabuf.offset = comp_offset;
+
+			efa_cc_attr.flags |= EFADV_COMP_CNTR_INIT_WITH_ERR_EXTERNAL_MEM;
+			efa_cc_attr.err_cntr_ext_mem.type = EFADV_MEMORY_LOCATION_DMABUF;
+			efa_cc_attr.err_cntr_ext_mem.dmabuf.fd = err_fd;
+			efa_cc_attr.err_cntr_ext_mem.dmabuf.offset = err_offset;
+
+			ret = efa_hw_cntr_open(domain, &acc_attr, cntr, cntr_fid,
+					       context, &efa_cc_attr);
+			if (ret) {
+				if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
+					if (ai->free) {
+						ai->free(ai->device, comp_ptr);
+						ai->free(ai->device, err_ptr);
+					}
+				} else {
+					ofi_hmem_dev_free(ai->iface, comp_ptr);
+					ofi_hmem_dev_free(ai->iface, err_ptr);
+				}
+				if (comp_fd >= 0)
+					close(comp_fd);
+				if (err_fd >= 0)
+					close(err_fd);
+				free(cntr);
+				return ret;
+			}
+
+			/* fds consumed by NIC — close our copies */
+			if (comp_fd >= 0)
+				close(comp_fd);
+			if (err_fd >= 0)
+				close(err_fd);
+
+			/* Store acc_state on the counter for later export */
+			cntr->acc_state = efa_acc_cntr_state_create(ai);
+			if (!cntr->acc_state) {
+				fi_close(&cntr->util_cntr.cntr_fid.fid);
+				return -FI_ENOMEM;
+			}
+			cntr->acc_state->cntr_value_dev = comp_ptr;
+			cntr->acc_state->cntr_alloc_addr = comp_ptr;
+			cntr->acc_state->cntr_err_dev = err_ptr;
+			cntr->acc_state->cntr_err_alloc_addr = err_ptr;
+			cntr->comp_use_device_mem = true;
+			cntr->err_use_device_mem = true;
+
+			EFA_INFO(FI_LOG_CNTR,
+				 "Opened FI_ACC hardware counter (GPU HBM) cntr_fid: %p\n",
+				 *cntr_fid);
+			return FI_SUCCESS;
+		}
+
+		/* Standard (non-ACC) HW counter path */
 		ret = efa_hw_cntr_open(domain, attr, cntr, cntr_fid, context, &efa_cc_attr);
 		if (!ret) {
 			return FI_SUCCESS;

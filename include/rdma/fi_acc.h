@@ -72,12 +72,49 @@ extern "C" {
  * callbacks internally to allocate/import device-accessible memory.
  * The consumer never calls import/alloc directly after object creation —
  * fi_acc_*_export() does it.
+ *
+ * --- Callback roles ---
+ *
+ * alloc:  "Allocate fresh GPU memory that the NIC can DMA to."
+ *         Called by the provider during fi_cntr_open(FI_ACC) and optionally
+ *         fi_cq_open(FI_ACC). The provider needs memory in GPU HBM that the
+ *         NIC can reach via DMA-BUF.
+ *
+ *         Outputs:
+ *           addr   — GPU device pointer to the allocation
+ *           fd     — DMA-BUF file descriptor (provider passes to NIC driver)
+ *           offset — offset within the DMA-BUF
+ *
+ *         Example (CUDA): cuMemAlloc → cuMemGetDmaBufFd → return both.
+ *
+ * import: "Map a provider-owned host VA into the accelerator address space."
+ *         Called by the provider during fi_acc_ep_export() and fi_acc_cq_export().
+ *         The provider has a host-side address (e.g., BAR MMIO for the SQ ring,
+ *         or host RAM for the CQ buffer) and needs a device pointer so GPU
+ *         kernels can access it.
+ *
+ *         Parameters:
+ *           host_addr — [in]  host virtual address to map
+ *           dev_addr  — [out] resulting device pointer for the same memory
+ *
+ *         Flags are provider-defined and passed through to the consumer.
+ *         The provider uses them to indicate memory type (e.g., BAR MMIO
+ *         vs host RAM) so the consumer can use the correct registration
+ *         method. The flag values are an implementation detail between
+ *         the provider and consumer — not part of the public API.
+ *
+ *         Example (CUDA):
+ *           cuMemHostRegister(host_addr, size, flags)
+ *           cuMemHostGetDevicePointer(&dev_addr, host_addr, 0)
+ *
+ * free:   "Release GPU memory previously returned by alloc."
+ *         Called by the provider during fi_close() cleanup.
  * =============================================================================
  */
 
 enum fi_acc_mem_type {
-	FI_ACC_MEM_USER_ALLOC,   /* User provides alloc/import callbacks */
-	FI_ACC_MEM_DMABUF,       /* Provider exports DMA-BUF fd+offset */
+	FI_ACC_MEM_USER_ALLOC,   /* User provides alloc/import/free callbacks */
+	FI_ACC_MEM_PROVIDER,     /* Provider manages device memory internally */
 };
 
 struct fi_acc_info {
@@ -85,34 +122,39 @@ struct fi_acc_info {
 	uint64_t             device;    /* Device ordinal */
 	enum fi_acc_mem_type mem_type;
 
-	union {
-		struct {
-			int (*alloc)(uint64_t device, uint64_t size,
-				     uint64_t alignment, uint64_t flags,
-				     void **addr, int *fd, uint64_t *offset);
-			int (*import)(uint64_t device, int fd,
-				      uint64_t offset, uint64_t size,
-				      uint64_t flags, void **addr);
-			void (*free)(uint64_t device, void *addr);
-		} user;
+	/**
+	 * alloc - Allocate accelerator memory exportable via DMA-BUF.
+	 * @device:    Device ordinal
+	 * @size:      Allocation size in bytes
+	 * @alignment: Required alignment (0 = default)
+	 * @flags:     FI_ACC_ALLOC_* flags
+	 * @addr:      [out] Device pointer to allocated memory
+	 * @fd:        [out] DMA-BUF fd for NIC access
+	 * @offset:    [out] Offset within DMA-BUF
+	 */
+	int (*alloc)(uint64_t device, uint64_t size,
+		     uint64_t alignment, uint64_t flags,
+		     void **addr, int *fd, uint64_t *offset);
 
-		struct {
-			int      fd;
-			uint64_t offset;
-			uint64_t size;
-		} dmabuf;
-	};
+	/**
+	 * import - Map a host address into accelerator address space.
+	 * @device:    Device ordinal
+	 * @host_addr: [in] Host virtual address (BAR MMIO or host RAM)
+	 * @size:      Size of the region in bytes
+	 * @flags:     FI_ACC_IMPORT_* flags indicating memory type
+	 * @dev_addr:  [out] Resulting device pointer
+	 */
+	int (*import)(uint64_t device, void *host_addr,
+		      uint64_t size, uint64_t flags,
+		      void **dev_addr);
+
+	/**
+	 * free - Release memory previously returned by alloc.
+	 * @device: Device ordinal
+	 * @addr:   Device pointer from alloc
+	 */
+	void (*free)(uint64_t device, void *addr);
 };
-
-/* Flags for fi_acc_info.user.alloc */
-#define FI_ACC_ALLOC_GPU_HBM       (1ULL << 0)
-
-/* Flags for fi_acc_info.user.import (provider uses internally) */
-#define FI_ACC_IMPORT_IOMEMORY     (1ULL << 0)
-#define FI_ACC_IMPORT_DEVICEMAP    (1ULL << 1)
-
-/* Flags for counter creation */
-#define FI_ACC_CNTR_EXTERNAL_MEM   (1ULL << 0)
 
 /*
  * =============================================================================
@@ -167,7 +209,7 @@ int fi_cq_export_acc(struct fid_cq *cq, uint64_t flags,
 
 /**
  * fi_cntr_export_acc - Export counter for accelerator access.
- * @cntr:     Counter (created with FI_ACC + FI_ACC_CNTR_EXTERNAL_MEM)
+ * @cntr:     Counter (created with FI_ACC)
  * @flags:    Reserved, must be 0
  * @acc_cntr: [out] Opaque device-accessible counter handle (GPU memory)
  * @size:     [out] Size of the exported handle
@@ -180,46 +222,35 @@ int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
 		       void **acc_cntr, size_t *size);
 
 /**
- * fi_mr_export_acc - Export MR descriptor for accelerator WQE construction.
- * @mr:       Registered memory region
+ * fi_mr_export_acc - Export MR descriptors for accelerator WQE construction.
+ * @mrs:      Array of registered memory regions
+ * @count:    Number of MRs to export
  * @flags:    Reserved, must be 0
- * @acc_desc: [out] Opaque device-accessible MR descriptor
- * @size:     [out] Size of the exported descriptor
+ * @acc_descs:[out] Contiguous array of opaque device-accessible MR descriptors
+ * @size:     [out] Total size of the exported array
  *
- * The device kernel passes this as `desc` to fi_acc_write/send/read.
+ * The device kernel indexes into this array and passes the entry as `desc`
+ * to fi_acc_write/send/read. For single MR, pass count=1.
  */
-int fi_mr_export_acc(struct fid_mr *mr, uint64_t flags,
-		     void **acc_desc, size_t *size);
+int fi_mr_export_acc(struct fid_mr **mrs, size_t count, uint64_t flags,
+		     void **acc_descs, size_t *size);
 
 /**
- * fi_av_export_acc - Export resolved peer address for accelerator use.
- * @av:       Address vector
- * @fi_addr:  Address previously inserted via fi_av_insert
- * @flags:    Reserved, must be 0
- * @acc_peer: [out] Opaque device-accessible peer handle
- * @size:     [out] Size of the exported peer handle
- *
- * The device kernel passes this as `acc_peer` to fi_acc_write/send.
- * The provider stamps the raw HW addressing into WQEs internally.
- */
-int fi_av_export_acc(struct fid_av *av, fi_addr_t fi_addr,
-		     uint64_t flags, void **acc_peer, size_t *size);
-
-/**
- * fi_av_export_acc_batch - Export multiple peer addresses at once.
+ * fi_av_export_acc - Export resolved peer addresses for accelerator use.
  * @av:        Address vector
- * @fi_addrs:  Array of fi_addr_t
- * @count:     Number of entries
+ * @fi_addrs:  Array of fi_addr_t (previously inserted via fi_av_insert)
+ * @count:     Number of entries to export
  * @flags:     Reserved, must be 0
- * @acc_peers: [out] Array of opaque peer handles (GPU memory, contiguous)
+ * @acc_peers: [out] Contiguous array of opaque peer handles (GPU memory)
  * @size:      [out] Total size of the exported array
  *
- * For building target addressing tables. FI_ADDR_UNSPEC entries are
- * zeroed and safe to pass to device functions (they will return error).
+ * The device kernel indexes into this array and passes the entry as
+ * `acc_peer` to fi_acc_write/send. For single peer, pass count=1.
+ * FI_ADDR_UNSPEC entries are zeroed.
  */
-int fi_av_export_acc_batch(struct fid_av *av, const fi_addr_t *fi_addrs,
-			   size_t count, uint64_t flags,
-			   void **acc_peers, size_t *size);
+int fi_av_export_acc(struct fid_av *av, const fi_addr_t *fi_addrs,
+		     size_t count, uint64_t flags,
+		     void **acc_peers, size_t *size);
 
 /**
  * fi_mr_get_acc_info - Get local MR info for key exchange / allgather.

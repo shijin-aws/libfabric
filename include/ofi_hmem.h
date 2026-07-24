@@ -69,6 +69,8 @@ CUresult ofi_cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice srcDevice,
 				   CUdevice dstDevice);
 cudaError_t ofi_cudaHostRegister(void *ptr, size_t size, unsigned int flags);
 cudaError_t ofi_cudaHostUnregister(void *ptr);
+cudaError_t ofi_cudaHostGetDevicePointer(void **pDevice, void *pHost,
+					 unsigned int flags);
 cudaError_t ofi_cudaMalloc(void **ptr, size_t size);
 cudaError_t ofi_cudaFree(void *ptr);
 CUresult ofi_cuDeviceGet(CUdevice *device, int ordinal);
@@ -150,6 +152,10 @@ struct ofi_hmem_ops {
 	int (*get_dmabuf_fd)(const void *addr, uint64_t size, int *fd,
 			     uint64_t *offset);
 	int (*put_dmabuf_fd)(int fd);
+	int (*get_device_ptr)(void *host_addr, size_t size,
+			      uint64_t flags, void **dev_addr);
+	int (*dev_alloc)(uint64_t device, void **addr, size_t size);
+	void (*dev_free)(void *addr);
 };
 
 extern struct ofi_hmem_ops hmem_ops[];
@@ -205,6 +211,10 @@ int cuda_hmem_cleanup(void);
 bool cuda_is_addr_valid(const void *addr, uint64_t *device, uint64_t *flags);
 int cuda_host_register(void *ptr, size_t size);
 int cuda_host_unregister(void *ptr);
+int cuda_get_device_ptr(void *host_addr, size_t size,
+			uint64_t flags, void **dev_addr);
+int cuda_dev_alloc(uint64_t device, void **addr, size_t size);
+void cuda_dev_free(void *addr);
 int cuda_dev_register(const void *addr, size_t size, uint64_t *handle);
 int cuda_dev_unregister(uint64_t handle);
 int cuda_dev_reg_copy_to_hmem(uint64_t handle, void *dest, const void *src,
@@ -389,6 +399,22 @@ static inline int ofi_hmem_host_unregister_noop(void *addr)
 	return FI_SUCCESS;
 }
 
+static inline int ofi_hmem_no_get_device_ptr(void *host_addr, size_t size,
+					     uint64_t flags, void **dev_addr)
+{
+	return -FI_EOPNOTSUPP;
+}
+
+static inline int ofi_hmem_no_dev_alloc(uint64_t device, void **addr,
+					size_t size)
+{
+	return -FI_EOPNOTSUPP;
+}
+
+static inline void ofi_hmem_no_dev_free(void *addr)
+{
+}
+
 static inline int
 ofi_hmem_no_base_addr(const void *addr, size_t len, void **base_addr,
 		      size_t *base_length)
@@ -516,5 +542,10 @@ int ofi_hmem_dev_reg_copy_from_hmem(enum fi_hmem_iface iface, uint64_t handle,
 int ofi_hmem_get_dmabuf_fd(enum fi_hmem_iface, const void *addr, uint64_t size,
 			   int *fd, uint64_t *offset);
 int ofi_hmem_put_dmabuf_fd(enum fi_hmem_iface iface, int fd);
+int ofi_hmem_get_device_ptr(enum fi_hmem_iface iface, void *host_addr,
+			    size_t size, uint64_t flags, void **dev_addr);
+int ofi_hmem_dev_alloc(enum fi_hmem_iface iface, uint64_t device,
+		       void **addr, size_t size);
+void ofi_hmem_dev_free(enum fi_hmem_iface iface, void *addr);
 bool ofi_hmem_is_dmabuf_env_var_enabled(enum fi_hmem_iface iface);
 #endif /* _OFI_HMEM_H_ */
