@@ -703,13 +703,20 @@ Similarly `fi_acc_cq_export()` can place the CQ ring in GPU HBM (alloc + DMA-BUF
 → NIC writes CQEs directly to GPU memory) or map the host ring via `import()` —
 the provider picks per its hardware.
 
-**Lazy HW creation:** Some HW resources require the external memory at creation
-time — on EFA, both `efadv_create_comp_cntr(fd, offset)` and
-`efadv_create_cq(EXT_MEM_DMABUF)` take the DMA-BUF fd as a creation parameter.
-In that case `fi_cntr_open(FI_ACC)` / `fi_cq_open(FI_ACC)` return the fid but
-the provider defers creating the underlying HW counter/CQ until the export
-call, when `acc_info.alloc(FI_ACC_ALLOC_DMABUF)` produces the fd. This is a
-provider-internal detail invisible to the consumer.
+**HW creation timing — an implementation trade-off:** Some HW resources require
+the external memory at creation time — on EFA, both
+`efadv_create_comp_cntr(fd, offset)` and `efadv_create_cq(EXT_MEM_DMABUF)` take
+the DMA-BUF fd as a creation parameter. Since `acc_info` (with the `alloc`
+callback) is available at open time, the provider has two options:
+
+- **Allocate at open:** `fi_cntr_open(FI_ACC)` / `fi_cq_open(FI_ACC)` call
+  `acc_info.alloc(FI_ACC_ALLOC_DMABUF)` immediately and create the HW resource
+  inside the open call. The export call then only does the remaining mapping
+  work (BAR imports, opaque blob build, H2D copy).
+- **Defer to export:** open returns the fid only; the provider creates the HW
+  resource lazily at export time when the fd is produced.
+
+Either way this is provider-internal and invisible to the consumer.
 
 **Counter semantics** (counters are THE completion mechanism in NCCL GIN — not CQ polling):
 
