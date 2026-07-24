@@ -570,10 +570,37 @@ the fd when `FI_ACC_ALLOC_DMABUF` is set).
 
 #### Callback Flags — Libfabric-Defined, Not Platform-Specific
 
-The `import` and `alloc` callbacks use **libfabric-defined flags** rather than
+The `alloc` and `import` callbacks use **libfabric-defined flags** rather than
 platform-specific ones (e.g., CUDA's `CU_MEMHOSTREGISTER_IOMEMORY`). The provider
 expresses *what* it needs semantically; the consumer's callback translates to
 platform-specific calls.
+
+**Alloc flags** (allocate fresh GPU memory):
+
+| Flag | Meaning |
+|------|---------|
+| `FI_ACC_ALLOC_DMABUF` | Consumer must export a DMA-BUF fd for the allocation (provider will pass the fd to the NIC driver for direct DMA access) |
+| (none) | Plain GPU memory — no fd needed, consumer may return fd = -1 |
+
+```c
+// Case 1: DMA-BUF needed (HW counter, GPU-resident CQ buffer — NIC DMAs into it):
+acc_info->alloc(device, 8, 8, FI_ACC_ALLOC_DMABUF,
+                &gpu_ptr, &dmabuf_fd, &offset);
+// Provider passes dmabuf_fd to NIC driver (efadv_create_comp_cntr)
+// GPU kernel reads *gpu_ptr directly
+
+// Case 2: Plain GPU memory (opaque EP blob, AV peer table, MR descriptor):
+acc_info->alloc(device, sizeof(fi_acc_dev_ep), 8, 0,
+                &gpu_ptr, &dmabuf_fd, &offset);
+// Consumer can just cudaMalloc; fd stays -1, provider ignores it
+// Provider H2D copies the built struct to gpu_ptr
+```
+
+**Why distinguish:** Exporting a DMA-BUF fd
+(`cuMemGetDmaBufFd`) has real cost and constraints — memory must be allocated
+with RDMA-capable properties (e.g., CUDA VMM with `gpuDirectRDMACapable`). The
+blobs from `fi_acc_ep_export`, `fi_acc_av_export`, and `fi_acc_mr_export` never
+need NIC access, so a plain `cudaMalloc` suffices.
 
 **Import flags** (map provider-owned host memory into GPU address space):
 
@@ -614,33 +641,6 @@ int my_import(uint64_t device, void *host_addr,
     return 0;
 }
 ```
-
-**Alloc flags** (allocate fresh GPU memory):
-
-| Flag | Meaning |
-|------|---------|
-| `FI_ACC_ALLOC_DMABUF` | Consumer must export a DMA-BUF fd for the allocation (provider will pass the fd to the NIC driver for direct DMA access) |
-| (none) | Plain GPU memory — no fd needed, consumer may return fd = -1 |
-
-```c
-// Case 1: DMA-BUF needed (HW counter, GPU-resident CQ buffer — NIC DMAs into it):
-acc_info->alloc(device, 8, 8, FI_ACC_ALLOC_DMABUF,
-                &gpu_ptr, &dmabuf_fd, &offset);
-// Provider passes dmabuf_fd to NIC driver (efadv_create_comp_cntr)
-// GPU kernel reads *gpu_ptr directly
-
-// Case 2: Plain GPU memory (opaque EP blob, AV peer table, MR descriptor):
-acc_info->alloc(device, sizeof(fi_acc_dev_ep), 8, 0,
-                &gpu_ptr, &dmabuf_fd, &offset);
-// Consumer can just cudaMalloc; fd stays -1, provider ignores it
-// Provider H2D copies the built struct to gpu_ptr
-```
-
-**Why distinguish:** Exporting a DMA-BUF fd
-(`cuMemGetDmaBufFd`) has real cost and constraints — memory must be allocated
-with RDMA-capable properties (e.g., CUDA VMM with `gpuDirectRDMACapable`). The
-blobs from `fi_acc_ep_export`, `fi_acc_av_export`, and `fi_acc_mr_export` never
-need NIC access, so a plain `cudaMalloc` suffices.
 
 **Why libfabric flags instead of passing CUDA flags directly:**
 - Provider code never links CUDA/HIP/Level Zero — it's built with gcc
