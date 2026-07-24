@@ -3,45 +3,223 @@
 Based on deep analysis of:
 - The **OFI Accelerator API** proposal (slides by Jianxin Xiong, 4/21/2026)
 - **efa-dp-direct** (v0.0.2) — direct GPU-to-NIC datapath library for EFA
-- **aws-ofi-nccl** GIN/GDAKI — production integration of efa-dp-direct with NCCL via libfabric
+- **NCCL upstream GIN/EFA-GDA** (`upstream-to-nccl/src/include/nccl_device/gin/efa_gda/`) — the actual device-side NCCL integration
+- **aws-ofi-nccl** GIN/GDAKI — host-side plugin that populates device handles
 - **perftest** (RDMA benchmark tool) — GDA mode implementation (`--use_dp_direct`)
 
 ---
 
-## Current Production Architecture (efa-dp-direct + aws-ofi-nccl GDAKI)
+## Current Production Architecture (NCCL GIN EFA-GDA)
 
-### How it works today (without the OFI Accelerator API)
+### How it works today
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  GPU Kernel (NCCL)                                            │
-│    #include "efa_cuda_dp_impl.cuh"                            │
-│    efa_cuda_start_sq_batch(qp, N)                             │
-│    efa_cuda_sq_batch_place_wr(qp, idx, wr)                    │
-│    efa_cuda_flush_sq_wrs(qp)     ← __threadfence_system + DB  │
-│    efa_cuda_cq_poll(cq, pos)     ← phase-bit polling          │
-└──────────────────────────┬───────────────────────────────────┘
-                           │ Direct HW access (BAR MMIO)
-┌──────────────────────────┴───────────────────────────────────┐
-│  Host Setup (aws-ofi-nccl GDAKI)                              │
-│    1. fi_open_ops(domain, FI_EFA_GDA_OPS) → gda_ops           │
-│    2. gda_ops->query_qp_wqs(ep) → sq_buffer, sq_doorbell      │
-│    3. gda_ops->query_cq(cq) → cq_buffer, entry_size           │
-│    4. gda_ops->query_addr(ep, fi_addr) → ahn, qpn, qkey       │
-│    5. gda_ops->cntr_open_ext(domain) → HW counter in GPU mem   │
-│    6. cuMemHostRegister(sq_buffer, IOMEMORY|DEVICEMAP)         │
-│    7. cuMemHostRegister(doorbell, IOMEMORY|DEVICEMAP)          │
-│    8. cuMemHostGetDevicePointer → GPU-visible pointers          │
-│    9. efa_cuda_create_qp/cq(attrs) → GPU-resident descriptors  │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  GPU Kernel (NCCL GIN — gin_efa_gda.h)                                    │
+│                                                                           │
+│  #include "efa_cuda_dp_impl.cuh"   ← ONLY for WQE struct/format macros   │
+│                                                                           │
+│  WQE CONSTRUCTION (from efa-dp-direct):                                   │
+│    efa_cuda_init_rdma_write_wr(&wr, id, rkey, raddr)                      │
+│    efa_cuda_wr_set_sge(&wr, lkey, addr, len)                              │
+│    efa_cuda_wr_set_remote(&wr, ah, qpn, qkey)                             │
+│    efa_cuda_wr_set_processing_hints(&wr, BURST_PPS_SENSITIVE)             │
+│    EFA_SET(&wr.meta.ctrl2, PHASE, wqe_phase)                              │
+│                                                                           │
+│  SQ MANAGEMENT (GIN's own warp-cooperative protocol):                     │
+│    1. coalesced_threads() + labeled_partition(qp) → warp group            │
+│    2. Leader: pc_ref.fetch_add(group_size) → atomic slot reservation      │
+│    3. Chunk into windows of ≤ max_batch                                   │
+│    4. Leader: backpressure on un-rung depth (db_rung) AND hw counter      │
+│    5. All lanes: direct 64-byte write to SQ ring slot (parallel)          │
+│    6. Leader: __threadfence_system() → *db = target → advance cursors     │
+│    7. Strict slot-order handoff via wqes_completed rendezvous             │
+│                                                                           │
+│  COMPLETION: counter-only (NO CQ polling)                                 │
+│    hwCounterLoad(local_cntr_value) ← system-scope acquire load            │
+│    Flush: spin until (submitted - *cntr) & 0x7FFFFFFF == 0                │
+│                                                                           │
+│  NOT USED from efa-dp-direct:                                             │
+│    ❌ efa_cuda_start_sq_batch / sq_batch_place_wr / flush_sq_wrs          │
+│    ❌ efa_cuda_cq_poll / cq_pop                                           │
+│    ❌ efa_cuda_post_recv_wr / flush_rq_wrs                                │
+└──────────────────────────┬───────────────────────────────────────────────┘
+                           │ Direct HW access (BAR MMIO for SQ + doorbell)
+                           │ PCIe coherent read (GPU HBM for HW counters)
+┌──────────────────────────┴───────────────────────────────────────────────┐
+│  Host Setup (aws-ofi-nccl GDAKI plugin)                                   │
+│    1. fi_open_ops(domain, FI_EFA_GDA_OPS) → gda_ops                       │
+│    2. gda_ops->cntr_open_ext(domain, DMA-BUF) → HW counter in GPU HBM    │
+│    3. fi_endpoint() + fi_ep_bind(cntr, FI_WRITE) + fi_enable()            │
+│    4. gda_ops->query_qp_wqs(ep) → sq_buffer, sq_doorbell, sizes          │
+│    5. cuMemHostRegister(sq_buffer, IOMEMORY|DEVICEMAP)                    │
+│    6. cuMemHostRegister(doorbell, IOMEMORY|DEVICEMAP)                     │
+│    7. cuMemHostGetDevicePointer → GPU-visible pointers                     │
+│    8. efa_cuda_create_qp(attrs) → GPU-resident efa_cuda_qp descriptor     │
+│    9. gda_ops->query_addr(ep, fi_addr) → (ahn, qpn, qkey) per peer       │
+│   10. Build nccl_ofi_gin_gdaki_dev_handle + H2D copy                      │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Key design decisions in production:
-1. **No libfabric abstraction on the device** — GPU code directly uses EFA HW I/O structures
-2. **Provider-specific extension API** (`fi_efa_ops_gda`) — not portable across providers
-3. **Manual MMIO mapping** — consumer calls `cuMemHostRegister` on BAR addresses
-4. **Layout-compatible shadow structs** — aws-ofi-nccl defines its own types matching efa-dp-direct ABI
-5. **Header-only device library** — zero overhead, compiled into user kernel
+### Key design decisions in NCCL GIN:
+1. **efa-dp-direct is a WQE-format library only** — NCCL uses `init_rdma_write_wr`, `wr_set_sge`, `wr_set_remote` for WQE construction, but does NOT use its SQ management (`start_sq_batch`/`place_wr`/`flush`)
+2. **No CQ polling on data path** — completion tracked entirely via NIC HW counters (FI_WRITE), read with system-scope acquire
+3. **Warp-cooperative SQ posting** — `cooperative_groups::labeled_partition` groups lanes targeting the same QP; leader reserves slots atomically, all lanes write WQEs in parallel
+4. **Deferred doorbell aggregation** — `ncclGinOptFlagsAggregateRequests` lets groups skip doorbell; a later group drains all deferred WQEs with one doorbell ring
+5. **Dual backpressure** — (a) un-rung depth bounded by `max_batch`, (b) ring overflow bounded by `sq_size` via HW counter
+6. **Counter wraps at 2^31** — all arithmetic uses `(producer - consumer) & 0x7FFFFFFF`
+7. **Multiple endpoint flavors** — data EP, pvdata EP (PutValue staging), counter EPs, signal EPs (remote target only)
+8. **Provider-specific extension API** (`fi_efa_ops_gda`) — not portable across providers
+9. **Direct struct field access** — GIN accesses `qp->sq.wq.pc`, `qp->sq.wq.buf`, `qp->sq.wq.db`, `qp->sq.wq.max_batch`, `qp->sq.wq.wqes_completed`, `qp->sq.wq.wqes_posted` directly
+
+### efa-dp-direct primitives actually used by NCCL GIN:
+
+| Primitive | Used? | Purpose |
+|-----------|-------|---------|
+| `efa_cuda_init_rdma_write_wr()` | ✅ | Build WQE with opcode + remote addr |
+| `efa_cuda_wr_set_sge()` | ✅ | Set local buffer SGE |
+| `efa_cuda_wr_set_remote()` | ✅ | Set (ah, qpn, qkey) destination |
+| `efa_cuda_wr_set_processing_hints()` | ✅ | Set PPS burst hint |
+| `EFA_SET(&wr.meta.ctrl2, PHASE, phase)` | ✅ | Stamp phase bit |
+| `efa_cuda_start_sq_batch()` | ❌ | GIN does atomic `pc.fetch_add` instead |
+| `efa_cuda_sq_batch_place_wr()` | ❌ | GIN does direct 64-byte ring write |
+| `efa_cuda_flush_sq_wrs()` | ❌ | GIN does its own fence + doorbell + rendezvous |
+| `efa_cuda_cq_poll()` / `cq_pop()` | ❌ | GIN uses HW counter, not CQ |
+| `efa_cuda_post_recv_wr()` / `flush_rq_wrs()` | ❌ | GIN is write-only (no recv) |
+
+### NCCL GIN Warp-Cooperative SQ Protocol (detailed)
+
+```
+postRdmaWrite<mode>(ep, ah, qpn, qkey, srcAddr, srcLkey, writeBytes, dstAddr, dstRkey, optFlags):
+
+  ┌─ Warp Coalescing ───────────────────────────────────────────────────────┐
+  │ active = cooperative_groups::coalesced_threads()                         │
+  │ group = labeled_partition(active, (uintptr_t)qp)  ← lanes on same QP   │
+  │ is_leader = (group.thread_rank() == 0)                                  │
+  │ group_size = group.num_threads()                                        │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ Atomic Slot Reservation ───────────────────────────────────────────────┐
+  │ if (is_leader)                                                          │
+  │   base = pc_ref.fetch_add(group_size, relaxed)  ← one atomic per group  │
+  │ base = group.shfl(base, 0)  ← broadcast to all lanes                   │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ Chunked Posting (for group_size > max_batch) ──────────────────────────┐
+  │ for chunk_start in [0, group_size) step max_batch:                      │
+  │                                                                         │
+  │   ┌─ Leader: Backpressure (two checks) ────────────────────────────┐    │
+  │   │ (a) Un-rung depth: chunk_next - db_rung ≤ max_batch            │    │
+  │   │     If exceeded: force-ring deferred WQEs below us             │    │
+  │   │ (b) Ring overflow: (chunk_next - *hw_cntr) & 0x7FFF ≤ sq_size  │    │
+  │   │     Spin until NIC consumes enough WQEs                        │    │
+  │   └────────────────────────────────────────────────────────────────┘    │
+  │   group.sync()                                                          │
+  │                                                                         │
+  │   ┌─ All lanes: Parallel WQE Write ────────────────────────────────┐    │
+  │   │ my_slot = chunk_base + (my_idx - chunk_start)                  │    │
+  │   │ sq_idx = my_slot & queue_mask                                  │    │
+  │   │ phase = (my_slot >> queue_size_shift) & 1                      │    │
+  │   │ EFA_SET(&wr.meta.ctrl2, PHASE, phase)                         │    │
+  │   │ memcpy_64B(qp->sq.wq.buf + sq_idx*64, &wr)                   │    │
+  │   └────────────────────────────────────────────────────────────────┘    │
+  │   group.sync()                                                          │
+  │                                                                         │
+  │   ┌─ Leader: Publish + Doorbell + Handoff ─────────────────────────┐    │
+  │   │ __threadfence_system()   ← make WQEs visible to NIC            │    │
+  │   │ while (wqes_completed != chunk_base) spin  ← rendezvous        │    │
+  │   │                                                                │    │
+  │   │ if (!aggregate || chunk_next - db_rung >= max_batch):          │    │
+  │   │   *qp->sq.wq.db = chunk_next          ← ring doorbell         │    │
+  │   │   __threadfence_system()               ← order MMIO            │    │
+  │   │   submitted_count += (chunk_next - db_rung)                    │    │
+  │   │   db_rung = chunk_next                                         │    │
+  │   │                                                                │    │
+  │   │ wqes_completed = chunk_next            ← hand off to next      │    │
+  │   └────────────────────────────────────────────────────────────────┘    │
+  │   group.sync()                                                          │
+  └─────────────────────────────────────────────────────────────────────────┘
+```
+
+### NCCL GIN Endpoint Architecture
+
+```
+nccl_ofi_gin_gdaki_dev_handle (per-context, in GPU memory):
+├── data: endpoint_handle          ← payload RDMA writes
+│   ├── qp (efa_cuda_qp*)         ← raw QP struct, accessed directly
+│   ├── cq (efa_cuda_cq*)         ← exists but NOT polled on data path
+│   ├── target_address_handles[]  ← [total_slots × nranks]
+│   ├── target_remote_qpns[]      ← [total_slots × nranks]
+│   ├── target_qkey[]             ← [total_slots × nranks]
+│   ├── sq_lock (unused by GIN — uses atomics instead)
+│   ├── local_cntr_value*         ← FI_WRITE HW counter in GPU HBM
+│   ├── submitted_count           ← bumped after doorbell
+│   └── sq_size                   ← for ring-overflow backpressure
+│
+├── pvdata: endpoint_handle        ← PutValue staging writes
+│   └── (same structure as data, own QP/counter)
+│
+├── counter_handles[nCounters]     ← counter-tracked puts (own QPs)
+│   └── each has: base (endpoint) + cntr_value* + cntr_offset
+│
+├── signal_handles[nSignals]       ← signal delivery (remote target only)
+│   └── each has: base (endpoint) + cntr_value* (FI_REMOTE_WRITE) + cntr_offset
+│
+├── scratch_{local_addr, lkey, remote_addrs[], remote_rkeys[]}
+│                                  ← 0-byte writes for signal-only
+├── putvalue_{lkey, slot_size}     ← PutValue slot pool metadata
+├── nranks, rank, rail_id
+└── nCounters, nSignals
+```
+
+### Target Addressing Table Layout
+
+Each endpoint (data, pvdata, each counter EP) carries its own target table:
+```
+target_address_handles[total_slots * nranks]   (targetSlot-major)
+target_remote_qpns[total_slots * nranks]
+target_qkey[total_slots * nranks]
+
+Index: targetSlot * nranks + peer
+  slot 0       → peer's DATA endpoint (no FI_REMOTE_WRITE, plain put)
+  slot 1 + s   → peer's sc endpoint s (FI_REMOTE_WRITE, signal delivery)
+```
+
+### Signal Add-by-N Emulation
+
+EFA's FI_REMOTE_WRITE increments by exactly 1 per inbound write. To signal
+Add-by-N, NCCL posts N separate 0-byte writes:
+
+```c
+// First write: payload (or 0-byte scratch if signal-only), on main_ep
+postRdmaWrite<mode>(main_ep, main_ah, main_qpn, main_qkey,
+                    srcAddr, srcLkey, writeBytes, dstAddr, dstRkey);
+
+// Remaining N-1 signal increments: 0-byte writes on DATA ep
+for (uint32_t k = 1; k < signalCount; k++) {
+    postRdmaWrite<mode>(&dev->data, dataSigAh, dataSigQpn, dataSigQkey,
+                        scratch_local_addr, scratch_lkey, 0,
+                        scratch_remote_addrs[peer], scratch_remote_rkeys[peer]);
+}
+```
+
+### Counter-Only Completion (Flush)
+
+```c
+// Wait for ALL endpoints to drain
+auto wait_for_endpoint = [](endpoint_handle& ep) {
+    uint64_t target = atomicLoad<scope, relaxed>(&ep.submitted_count);
+    while (((uint32_t)target - (uint32_t)hwCounterLoad(ep.local_cntr_value))
+           & 0x7FFFFFFF) != 0) {
+        /* spin */
+    }
+};
+wait_for_endpoint(dev->data);
+wait_for_endpoint(dev->pvdata);
+for (int i = 0; i < dev->nCounters; i++)
+    wait_for_endpoint(dev->counter_handles[i]->base);
+// Signal endpoints are NEVER drained (remote target only)
+```
 
 ---
 
@@ -318,34 +496,59 @@ __global__ void run_iter_bw_kernel(...) {
 
 ## Gap Analysis: OFI Accelerator API vs. Production Reality
 
-| Aspect | OFI Acc API Proposal | Production (efa-dp-direct + aws-ofi-nccl) | perftest GDA | Gap |
-|--------|---------------------|-------------------------------------------|--------------|-----|
-| **Memory allocation** | `fi_acc_info.alloc/import` callbacks | `cuMemHostRegister` + DMA-BUF for counters | DMA-BUF for CQ, `cuMemHostRegister(IOMEMORY)` for SQ/doorbell BAR | Proposal is more abstract; production needs both BAR-mapping and DMA-BUF |
-| **Resource export** | `fi_ep_export_acc()` → opaque blob | `gda_ops->query_qp_wqs()` + manual GPU struct build | `efadv_query_qp_wqs()` + manual `cuMemHostRegister` + `efa_cuda_create_qp()` | Proposal hides the complexity; production needs fine-grained control |
-| **Device API** | `fi_acc_send/recv/write/read` | `efa_cuda_init_send_wr` + `sq_batch_place_wr` + `flush_sq_wrs` | Same efa-dp-direct calls directly | Proposal is higher-level; production uses low-level WQE construction |
-| **CQ handling** | `fi_acc_cq_read()` | `efa_cuda_cq_poll(cq, position)` + `cq_pop(amount)` | Same: `efa_cuda_cq_poll(cq, tid)` + `cq_pop(batch)` | Proposal abstracts away position-based parallel polling |
-| **Scope/concurrency** | `FI_ACC_WORK_ITEM/SUBGROUP/WORK_GROUP` | Explicit `sq_lock` + `start_sq_batch(batch_size)` | `post_list × num_qps` threads; sub-batches of 16; `__syncthreads()` | Proposal formalizes what production does manually |
-| **Counter support** | Not shown in proposal | `cntr_open_ext` with external GPU memory + DMA-BUF | **Not used** (CQ-only backpressure) | **Missing from proposal**; perftest shows it's optional but limits scalability |
-| **Multi-operation batching** | Implicit via scope | Explicit `start_sq_batch` → N × `place_wr` → `flush` | Explicit: thread 0 reserves, all threads place in parallel, thread 0 flushes | Proposal needs clearer batch semantics |
-| **SQ backpressure** | Not addressed | Kernel spins on `(submitted - *cntr + batch) <= sq_size` | Implicit: `post_list > tx_depth - (scnt - ccnt)` triggers CQ poll | **Critical gap** — perftest's approach doesn't scale |
-| **Doorbell coalescing** | Not addressed | `FI_MORE` flag on host; explicit `flush` on device | `flush_sq_wrs()` after batch of ≤16 WQEs | Needs specification |
-| **Multi-rail** | Not addressed | Round-robin across rails, per-rail QPs/CQs | Multiple QPs sharing single CQ (simpler model) | **Important for production** |
-| **Recv posting on GPU** | Not addressed | N/A (NCCL doesn't post recvs on GPU) | `efa_cuda_post_recv_wr()` + `efa_cuda_flush_rq_wrs()` on GPU | perftest demonstrates GPU-side recv posting is viable |
-| **GPU-side timing** | Not addressed | N/A | `clock64()` before/after each op | Useful for benchmarking; could be part of profiling API |
+| Aspect | OFI Acc API Proposal | NCCL GIN (actual production) | perftest GDA | Gap |
+|--------|---------------------|-------------------------------|--------------|-----|
+| **Memory allocation** | `fi_acc_info.alloc/import` callbacks | `cuMemHostRegister(IOMEMORY)` for SQ/doorbell BAR + DMA-BUF for HW counters | DMA-BUF for CQ, `cuMemHostRegister(IOMEMORY)` for SQ/doorbell BAR | Proposal is more abstract; production needs both BAR-mapping and DMA-BUF |
+| **Resource export** | `fi_ep_export_acc()` → opaque blob | `gda_ops->query_qp_wqs()` → raw struct fields (`buf`, `db`, `pc`, `queue_mask`, `max_batch`, etc.) directly accessed | `efadv_query_qp_wqs()` + manual `cuMemHostRegister` + `efa_cuda_create_qp()` | NCCL accesses QP fields directly today, but our opaque export works because the provider's inline `fi_acc_write()` accesses those same fields internally |
+| **SQ management** | `fi_acc_write()` encapsulates full post | **Custom warp-cooperative protocol:** atomic `pc.fetch_add` → parallel WQE write → rendezvous → deferred doorbell | `start_sq_batch` → `sq_batch_place_wr` → `flush_sq_wrs` (linear single-thread) | NCCL's protocol CAN be encapsulated inside `fi_acc_write()` via `scope` + `FI_MORE` flags; provider implements cooperative posting internally |
+| **WQE construction** | Hidden inside `fi_acc_write()` | `efa_cuda_init_rdma_write_wr` + `wr_set_sge` + `wr_set_remote` + `wr_set_processing_hints` + manual phase stamp | Same efa-dp-direct WQE builders | Proposal hides WQE format; NCCL uses efa-dp-direct as format library only |
+| **Completion** | `fi_acc_cq_read()` (CQ polling) | **NO CQ polling** — counter-only: `hwCounterLoad(local_cntr_value)` with system-scope acquire; `(submitted - *cntr) & 0x7FFFFFFF` | CQ polling (`efa_cuda_cq_poll`) | Counter export is P0; CQ export is P2 (used by perftest, not NCCL) |
+| **Backpressure** | Not addressed | **Dual:** (a) un-rung depth ≤ max_batch (doorbell staging limit), (b) ring overflow via `(chunk_next - *hw_cntr) & 0x7FFF ≤ sq_size` | CQ-based: `scnt - ccnt < tx_depth` | NCCL's model is more complex than simple "check available slots" |
+| **Doorbell control** | Not addressed | **Deferred aggregation:** `ncclGinOptFlagsAggregateRequests` skips doorbell; later group drains all deferred WQEs with one ring | `flush_sq_wrs()` after batch of ≤16 WQEs | **Critical gap:** API must support deferred/coalesced doorbells |
+| **Concurrency model** | `FI_ACC_WORK_ITEM/SUBGROUP/WORK_GROUP` scope param | **Warp coalescing:** `cooperative_groups::labeled_partition(qp)` → leader reserves, all lanes write WQEs in parallel, strict slot-order rendezvous | Fixed thread-block: `__syncthreads()` | Proposal's scope concept is too static for the dynamic warp-cooperative pattern |
+| **Counter support** | Not shown in proposal | **Central to everything:** HW counter in GPU HBM (FI_WRITE for local completion, FI_REMOTE_WRITE for signals), 31-bit wrap semantics | Not used (CQ-only) | **P0 gap** — counters ARE the completion mechanism in production |
+| **Counter wrapping** | Not addressed | 2^31 wrap: `(producer - consumer) & 0x7FFFFFFF`; in-flight bounded by sq_size (4096) « 2^31 | N/A | Spec must document counter wrap semantics |
+| **Signal delivery** | Not addressed | EFA FI_REMOTE_WRITE ticks +1 per write; Add-by-N emulated as N separate 0-byte writes to peer scratch | N/A | Signal semantics are transport-specific |
+| **Multi-endpoint** | Not addressed | data EP, pvdata EP (PutValue staging), counter EPs (per-counterId), signal EPs (remote target only) | Single QP or multi-QP | Production uses many specialized EPs per context |
+| **Multi-rail** | Not addressed | `rail_id = contextId % num_rails`; per-rail domains/EPs/MRs; window arrays indexed by rail_id | Multiple QPs sharing single CQ | Important for production bandwidth |
+| **Per-QP serialization** | `fi_acc_ep_lock()/unlock()` | NOT used by NCCL GIN — uses fine-grained atomics (`pc`, `wqes_completed`, `wqes_posted`) instead of coarse lock | N/A | Provider implements fine-grained atomics internally; `fi_acc_ep_lock()` available as simpler multi-CTA option |
+| **PutValue staging** | Not addressed | Dedicated pvdata EP; per-EP slot pool (`pvSliceBase + slot_idx * pvSlotSize`); stages value then RDMA writes from pool | N/A | Application-level pattern, but API must support separate staging EP |
+| **Recv posting on GPU** | Not addressed | NOT used (NCCL is write-only) | `efa_cuda_post_recv_wr()` + `efa_cuda_flush_rq_wrs()` | perftest demonstrates it's viable; not needed by primary consumer |
+| **GPU-side timing** | Not addressed | N/A | `clock64()` before/after each op | Useful for benchmarking only |
 
 ---
 
 ## Recommendations for Improving the OFI Accelerator API
 
-### 1. Split Export Into Structured Components (Not Opaque Blobs)
+The primary consumer (NCCL GIN) uses efa-dp-direct only as a WQE format/construction
+library and implements its own warp-cooperative SQ posting protocol. Our API
+encapsulates this pattern inside `fi_acc_write()` via `scope` and `flags` parameters,
+so the consumer gets the same performance without managing ring buffers directly.
 
-The proposal's `fi_ep_export_acc()` returning an opaque `void *acc_ep` is too coarse. Production needs:
+### 1. Structured Host-Side Export (Provider Builds Opaque Device Blob)
+
+The host-side export returns structured attributes that the **provider** uses to
+build an opaque device-side blob. The consumer on the host needs to see ring
+geometry for diagnostics/configuration, but the device-side consumer calls
+`fi_acc_write()` and never touches ring fields directly.
+
+NCCL GIN today directly accesses `efa_cuda_qp` fields, but this is because it
+implements its own SQ management. With our API, the provider's `fi_acc_write()`
+inlined implementation accesses those same fields internally:
+- `qp->sq.wq.pc` (atomic reservation cursor)
+- `qp->sq.wq.buf` (BAR MMIO ring buffer)
+- `qp->sq.wq.db` (doorbell MMIO register)
+- `qp->sq.wq.queue_mask` / `queue_size_shift` (ring indexing)
+- `qp->sq.wq.max_batch` (EFA staging limit)
+- `qp->sq.wq.wqes_completed` / `wqes_posted` (rendezvous/doorbell cursors)
+- `qp->sq.wq.wqes_completed` / `wqes_posted` (rendezvous/doorbell cursors)
+
+**Host-side structured export (for provider's internal use + optional Layer 2):**
 
 ```c
 struct fi_acc_ep_attrs {
     struct fi_acc_wq_attrs sq;   /* SQ buffer, doorbell, entry_size, num_entries, max_batch */
     struct fi_acc_wq_attrs rq;   /* RQ buffer, doorbell, entry_size, num_entries */
-    struct fi_acc_cq_attrs cq;   /* CQ buffer, entry_size, num_entries */
     uint32_t max_inline_data;
     uint32_t max_rdma_sges;
 };
@@ -354,23 +557,16 @@ int fi_ep_export_acc(struct fid_ep *ep, uint64_t flags,
                      struct fi_acc_ep_attrs *attrs);  /* structured output */
 ```
 
-**Why:** The consumer (efa-dp-direct) needs to know entry sizes, queue depths, doorbell addresses individually. An opaque blob forces provider-specific unpacking.
+**Why structured:** The provider uses these values internally to build the opaque
+device blob (populates `fi_acc_dev_ep` with buffer/doorbell/mask/max_batch).
+Additionally, a Layer 2 (raw export) mode can return these directly for consumers
+who want to implement their own posting protocol (future option, not required for NCCL).
 
-### 2. Add Hardware Counter Export
+### 2. Add Hardware Counter Export (P0 — Central to Everything)
 
-Counters are essential for production (SQ backpressure, signal/notification delivery):
+Counters are THE completion mechanism in NCCL GIN. Not CQ polling.
 
 ```c
-struct fi_acc_cntr_attrs {
-    enum fi_hmem_iface iface;
-    uint64_t device;
-    uint64_t flags;  /* FI_ACC_CNTR_EXTERNAL_MEM */
-    /* For DMA-BUF based allocation: */
-    int fd;
-    uint64_t offset;
-    uint64_t size;
-};
-
 int fi_cntr_open_acc(struct fid_domain *domain,
                      struct fi_cntr_attr *attr,
                      struct fi_acc_cntr_attrs *acc_attr,
@@ -380,50 +576,86 @@ int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
                        void **acc_cntr, size_t *acc_cntr_size);
 ```
 
-**Why:** In production, EFA's `cntr_open_ext` with `FI_EFA_COMP_CNTR_INIT_WITH_COMP_EXTERNAL_MEM` allows the NIC to write counter values directly into GPU HBM. The GPU kernel reads them without any host round-trip. This is used for:
-- **SQ backpressure**: `while (submitted - *counter + batch > sq_size) spin;`
-- **Remote write notification**: remote peer polls `*remote_write_counter` to detect arrivals
+**Why:** NCCL GIN uses counters for:
+- **SQ backpressure (FI_WRITE)**: `(chunk_next - (uint32_t)hwCounterLoad(cntr)) & 0x7FFFFFFF ≤ sq_size`
+- **Flush/completion (FI_WRITE)**: `(submitted - *cntr) & 0x7FFFFFFF == 0`
+- **Signal delivery (FI_REMOTE_WRITE)**: peer polls counter to detect arrival
+- **Counter-tracked puts**: counterId selects which EP's FI_WRITE to observe
+- **Reset-without-zeroing**: software `cntr_offset` baseline, since NIC counter is read-only
 
-### 3. Formalize the Batch Submission Model
+The API must also document:
+- Counter wraps at 2^31 (EFA-specific but needs a generic way to query)
+- Counter is NIC-owned; software cannot write it (offset-based reset only)
 
-The "scope" concept is good but insufficient. The API needs explicit batch lifecycle:
+### 3. Encapsulate Warp-Cooperative Posting Inside the API
+
+NCCL GIN's posting protocol is sophisticated but ultimately does:
+1. Reserve SQ slots (atomic `pc.fetch_add`)
+2. Construct WQE (using efa-dp-direct format helpers)
+3. Write WQE to ring buffer slot
+4. Fence + doorbell (possibly deferred)
+5. Advance completion tracking
+
+All of this CAN live inside `fi_acc_write()`. The challenge is making it
+**performant** when called from warp-cooperative code:
+
+| NCCL GIN pattern | How `fi_acc_write()` handles it |
+|---|---|
+| `cooperative_groups::labeled_partition(qp)` | Provider implements warp coalescing internally based on `scope` parameter |
+| Leader `pc.fetch_add(group_size)` | When `scope == FI_ACC_SUBGROUP`, provider coalesces and does one atomic per warp |
+| Parallel WQE write (all lanes) | Each lane's `fi_acc_write()` call writes its own slot |
+| Deferred doorbell | `FI_MORE` flag or `ncclGinOptFlagsAggregateRequests` equivalent |
+| Dual backpressure | Provider checks internally before posting |
+| Strict slot-order rendezvous | Provider manages handoff cursor internally |
+
+**The scope parameter + flags give the provider enough information** to implement
+the same optimizations NCCL currently does manually:
 
 ```c
-/* Reserve N slots in SQ. Returns 0 on success, -FI_EAGAIN if SQ full. */
-int fi_acc_sq_start_batch(void *acc_ep, int batch_size, uint64_t scope);
+// Consumer code (equivalent to what NCCL would call):
+fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer,
+             FI_ACC_SUBGROUP,    /* warp-cooperative */
+             FI_MORE);           /* defer doorbell */
 
-/* Place a prepared WR into slot `index`. Parallel-safe across scope threads. */
-int fi_acc_sq_place(void *acc_ep, int index, void *wr_buf);
-
-/* Commit the batch: threadfence + ring doorbell. */
-void fi_acc_sq_flush(void *acc_ep);
+// Provider internally:
+//   - Detects warp coalescing opportunity from scope
+//   - Leader reserves slots for entire subgroup
+//   - Each thread writes its WQE
+//   - Defers doorbell due to FI_MORE
+//   - Backpressure handled transparently
 ```
 
-**Why:** Production (efa-dp-direct) uses exactly this pattern: `start_sq_batch` → multiple `sq_batch_place_wr` → `flush_sq_wrs`. The proposal's `fi_acc_send()` implies a fire-and-forget model that doesn't map to the underlying hardware efficiently.
+**Key design requirement:** The `fi_acc_write()` implementation must support:
+- `FI_MORE` flag (defer doorbell — don't ring until next call without FI_MORE)
+- `FI_ACC_SUBGROUP` scope (warp-cooperative posting — coalesce reservation)
+- Internal SQ backpressure (counter-based, no consumer involvement)
+- Internal doorbell aggregation (bounded by max_batch)
 
-### 4. Add SQ Backpressure Mechanism
+### 4. SQ Backpressure — Internal to the Provider
+
+NCCL GIN has TWO independent backpressure checks, both of which the provider
+should implement internally:
 
 ```c
-/* Check available SQ slots. Non-blocking. */
-int fi_acc_sq_available(void *acc_ep, void *acc_cntr);
+// (a) Un-rung depth (prevents exceeding EFA staging limit):
+while (chunk_next - dbrung_ref.load(acquire) > max_batch) {
+    // If we hold the turn, ring deferred WQEs to make room
+}
 
-/* Or: the export should include enough info for the kernel to compute this: */
-struct fi_acc_sq_info {
-    uint32_t sq_size;
-    volatile uint64_t *completion_counter;  /* NIC-updated, in GPU memory */
-};
-```
-
-**Why:** Without this, GPU kernels can overflow the SQ. In production, aws-ofi-nccl GDAKI implements:
-```cuda
-while ((submitted_count - *local_cntr_value + batch_size) > sq_size) {
-    /* spin */
+// (b) Ring overflow (prevents SQ overrun):
+while (((chunk_next - (uint32_t)hwCounterLoad(local_cntr)) & EFA_CNTR_MASK) > sq_size) {
+    // spin
 }
 ```
 
-### 5. Support DMA-BUF as a First-Class Memory Allocation Method
+**These live INSIDE `fi_acc_write()`** — the consumer never sees `sq_size`,
+`submitted_count`, or `max_batch`. The provider has all the information needed
+(it created the QP, knows the ring depth, owns the counter pointer).
 
-The `fi_acc_info.alloc/import` callbacks are good, but the API should explicitly support DMA-BUF:
+The consumer observes backpressure only as `fi_acc_write()` spinning/blocking
+when the SQ is full — which is the correct abstraction.
+
+### 5. Support DMA-BUF as a First-Class Memory Allocation Method
 
 ```c
 enum fi_acc_mem_type {
@@ -431,23 +663,11 @@ enum fi_acc_mem_type {
     FI_ACC_MEM_USER_ALLOC, /* User provides alloc/import callbacks */
     FI_ACC_MEM_DMABUF,     /* Provider exports DMA-BUF fd+offset */
 };
-
-struct fi_acc_info {
-    enum fi_hmem_iface iface;
-    uint64_t device;
-    enum fi_acc_mem_type mem_type;
-    union {
-        struct { int (*alloc)(...); int (*import)(...); } user;
-        struct { /* provider fills fd, offset after create */ } dmabuf;
-    };
-};
 ```
 
-**Why:** In production, the CQ buffer uses DMA-BUF (`FI_EFA_CQ_INIT_FLAGS_EXT_MEM_DMABUF`), hardware counters use DMA-BUF for external memory, and SQ/doorbell use BAR MMIO mapping (not DMA-BUF). The API needs to handle both.
+**Why:** HW counters use DMA-BUF (NIC writes to GPU HBM). SQ/doorbell use BAR MMIO mapping. The API needs both.
 
 ### 6. Address Resolution Export
-
-The proposal is missing address export for the accelerator side:
 
 ```c
 struct fi_acc_peer_addr {
@@ -458,79 +678,99 @@ struct fi_acc_peer_addr {
 
 int fi_av_export_acc(struct fid_av *av, fi_addr_t addr,
                      struct fi_acc_peer_addr *acc_addr);
+
+/* Batch version for building target tables: */
+int fi_av_export_acc_batch(struct fid_av *av, fi_addr_t *addrs, int count,
+                           struct fi_acc_peer_addr *out);
 ```
 
-**Why:** In production, `gda_ops->query_addr()` is critical — the GPU kernel needs (AHN, QPN, QKEY) to fill in WQE destination fields. The proposal's `fi_acc_send(..., peer, ...)` hides this, but real hardware needs explicit addressing in WQEs.
+**Why:** NCCL GIN builds `[total_slots × nranks]` target tables with per-slot (ahn, qpn, qkey) tuples. The GPU kernel indexes this table to select the remote target per write.
 
-### 7. Clarify the Abstraction Level Decision
+### 7. The Abstraction Level Decision
 
-The fundamental tension is:
+NCCL GIN's warp-cooperative protocol is sophisticated, but its underlying
+operations (reserve slots, write WQE, fence, ring doorbell, check counter)
+can all be encapsulated inside `fi_acc_write()` with appropriate `scope`
+and `flags` parameters. The provider has enough information to implement
+the same optimizations.
 
-| | High-level (proposal) | Low-level (production) |
-|-|----------------------|----------------------|
-| **Device API** | `fi_acc_send(ep, buf, size, peer, ...)` | `init_send_wr` + `set_sge` + `set_remote` + `batch_place` + `flush` |
-| **Portability** | ✅ Provider-independent | ❌ EFA-specific WQE format |
-| **Performance** | ❌ Abstraction overhead | ✅ Zero-copy to HW ring |
-| **Flexibility** | ❌ Limited batching control | ✅ Full control over submission |
+The key insight: **NCCL's custom protocol exists because efa-dp-direct's
+`start_sq_batch`/`place_wr`/`flush_sq_wrs` was too limiting** (single-threaded,
+no deferred doorbells, no warp coalescing). Our API can do better by providing
+a higher-level call that INTERNALLY implements the advanced protocol:
 
-**Recommendation:** Provide **both layers**:
+| NCCL GIN does manually | Our API provides via |
+|---|---|
+| Warp coalescing (`labeled_partition`) | `scope = FI_ACC_SUBGROUP` |
+| Deferred doorbell (`aggregate` flag) | `flags = FI_MORE` |
+| Counter-based backpressure | Provider-internal (owns counter + sq_size) |
+| Slot-order rendezvous | Provider-internal (manages handoff cursors) |
+| Phase bit computation | Provider-internal |
+| 64-byte WQE write to BAR | Provider-internal |
+
+**Architecture:**
 
 ```
-Layer 1 (Portable, high-level):
-    fi_acc_send() / fi_acc_write() / fi_acc_cq_read()
-    - Provider implements device-side logic
-    - Works across EFA, CXI, verbs, etc.
-    - Performance penalty acceptable for portability
+Layer 0 (Host-side export — both NCCL and simple consumers need this):
+    fi_acc_ep_export() → structured attrs (or opaque blob + provider .cuh)
+    fi_acc_cntr_export() → GPU HBM counter pointer (for signal/flush)
+    fi_acc_av_export() → (AHN, QPN, QKEY) per peer
+    fi_acc_mr_export() → lkey
 
-Layer 2 (Direct, low-level):
-    fi_acc_export_wq() / fi_acc_export_cq() / fi_acc_export_peer()
-    - Expose raw queue structures
-    - Consumer brings own device-side library (like efa-dp-direct)
-    - Maximum performance, provider-specific
+Layer 1 (Device-side operations — provider encapsulates the hard stuff):
+    fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer, scope, flags)
+    fi_acc_cntr_read(acc_cntr) / fi_acc_cntr_wait(acc_cntr, target)
+    fi_acc_ep_lock() / fi_acc_ep_unlock()   [multi-CTA serialization]
+
+    The provider's fi_acc_write() INTERNALLY implements:
+      - Warp-cooperative slot reservation (when scope = SUBGROUP)
+      - WQE construction (format-specific, inlined)
+      - Doorbell deferral (when flags & FI_MORE)
+      - Dual backpressure (max_batch staging + counter-based overflow)
+      - Slot-order rendezvous for multi-group coordination
 ```
 
-This mirrors how libfabric already works: high-level API for portability, with provider-specific extensions (`fi_open_ops`) for performance-critical paths.
+**Why this works for NCCL:** If NCCL adopts our API, it replaces its 200-line
+`postRdmaWrite<mode>()` template with calls to `fi_acc_write()`. The provider's
+inlined implementation does the same work — warp coalescing, atomic reservation,
+parallel WQE writes, deferred doorbells — but the complexity lives in the
+provider header rather than the consumer.
+
+**Layer 2 (Optional raw export) remains available** for consumers who need
+absolute maximum control or provider-specific optimizations that the generic
+API cannot express. But it's NOT required for NCCL-level performance.
 
 ### 8. Multi-Rail Support
 
 ```c
-struct fi_acc_info {
-    ...
-    uint16_t num_rails;  /* Number of NIC rails to use */
-};
-
-/* Export per-rail resources */
-int fi_ep_export_acc_rail(struct fid_ep *ep, uint16_t rail_id,
-                          uint64_t flags, void **acc_ep, size_t *size);
+/* Per-rail: open separate domain/EP per rail, export each independently.
+ * The consumer manages rail selection (rail_id = contextId % num_rails). */
 ```
 
-**Why:** aws-ofi-nccl uses up to 4 rails (EFA NICs) per instance. GDAKI creates per-rail QPs/CQs and the GPU kernel selects rails. The API should make this a first-class concept.
+NCCL GIN's pattern: `rail_id` is baked into the device handle at createContext time.
+Each rail has its own domain → endpoint → QP/CQ/counter chain. The API doesn't need
+explicit multi-rail — it works by creating N independent EP/CQ/counter sets.
 
 ### 9. Error Handling on Device
 
-The proposal doesn't address device-side error handling:
-
 ```c
-/* Check for SQ errors (e.g., protection fault, remote disconnect) */
-int fi_acc_sq_error(void *acc_ep);
-
-/* Extended CQ error read */
-int fi_acc_cq_readerr(void *acc_cq, struct fi_acc_cq_err_entry *err);
+/* CQ-based error detection (for consumers using CQ) */
+uint32_t fi_acc_wc_read_vendor_err(void *cqe);
 ```
 
-**Why:** In production, `efa_cuda_wc_read_vendor_err()` exists for checking error completions. The accelerator needs to detect and handle NIC errors without host intervention.
+NCCL GIN does not poll CQ on the data path, so device-side error detection is
+limited to counter-based timeout (counter stops advancing). Host-side health
+monitoring is more practical for production.
 
 ### 10. Version/Compatibility Negotiation
 
 ```c
-/* During fi_getinfo, report accelerator API version supported */
-struct fi_info {
+/* efa-dp-direct uses comp_mask + is_compatible() checks */
+struct fi_acc_ep_attrs {
+    uint64_t comp_mask;  /* Forward compatibility */
     ...
-    uint32_t acc_api_version;  /* FI_ACC_API_VERSION(major, minor) */
 };
 ```
-
-**Why:** efa-dp-direct uses `comp_mask` + `is_compatible()` checks extensively. As the HW and API evolve, the accelerator-side format may change. Negotiating version at `fi_getinfo` time prevents incompatible combinations.
 
 ---
 
@@ -538,17 +778,18 @@ struct fi_info {
 
 | Priority | Improvement | Rationale |
 |----------|------------|-----------|
-| **P0** | Hardware counter export | Essential for backpressure & signaling |
-| **P0** | Structured (not opaque) export | Production needs individual queue attributes |
-| **P0** | SQ backpressure mechanism | Prevents SQ overflow crashes |
-| **P1** | Batch submission model | Maps to real HW doorbell amortization |
-| **P1** | DMA-BUF support | Required for NIC→GPU direct writes |
-| **P1** | Address resolution export | GPU needs (AHN, QPN, QKEY) for WQEs |
-| **P1** | GPU-side recv posting | Validated by perftest; needed for send/recv and write+imm latency |
-| **P2** | Two-layer API (portable + direct) | Resolves abstraction vs. performance tension |
-| **P2** | Multi-rail | Critical for production bandwidth |
-| **P2** | Error handling | Robustness in production |
-| **P3** | Version negotiation | Future-proofing |
+| **P0** | Hardware counter export (GPU HBM pointer) | THE completion/backpressure/signaling mechanism in NCCL; NOT CQ |
+| **P0** | `fi_acc_write()` with `scope` + `FI_MORE` flags | Must support warp-cooperative posting + deferred doorbells internally |
+| **P0** | Address resolution export + batch | NCCL builds [total_slots × nranks] target tables |
+| **P0** | MR lkey/rkey export | WQE construction needs local + remote keys |
+| **P1** | DMA-BUF support for counters | NIC writes counter directly to GPU HBM |
+| **P1** | Import callbacks (BAR MMIO → GPU device pointer) | Provider must map SQ/doorbell for GPU access |
+| **P1** | Internal warp-cooperative SQ management | Provider implements reservation + parallel write + rendezvous inside `fi_acc_write()` |
+| **P1** | Internal dual backpressure (max_batch + counter) | Provider checks both limits before posting |
+| **P2** | CQ export + polling API | perftest uses CQ; NCCL does not but other consumers may |
+| **P2** | GPU-side recv posting | perftest uses it; NCCL does not |
+| **P2** | Raw ring export (Layer 2) | For consumers with custom protocols beyond what scope+flags express |
+| **P3** | Version/comp_mask negotiation | Forward compatibility |
 
 ### Validation Coverage from perftest
 
@@ -565,27 +806,70 @@ work correctly on the GPU side with efa-dp-direct:
 | Multi-QP | — | ✅ (up to 32 QPs) | Thread-to-QP assignment |
 | Cooperative CQ poll | — | ✅ (N threads poll position N) | Demonstrates parallel completion |
 
-This confirms the OFI Accelerator API must support at minimum:
-- All RDMA verbs (send, recv, write, write+imm, read)
-- GPU-side receive buffer posting and CQ management
-- Cooperative multi-thread submission and completion
-- Both latency-optimized (single-thread) and throughput-optimized (multi-thread) patterns
+**Note:** perftest uses the efa-dp-direct batch API (`start_sq_batch`/`place_wr`/`flush`)
+which is a simpler single-threaded model. NCCL GIN implements its own warp-cooperative
+protocol instead. perftest validates WQE format correctness across all operation types.
 
 ---
 
 ## Appendix: Mapping Between Systems
 
-| OFI Acc API | efa-dp-direct | aws-ofi-nccl GDAKI | libfabric EFA provider | perftest GDA |
-|------------|---------------|---------------------|----------------------|--------------|
-| `fi_acc_info.alloc` | N/A (user provides) | `cuMemHostRegister` | `fi_efa_ops_gda` | `ctx->memory->allocate_buffer` (DMA-BUF) + `cuMemHostRegister` (BAR) |
-| `fi_cq_attr.acc_info` | `efa_cuda_cq_attrs` | `fi_efa_cq_attr` | `fi_efa_cq_init_attr` | `efadv_cq_init_attr` + `efa_cuda_cq_attrs` |
-| `fi_ep_export_acc` | `efa_cuda_create_qp` | `query_qp_wqs` + `gpu_qp.build` | `fi_efa_ops_gda.query_qp_wqs` | `efadv_query_qp_wqs` + `cuMemHostRegister` + `efa_cuda_create_qp` |
-| `fi_cq_export_acc` | `efa_cuda_create_cq` | `query_cq` + `gpu_cq.build` | `fi_efa_ops_gda.query_cq` | `efadv_create_cq(EXT_MEM_DMABUF)` + `efa_cuda_create_cq` |
-| `fi_acc_send` | `init_send_wr` + `set_sge` + `set_remote` + `place` + `flush` | same as efa-dp-direct | N/A (device-side) | same: `init_send_wr` + `set_sge` + `set_remote` + `place` + `flush` |
-| `fi_acc_recv` | `post_recv_wr` + `flush_rq_wrs` | N/A (no GPU recv in NCCL) | N/A (device-side) | `efa_cuda_post_recv_wr` + `efa_cuda_flush_rq_wrs` |
-| `fi_acc_write` | `init_rdma_write_wr` + ... | same as efa-dp-direct | N/A (device-side) | `efa_cuda_init_rdma_write_wr` + `set_sge` + `set_remote` + `place` + `flush` |
-| `fi_acc_read` | `init_rdma_read_wr` + ... | same as efa-dp-direct | N/A (device-side) | `efa_cuda_init_rdma_read_wr` + `set_sge` + `set_remote` + `place` + `flush` |
-| `fi_acc_cq_read` | `efa_cuda_cq_poll` + `cq_pop` | same as efa-dp-direct | N/A (device-side) | `efa_cuda_cq_poll(cq, tid)` + `efa_cuda_cq_pop(cq, batch)` |
-| `FI_ACC_WORK_GROUP` | `start_sq_batch(warp_size)` + parallel `place_wr` | `sq_lock` + batch | N/A (device-side) | `start_sq_batch(batch_size)` + `__syncthreads()` + parallel `place_wr` |
-| (missing) | N/A | `cntr_open_ext` + DMA-BUF | `fi_efa_ops_gda.cntr_open_ext` | Not used (CQ-only) |
-| (missing) | N/A | `query_addr` → (AHN, QPN, QKEY) | `fi_efa_ops_gda.query_addr` | Host resolves, passes as kernel args |
+| OFI Acc API | efa-dp-direct | NCCL GIN (actual usage) | perftest GDA |
+|------------|---------------|-------------------------|--------------|
+| `fi_acc_info.alloc` | N/A (user provides) | Host plugin: `cuMemHostRegister(IOMEMORY)` for BAR; DMA-BUF for HW counters | `ctx->memory->allocate_buffer` (DMA-BUF) + `cuMemHostRegister` (BAR) |
+| `fi_ep_export_acc` → ring geometry | `efa_cuda_create_qp(attrs)` | Host plugin: `gda_ops->query_qp_wqs()` → fills `efa_cuda_qp` → H2D copy; **Device: directly accesses `qp->sq.wq.*` fields** | `efadv_query_qp_wqs` + `cuMemHostRegister` + `efa_cuda_create_qp` |
+| `fi_acc_cntr_export` | N/A | `gda_ops->cntr_open_ext(DMA-BUF)` → `ep.local_cntr_value` pointer in GPU HBM; read via `hwCounterLoad()` (system-scope acquire) | Not used (CQ-only) |
+| `fi_acc_av_export` → (AHN,QPN,QKEY) | N/A | `gda_ops->query_addr()` → builds `target_address_handles[total_slots*nranks]`, `target_remote_qpns[]`, `target_qkey[]` | Host resolves, passes as kernel args |
+| `fi_acc_mr_export` → lkey | N/A | `gda_ops->get_mr_lkey()` → per-rail `mr_handle.lkey`; allgather for remote `(addr, rkey)` | Direct `ibv_mr->lkey` |
+| `fi_acc_write()` (high-level) | `init_rdma_write_wr` + `set_sge` + `set_remote` + `place` + `flush` | **NOT used as one call.** NCCL GIN calls WQE builders individually, then its own warp-cooperative SQ management: atomic `pc.fetch_add` → parallel 64B writes → rendezvous → deferred doorbell | Uses full batch API: `start_sq_batch` + `place_wr` + `flush_sq_wrs` |
+| `fi_acc_cq_read()` | `efa_cuda_cq_poll` + `cq_pop` | **NOT used on data path** — counter-only completion. CQ struct exists but is never polled. | `efa_cuda_cq_poll(cq, tid)` + `cq_pop(batch)` |
+| Backpressure | N/A (TODO in source) | **Dual:** (a) `chunk_next - db_rung ≤ max_batch` (EFA staging), (b) `(chunk_next - *hw_cntr) & 0x7FFFFFFF ≤ sq_size` (ring overflow) | CQ-based: `scnt - ccnt < tx_depth` |
+| Doorbell control | `flush_sq_wrs()` rings immediately | **Deferred aggregation:** `aggregate` flag → write WQEs, hand off WITHOUT ringing; later group drains all deferred WQEs with one doorbell ring, bounded by `max_batch` | `flush_sq_wrs()` after each batch (immediate) |
+| Concurrency | `FI_ACC_WORK_GROUP` scope | `cooperative_groups::labeled_partition(qp)` → dynamic warp groups; leader atomics on `pc`/`wqes_completed`/`wqes_posted`; strict slot-order rendezvous | `__syncthreads()` block sync |
+| Per-QP serialization | `fi_acc_ep_lock()/unlock()` | Fine-grained atomics: `pc` (reserve), `wqes_completed` (handoff turn), `wqes_posted` (db_rung) — encapsulated inside provider's `fi_acc_write()` | Single-thread (no contention) |
+| Counter semantics | (missing) | 2^31 wrap; offset-based reset (NIC counter is read-only); FI_WRITE = local completion, FI_REMOTE_WRITE = remote signal | Not used |
+| Multi-EP | (missing) | data + pvdata + counter_handles[N] + signal_handles[N]; different roles per endpoint | Single QP/CQ pair |
+
+### Key Correction: What "uses efa-dp-direct" Actually Means for NCCL
+
+NCCL GIN `#include`s `efa_cuda_dp_impl.cuh` but uses it **only as a WQE format library**:
+
+```c
+// USED (WQE construction helpers):
+efa_cuda_init_rdma_write_wr(&wr, id, rkey, raddr);    // opcode + remote addr
+efa_cuda_wr_set_sge(&wr, lkey, addr, len);            // local SGE
+efa_cuda_wr_set_remote(&wr, ah, qpn, qkey);           // destination tuple
+efa_cuda_wr_set_processing_hints(&wr, PPS_SENSITIVE); // NIC hint
+EFA_SET(&wr.meta.ctrl2, PHASE, phase);                // phase bit stamp
+
+// NOT USED (SQ management — NCCL has its own protocol):
+// efa_cuda_start_sq_batch()      → replaced by pc.fetch_add
+// efa_cuda_sq_batch_place_wr()   → replaced by direct 64B ring write
+// efa_cuda_flush_sq_wrs()        → replaced by custom fence + doorbell + rendezvous
+
+// NOT USED (CQ polling — NCCL uses counters):
+// efa_cuda_cq_poll()             → replaced by hwCounterLoad()
+// efa_cuda_cq_pop()              → not needed (no CQ state to advance)
+
+// NOT USED (RQ — NCCL is write-only):
+// efa_cuda_post_recv_wr()
+// efa_cuda_flush_rq_wrs()
+```
+
+### NCCL GIN's efa_cuda_qp Field Usage
+
+The `efa_cuda_qp` struct is treated as a **mutable state container** by GIN, not
+a black box. Fields directly accessed on the GPU:
+
+| Field | Access Pattern | Purpose |
+|-------|---------------|---------|
+| `sq.wq.pc` | `cuda::atomic_ref<uint32_t>.fetch_add()` | Slot reservation (monotonic) |
+| `sq.wq.buf` | Direct 64-byte writes at `buf + idx*64` | WQE placement into BAR MMIO |
+| `sq.wq.db` | `*db = target` (MMIO store) | Doorbell ring |
+| `sq.wq.queue_mask` | `slot & queue_mask` | Ring index calculation |
+| `sq.wq.queue_size_shift` | `(slot >> shift) & 1` | Phase bit computation |
+| `sq.wq.max_batch` | Comparison vs un-rung depth | EFA staging limit enforcement |
+| `sq.wq.wqes_completed` | `cuda::atomic_ref.load/store` | Rendezvous: slot-order handoff token |
+| `sq.wq.wqes_posted` | `cuda::atomic_ref.load/store` | Tracks last doorbell position (db_rung) |
+| `sq.wq.wqes_pending` | Not used (GIN tracks differently) | — |
+| `sq.wq.phase` | Not used (computed from slot) | — |

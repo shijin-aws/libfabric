@@ -370,7 +370,22 @@ Everything is encapsulated behind the portable `fi_acc_*` API, with the
 provider (libfabric EFA) shipping both host-side export functions and
 device-side inline functions.
 
+NCCL GIN today implements its own warp-cooperative SQ protocol rather than
+using efa-dp-direct's `start_sq_batch`/`place_wr`/`flush_sq_wrs`. Our
+`fi_acc_write()` encapsulates this pattern internally via `scope` + `flags`:
+- `FI_ACC_SUBGROUP` scope → warp-cooperative slot reservation + parallel posting
+- `FI_MORE` flag → deferred doorbell (aggregate requests)
+- Internal dual backpressure (max_batch staging limit + counter-based ring overflow)
+- Internal slot-order rendezvous for multi-group coordination
+- Counter-only completion (no CQ polling on data path)
+
 ### Requirements from NCCL/aws-ofi-nccl Team
+
+NCCL GIN today implements a ~200-line warp-cooperative SQ posting template
+(`postRdmaWrite<mode>`) with atomic reservation, deferred doorbells, and dual
+backpressure. All these operations are encapsulated inside our provider's
+`fi_acc_write()` inline implementation. If NCCL adopts our API, their
+`postRdmaWrite<mode>()` becomes a call to `fi_acc_write(scope, flags)`.
 
 The efa-dp-direct developers have received feedback from NVIDIA:
 
@@ -461,7 +476,7 @@ This inlines to one instruction. The consumer calls `fi_acc_cntr_read()` for:
 
 No raw pointer exposure needed.
 
-### Device-Side API (Revised — High-Level)
+### Device-Side API (High-Level)
 
 ```c
 // === Data transfer (replaces WQE construction + batch + flush) ===

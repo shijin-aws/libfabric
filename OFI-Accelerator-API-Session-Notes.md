@@ -79,6 +79,39 @@ Host setup:
 9. **Import callbacks** — provider calls `acc_info.import(host_addr, size, flags, &dev_addr)` with separate in/out params (BAR MMIO mapping)
 10. **`acc_info.alloc()`** — used for counter GPU HBM allocation (DMA-BUF + NIC direct write)
 
+## How NCCL GIN Uses efa-dp-direct
+
+Based on reading the actual upstream NCCL source (`~/upstream-to-nccl/src/include/nccl_device/gin/efa_gda/gin_efa_gda.h`):
+
+1. **NCCL uses efa-dp-direct only as a WQE-format library** — `init_rdma_write_wr`,
+   `wr_set_sge`, `wr_set_remote`, `wr_set_processing_hints`, and `EFA_SET(PHASE)`.
+
+2. **NCCL does NOT use efa-dp-direct's SQ management** (`start_sq_batch`/`place_wr`/`flush_sq_wrs`) —
+   it implements its own warp-cooperative protocol with atomic `pc.fetch_add`,
+   parallel WQE writes, strict slot-order rendezvous, and deferred doorbell aggregation.
+
+3. **No CQ polling on the data path** — completion tracked entirely via NIC hardware
+   counters (FI_WRITE), read with system-scope acquire.
+
+4. **No coarse per-QP lock** — GIN uses fine-grained atomics (`pc` for reservation,
+   `wqes_completed` for handoff, `wqes_posted` for doorbell tracking).
+
+5. **Direct `efa_cuda_qp` struct field access** — `sq.wq.pc`, `sq.wq.buf`,
+   `sq.wq.db`, `sq.wq.queue_mask`, `sq.wq.max_batch`, `sq.wq.wqes_completed`,
+   `sq.wq.wqes_posted`.
+
+### Implications for Our API
+
+NCCL's custom SQ protocol exists because efa-dp-direct's `start_sq_batch`/`flush`
+was too limiting (single-threaded, no deferred doorbells, no warp coalescing). Our
+`fi_acc_write()` encapsulates NCCL's pattern inside the provider:
+
+- Warp coalescing → provider implements via `scope = FI_ACC_SUBGROUP`
+- Deferred doorbell → provider implements via `flags = FI_MORE`
+- Dual backpressure → provider implements internally (owns counter + sq_size)
+- Slot-order rendezvous → provider manages handoff cursors internally
+- WQE construction → provider uses same efa-dp-direct primitives internally
+
 ## What's Done ✅
 
 - [x] Public API header (`fi_acc.h`) — opaque exports
@@ -106,15 +139,21 @@ Host setup:
 - [ ] **fi_acc_read()** — RDMA read opcode (0x05); same pattern as write
 - [ ] **Run on real hardware** — Test on P5en with EFA
 - [ ] **Second provider** — When CXI implements FI_ACC, split device headers properly
+- [ ] **Warp-cooperative posting** — Implement inside `fi_acc_write()` with `FI_ACC_SUBGROUP` scope + `FI_MORE` flag (matching NCCL GIN's pattern)
+- [ ] **Counter-only completion** — Ensure `fi_acc_cntr_read/wait` is the primary completion path (NCCL never polls CQ on data path)
+- [ ] **Deferred doorbells** — Add `FI_MORE` flag support; ring only when `FI_MORE` not set or max_batch reached
 
 ## Key References
 
 - Original proposal: `OFI-Accelerator-API.md` (Jianxin Xiong slides)
 - Gap analysis: `OFI-Accelerator-API-Analysis.md`
 - Our design doc: `OFI-Accelerator-API-Libfabric-Changes.md`
+- **Upstream NCCL GIN EFA-GDA (actual device code):** `~/upstream-to-nccl/src/include/nccl_device/gin/efa_gda/gin_efa_gda.h`
+- **NCCL GIN device handle struct:** `~/upstream-to-nccl/src/include/nccl_device/gin/efa_gda/gin_efa_gda_dev.h`
+- **efa-dp-direct (WQE format library):** `~/upstream-to-nccl/src/transport/net_efa_gda/efa-dp-direct/include/device/efa_cuda_dp_impl.cuh`
 - GDAKI workflow: `~/communication-libraries-notes/efa-gdaki/gdaki_workflow.md`
 - aws-ofi-nccl GDAKI: `~/PortaFiducia/build/libraries/aws_ofi_nccl/.../nccl_ofi_gin_gdaki_dev.h`
-- efa-dp-direct (what we replace): device functions in `efa_cuda_dp_impl.cuh`
+- efa-dp-direct (what we partially replace): device functions in `efa_cuda_dp_impl.cuh`
 
 ## How to Resume
 
