@@ -735,7 +735,70 @@ NCCL GIN detects errors via counter timeout (counter stops advancing).
 `fi_acc_wc_read_vendor_err()` is available for CQ-based consumers.
 Host-side health monitoring is more practical for production error recovery.
 
-### 5. Support DMA-BUF as a First-Class Memory Allocation Method
+### 5. Memory Callbacks with Libfabric-Defined Flags
+
+The `import` and `alloc` callbacks use **libfabric-defined flags** rather than
+platform-specific ones (e.g., CUDA's `CU_MEMHOSTREGISTER_IOMEMORY`). This keeps
+the provider portable across GPU runtimes — the provider expresses what it needs
+semantically, and the consumer's callback translates to platform-specific calls.
+
+#### Import Callback Flags
+
+| Flag | Meaning | CUDA equivalent | HIP equivalent |
+|------|---------|-----------------|----------------|
+| `FI_ACC_IMPORT_IOMEMORY` | Host address points to PCIe BAR MMIO (device I/O memory on the NIC) | `CU_MEMHOSTREGISTER_IOMEMORY` | `hipHostRegisterIoMemory` |
+| `FI_ACC_IMPORT_DEVICEMAP` | Make memory visible in GPU device address space | `CU_MEMHOSTREGISTER_DEVICEMAP` | `hipHostRegisterMapped` |
+
+The provider calls `import` with these flags to describe the memory type:
+
+```c
+// Provider (inside fi_acc_ep_export):
+//   SQ buffer is BAR MMIO → needs both flags
+acc_info->import(device, sq_host_va, sq_size,
+                 FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
+                 &sq_dev_ptr);
+
+//   RQ buffer is regular host memory → only DEVICEMAP
+acc_info->import(device, rq_host_va, rq_size,
+                 FI_ACC_IMPORT_DEVICEMAP,
+                 &rq_dev_ptr);
+```
+
+The consumer's callback translates:
+
+```c
+int my_import(uint64_t device, void *host_addr,
+              uint64_t size, uint64_t flags, void **dev_addr)
+{
+    unsigned int cuda_flags = 0;
+    if (flags & FI_ACC_IMPORT_IOMEMORY)
+        cuda_flags |= CU_MEMHOSTREGISTER_IOMEMORY;
+    if (flags & FI_ACC_IMPORT_DEVICEMAP)
+        cuda_flags |= CU_MEMHOSTREGISTER_DEVICEMAP;
+
+    cuMemHostRegister(host_addr, size, cuda_flags);
+    CUdeviceptr ptr;
+    cuMemHostGetDevicePointer(&ptr, host_addr, 0);
+    *dev_addr = (void *)ptr;
+    return 0;
+}
+```
+
+#### Alloc Callback Flags
+
+| Flag | Meaning |
+|------|---------|
+| `FI_ACC_ALLOC_GPU_HBM` | Allocate in GPU high-bandwidth memory; return DMA-BUF fd for NIC access |
+
+```c
+// Provider (inside fi_cntr_open with FI_ACC):
+acc_info->alloc(device, 8, 8, FI_ACC_ALLOC_GPU_HBM,
+                &gpu_ptr, &dmabuf_fd, &offset);
+// Provider passes dmabuf_fd to NIC driver (efadv_create_comp_cntr)
+// GPU kernel reads *gpu_ptr directly
+```
+
+#### Memory Type Enum
 
 ```c
 enum fi_acc_mem_type {
@@ -745,7 +808,11 @@ enum fi_acc_mem_type {
 };
 ```
 
-**Why:** HW counters use DMA-BUF (NIC writes to GPU HBM). SQ/doorbell use BAR MMIO mapping. The API needs both.
+**Why libfabric flags instead of passing CUDA flags directly:**
+- Provider code never links CUDA/HIP/Level Zero — it's built with gcc
+- A HIP consumer translates `FI_ACC_IMPORT_IOMEMORY` → `hipHostRegisterIoMemory`
+- A Level Zero consumer translates differently (`zeMemOpenIpcHandle` or `zexDriverImportExternalPointer`)
+- The provider expresses *what* (BAR MMIO vs host RAM) — the consumer expresses *how*
 
 ### 6. Address Resolution Export
 
