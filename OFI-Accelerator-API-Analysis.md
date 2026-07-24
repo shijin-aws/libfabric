@@ -577,17 +577,30 @@ int my_import(uint64_t device, void *host_addr,
 
 #### Alloc Callback Flags
 
-| Flag | Meaning |
-|------|---------|
-| `FI_ACC_ALLOC_GPU_HBM` | Allocate in GPU high-bandwidth memory; return DMA-BUF fd for NIC access |
+| Flag | Meaning | DMA-BUF fd required? |
+|------|---------|---------------------|
+| `FI_ACC_ALLOC_NIC_ACCESS` | Allocate GPU memory the NIC will DMA into; consumer must export a DMA-BUF fd | Yes — provider passes fd to NIC driver |
+| (none) | Allocate plain GPU memory (device blobs, peer tables, MR descriptors); only H2D copied and kernel-read | No — consumer may return fd = -1 |
 
 ```c
-// Provider (inside fi_cntr_open with FI_ACC):
-acc_info->alloc(device, 8, 8, FI_ACC_ALLOC_GPU_HBM,
+// Case 1: NIC-accessed memory (HW counter, GPU-resident CQ buffer):
+acc_info->alloc(device, 8, 8, FI_ACC_ALLOC_NIC_ACCESS,
                 &gpu_ptr, &dmabuf_fd, &offset);
 // Provider passes dmabuf_fd to NIC driver (efadv_create_comp_cntr)
 // GPU kernel reads *gpu_ptr directly
+
+// Case 2: Plain GPU memory (opaque EP blob, AV peer table, MR descriptor):
+acc_info->alloc(device, sizeof(fi_acc_dev_ep), 8, 0,
+                &gpu_ptr, &dmabuf_fd, &offset);
+// Consumer can just cudaMalloc; fd stays -1, provider ignores it
+// Provider H2D copies the built struct to gpu_ptr
 ```
+
+**Why distinguish:** Exporting a DMA-BUF fd (`cuMemGetDmaBufFd`) has real cost
+and constraints — memory must be allocated with RDMA-capable properties (e.g.,
+CUDA VMM with `gpuDirectRDMACapable`). The blobs from `fi_acc_ep_export`,
+`fi_acc_av_export`, and `fi_acc_mr_export` never need NIC access, so a plain
+`cudaMalloc` suffices. The flag lets the consumer pick the cheap path.
 
 #### Memory Type Enum
 
