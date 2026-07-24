@@ -587,75 +587,120 @@ The API must also document:
 - Counter wraps at 2^31 (EFA-specific but needs a generic way to query)
 - Counter is NIC-owned; software cannot write it (offset-based reset only)
 
-### 3. Encapsulate Warp-Cooperative Posting Inside the API
+### 3. Device-Side API
 
-NCCL GIN's posting protocol is sophisticated but ultimately does:
-1. Reserve SQ slots (atomic `pc.fetch_add`)
-2. Construct WQE (using efa-dp-direct format helpers)
-3. Write WQE to ring buffer slot
-4. Fence + doorbell (possibly deferred)
-5. Advance completion tracking
+The device-side API encapsulates NCCL GIN's warp-cooperative posting protocol
+inside provider-inlined functions. The consumer calls high-level operations;
+the provider implements reservation, WQE construction, backpressure, doorbell
+control, and completion internally.
 
-All of this CAN live inside `fi_acc_write()`. The challenge is making it
-**performant** when called from warp-cooperative code:
+#### Operations
 
-| NCCL GIN pattern | How `fi_acc_write()` handles it |
+```c
+// === Data transfer ===
+int fi_acc_write(void *acc_ep, const void *buf, size_t len, void *desc,
+                 uint64_t raddr, uint32_t rkey, void *acc_peer,
+                 enum fi_acc_scope scope, uint64_t flags);
+
+int fi_acc_send(void *acc_ep, const void *buf, size_t len, void *desc,
+                void *acc_peer, enum fi_acc_scope scope, uint64_t flags);
+
+int fi_acc_read(void *acc_ep, void *buf, size_t len, void *desc,
+                uint64_t raddr, uint32_t rkey, void *acc_peer,
+                enum fi_acc_scope scope, uint64_t flags);
+
+// === Counter (primary completion mechanism) ===
+uint64_t fi_acc_cntr_read(void *acc_cntr);
+void     fi_acc_cntr_wait(void *acc_cntr, uint64_t target);
+
+// === CQ (for consumers that need per-operation completion) ===
+void    *fi_acc_cq_poll(void *acc_cq, uint32_t position);
+void     fi_acc_cq_pop(void *acc_cq, uint32_t amount);
+
+// === Receive posting (for send/recv and write+IMM patterns) ===
+int      fi_acc_post_recv(void *acc_ep, void *buf, size_t len, void *desc);
+void     fi_acc_flush_recv(void *acc_ep);
+
+// === Serialization (multi-CTA on same EP) ===
+void     fi_acc_ep_lock(void *acc_ep);
+void     fi_acc_ep_unlock(void *acc_ep);
+
+// === Error detection ===
+uint32_t fi_acc_wc_read_vendor_err(void *cqe);
+```
+
+#### Scope Parameter
+
+| Scope | CUDA | SYCL | Behavior |
+|-------|------|------|----------|
+| `FI_ACC_WORK_ITEM` | Single thread | Work item | One slot reserved, one WQE posted, doorbell immediate |
+| `FI_ACC_SUBGROUP` | Warp | Subgroup | Provider coalesces: leader reserves N slots atomically, all lanes write WQEs in parallel, leader rings one doorbell |
+| `FI_ACC_WORK_GROUP` | Thread block | Work group | Same as subgroup but at block scope |
+
+#### Flags
+
+| Flag | Effect |
+|------|--------|
+| `FI_MORE` | Defer doorbell — provider writes WQE but does not ring until a subsequent call without `FI_MORE` (or max_batch reached) |
+| (none) | Ring doorbell immediately after this WQE batch |
+
+#### How NCCL GIN's Pattern Maps to the API
+
+| NCCL GIN does manually | `fi_acc_write()` encapsulates via |
 |---|---|
-| `cooperative_groups::labeled_partition(qp)` | Provider implements warp coalescing internally based on `scope` parameter |
-| Leader `pc.fetch_add(group_size)` | When `scope == FI_ACC_SUBGROUP`, provider coalesces and does one atomic per warp |
-| Parallel WQE write (all lanes) | Each lane's `fi_acc_write()` call writes its own slot |
-| Deferred doorbell | `FI_MORE` flag or `ncclGinOptFlagsAggregateRequests` equivalent |
-| Dual backpressure | Provider checks internally before posting |
-| Strict slot-order rendezvous | Provider manages handoff cursor internally |
+| `cooperative_groups::labeled_partition(qp)` | `scope = FI_ACC_SUBGROUP` — provider detects warp coalescing |
+| Leader `pc.fetch_add(group_size)` | Provider does one atomic per subgroup internally |
+| Parallel WQE write (all lanes) | Each lane's `fi_acc_write()` writes its own slot in parallel |
+| Deferred doorbell (`aggregate` flag) | `flags = FI_MORE` |
+| Un-rung depth backpressure (≤ max_batch) | Provider enforces internally — spins or force-rings deferred WQEs |
+| Ring overflow backpressure (≤ sq_size via hw counter) | Provider enforces internally — spins on counter |
+| Strict slot-order rendezvous (`wqes_completed`) | Provider manages handoff cursors internally |
+| Phase bit computation | Provider computes from slot index internally |
+| 64-byte WQE write to BAR MMIO | Provider does the memcpy internally |
+| `__threadfence_system()` + doorbell MMIO write | Provider does fence + MMIO internally |
+| `submitted_count += (chunk_next - db_rung)` | Provider tracks internally for flush |
 
-**The scope parameter + flags give the provider enough information** to implement
-the same optimizations NCCL currently does manually:
+#### Backpressure (Internal to Provider)
+
+NCCL GIN has two independent checks, both inside `fi_acc_write()`:
 
 ```c
-// Consumer code (equivalent to what NCCL would call):
+// (a) Un-rung depth (EFA staging limit):
+//     chunk_next - db_rung ≤ max_batch
+//     If exceeded: force-ring deferred WQEs to make room
+
+// (b) Ring overflow (SQ overrun):
+//     (chunk_next - *hw_cntr) & 0x7FFFFFFF ≤ sq_size
+//     Spin until NIC consumes enough WQEs
+```
+
+The consumer never sees `sq_size`, `submitted_count`, or `max_batch`. The
+provider owns all the state. The consumer observes backpressure only as
+`fi_acc_write()` spinning when the SQ is full.
+
+#### Error Handling
+
+NCCL GIN does not poll CQ on the data path, so device-side error detection is
+limited to counter-based timeout (counter stops advancing). `fi_acc_wc_read_vendor_err()`
+is available for consumers that do poll CQ (e.g., perftest). Host-side health
+monitoring is more practical for production error recovery.
+
+#### Example
+
+```c
+// Consumer's GPU kernel — replaces NCCL GIN's 200-line postRdmaWrite<mode>():
 fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer,
-             FI_ACC_SUBGROUP,    /* warp-cooperative */
-             FI_MORE);           /* defer doorbell */
+             FI_ACC_SUBGROUP, FI_MORE);
 
-// Provider internally:
-//   - Detects warp coalescing opportunity from scope
-//   - Leader reserves slots for entire subgroup
-//   - Each thread writes its WQE
-//   - Defers doorbell due to FI_MORE
-//   - Backpressure handled transparently
+// Provider internally does:
+//   1. Detect subgroup → coalesce lanes targeting same EP
+//   2. Leader: atomic reserve N slots
+//   3. All lanes: build WQE, compute phase, write 64B to ring
+//   4. FI_MORE → defer doorbell (or force-ring if max_batch reached)
+//   5. Leader: fence, advance cursors, hand off in slot order
 ```
 
-**Key design requirement:** The `fi_acc_write()` implementation must support:
-- `FI_MORE` flag (defer doorbell — don't ring until next call without FI_MORE)
-- `FI_ACC_SUBGROUP` scope (warp-cooperative posting — coalesce reservation)
-- Internal SQ backpressure (counter-based, no consumer involvement)
-- Internal doorbell aggregation (bounded by max_batch)
-
-### 4. SQ Backpressure — Internal to the Provider
-
-NCCL GIN has TWO independent backpressure checks, both of which the provider
-should implement internally:
-
-```c
-// (a) Un-rung depth (prevents exceeding EFA staging limit):
-while (chunk_next - dbrung_ref.load(acquire) > max_batch) {
-    // If we hold the turn, ring deferred WQEs to make room
-}
-
-// (b) Ring overflow (prevents SQ overrun):
-while (((chunk_next - (uint32_t)hwCounterLoad(local_cntr)) & EFA_CNTR_MASK) > sq_size) {
-    // spin
-}
-```
-
-**These live INSIDE `fi_acc_write()`** — the consumer never sees `sq_size`,
-`submitted_count`, or `max_batch`. The provider has all the information needed
-(it created the QP, knows the ring depth, owns the counter pointer).
-
-The consumer observes backpressure only as `fi_acc_write()` spinning/blocking
-when the SQ is full — which is the correct abstraction.
-
-### 5. Support DMA-BUF as a First-Class Memory Allocation Method
+### 4. Support DMA-BUF as a First-Class Memory Allocation Method
 
 ```c
 enum fi_acc_mem_type {
@@ -667,7 +712,7 @@ enum fi_acc_mem_type {
 
 **Why:** HW counters use DMA-BUF (NIC writes to GPU HBM). SQ/doorbell use BAR MMIO mapping. The API needs both.
 
-### 6. Address Resolution Export
+### 5. Address Resolution Export
 
 ```c
 struct fi_acc_peer_addr {
@@ -686,7 +731,7 @@ int fi_av_export_acc_batch(struct fid_av *av, fi_addr_t *addrs, int count,
 
 **Why:** NCCL GIN builds `[total_slots × nranks]` target tables with per-slot (ahn, qpn, qkey) tuples. The GPU kernel indexes this table to select the remote target per write.
 
-### 7. The Abstraction Level Decision
+### 6. The Abstraction Level Decision
 
 NCCL GIN's warp-cooperative protocol is sophisticated, but its underlying
 operations (reserve slots, write WQE, fence, ring doorbell, check counter)
@@ -697,16 +742,7 @@ the same optimizations.
 The key insight: **NCCL's custom protocol exists because efa-dp-direct's
 `start_sq_batch`/`place_wr`/`flush_sq_wrs` was too limiting** (single-threaded,
 no deferred doorbells, no warp coalescing). Our API can do better by providing
-a higher-level call that INTERNALLY implements the advanced protocol:
-
-| NCCL GIN does manually | Our API provides via |
-|---|---|
-| Warp coalescing (`labeled_partition`) | `scope = FI_ACC_SUBGROUP` |
-| Deferred doorbell (`aggregate` flag) | `flags = FI_MORE` |
-| Counter-based backpressure | Provider-internal (owns counter + sq_size) |
-| Slot-order rendezvous | Provider-internal (manages handoff cursors) |
-| Phase bit computation | Provider-internal |
-| 64-byte WQE write to BAR | Provider-internal |
+a higher-level call that INTERNALLY implements the advanced protocol.
 
 **Architecture:**
 
@@ -718,29 +754,23 @@ Layer 0 (Host-side export — both NCCL and simple consumers need this):
     fi_acc_mr_export() → lkey
 
 Layer 1 (Device-side operations — provider encapsulates the hard stuff):
-    fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer, scope, flags)
-    fi_acc_cntr_read(acc_cntr) / fi_acc_cntr_wait(acc_cntr, target)
-    fi_acc_ep_lock() / fi_acc_ep_unlock()   [multi-CTA serialization]
+    fi_acc_write / fi_acc_send / fi_acc_read
+    fi_acc_cntr_read / fi_acc_cntr_wait
+    fi_acc_cq_poll / fi_acc_cq_pop
+    fi_acc_post_recv / fi_acc_flush_recv
+    fi_acc_ep_lock / fi_acc_ep_unlock
 
-    The provider's fi_acc_write() INTERNALLY implements:
-      - Warp-cooperative slot reservation (when scope = SUBGROUP)
-      - WQE construction (format-specific, inlined)
-      - Doorbell deferral (when flags & FI_MORE)
-      - Dual backpressure (max_batch staging + counter-based overflow)
-      - Slot-order rendezvous for multi-group coordination
+Layer 2 (Optional raw export — for custom posting protocols):
+    Returns fi_acc_ep_attrs directly to consumer
+    Consumer builds own device struct and implements own SQ management
+    Maximum control, provider-specific
 ```
 
-**Why this works for NCCL:** If NCCL adopts our API, it replaces its 200-line
-`postRdmaWrite<mode>()` template with calls to `fi_acc_write()`. The provider's
-inlined implementation does the same work — warp coalescing, atomic reservation,
-parallel WQE writes, deferred doorbells — but the complexity lives in the
-provider header rather than the consumer.
+**Layer 2 is NOT required for NCCL-level performance** — Layer 1's `fi_acc_write()`
+with `scope` + `FI_MORE` achieves the same throughput. Layer 2 exists as a future
+escape hatch for consumers with requirements beyond what scope+flags can express.
 
-**Layer 2 (Optional raw export) remains available** for consumers who need
-absolute maximum control or provider-specific optimizations that the generic
-API cannot express. But it's NOT required for NCCL-level performance.
-
-### 8. Multi-Rail Support
+### 7. Multi-Rail Support
 
 ```c
 /* Per-rail: open separate domain/EP per rail, export each independently.
@@ -751,18 +781,7 @@ NCCL GIN's pattern: `rail_id` is baked into the device handle at createContext t
 Each rail has its own domain → endpoint → QP/CQ/counter chain. The API doesn't need
 explicit multi-rail — it works by creating N independent EP/CQ/counter sets.
 
-### 9. Error Handling on Device
-
-```c
-/* CQ-based error detection (for consumers using CQ) */
-uint32_t fi_acc_wc_read_vendor_err(void *cqe);
-```
-
-NCCL GIN does not poll CQ on the data path, so device-side error detection is
-limited to counter-based timeout (counter stops advancing). Host-side health
-monitoring is more practical for production.
-
-### 10. Version/Compatibility Negotiation
+### 8. Version/Compatibility Negotiation
 
 The provider's device-side structs are compiled into the consumer's binary via
 inlined `.cuh` headers. If the provider upgrades and changes struct layout, old
