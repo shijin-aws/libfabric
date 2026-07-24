@@ -566,7 +566,7 @@ enum fi_acc_mem_type {
 `FI_ACC_MEM_USER` is the primary mode: the provider stays GPU-runtime-agnostic
 and the consumer's callbacks translate to CUDA/HIP/Level Zero calls. DMA-BUF is
 not a separate mode — it flows through the `alloc` callback (the consumer exports
-the fd when `FI_ACC_ALLOC_NIC_ACCESS` is set).
+the fd when `FI_ACC_ALLOC_DMABUF` is set).
 
 #### Callback Flags — Libfabric-Defined, Not Platform-Specific
 
@@ -617,14 +617,14 @@ int my_import(uint64_t device, void *host_addr,
 
 **Alloc flags** (allocate fresh GPU memory):
 
-| Flag | Meaning | DMA-BUF fd required? |
-|------|---------|---------------------|
-| `FI_ACC_ALLOC_NIC_ACCESS` | Allocate GPU memory the NIC will DMA into; consumer must export a DMA-BUF fd | Yes — provider passes fd to NIC driver |
-| (none) | Allocate plain GPU memory (device blobs, peer tables, MR descriptors); only H2D copied and kernel-read | No — consumer may return fd = -1 |
+| Flag | Meaning |
+|------|---------|
+| `FI_ACC_ALLOC_DMABUF` | Consumer must export a DMA-BUF fd for the allocation (provider will pass the fd to the NIC driver for direct DMA access) |
+| (none) | Plain GPU memory — no fd needed, consumer may return fd = -1 |
 
 ```c
-// Case 1: NIC-accessed memory (HW counter, GPU-resident CQ buffer):
-acc_info->alloc(device, 8, 8, FI_ACC_ALLOC_NIC_ACCESS,
+// Case 1: DMA-BUF needed (HW counter, GPU-resident CQ buffer — NIC DMAs into it):
+acc_info->alloc(device, 8, 8, FI_ACC_ALLOC_DMABUF,
                 &gpu_ptr, &dmabuf_fd, &offset);
 // Provider passes dmabuf_fd to NIC driver (efadv_create_comp_cntr)
 // GPU kernel reads *gpu_ptr directly
@@ -636,7 +636,7 @@ acc_info->alloc(device, sizeof(fi_acc_dev_ep), 8, 0,
 // Provider H2D copies the built struct to gpu_ptr
 ```
 
-**Why distinguish NIC-access from plain:** Exporting a DMA-BUF fd
+**Why distinguish:** Exporting a DMA-BUF fd
 (`cuMemGetDmaBufFd`) has real cost and constraints — memory must be allocated
 with RDMA-capable properties (e.g., CUDA VMM with `gpuDirectRDMACapable`). The
 blobs from `fi_acc_ep_export`, `fi_acc_av_export`, and `fi_acc_mr_export` never

@@ -319,7 +319,7 @@ production concerns unaddressed. Our implementation fills these gaps:
 | No MR key export | `fi_acc_mr_export()` + `fi_acc_mr_get_info()` |
 | No GPU-side recv posting | `fi_acc_dev_post_recv()` + `fi_acc_dev_rq_flush()` |
 | No multi-CTA serialization | `fi_acc_dev_lock()` / `fi_acc_dev_unlock()` |
-| No DMA-BUF first-class support | `FI_ACC_IMPORT_IOMEMORY` / `FI_ACC_ALLOC_GPU_HBM` flags |
+| No DMA-BUF first-class support | `FI_ACC_IMPORT_IOMEMORY` / `FI_ACC_ALLOC_DMABUF` flags |
 | No position-based CQ polling | `fi_acc_dev_cq_poll(cq, position)` — thread N polls slot N |
 
 After analyzing the aws-ofi-nccl `nccl_ofi_gin_gdaki_resources.h` and

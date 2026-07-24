@@ -92,7 +92,7 @@ descriptor, which the provider passes to the NIC driver.
 | `device` | in | GPU device ordinal |
 | `size` | in | Requested size in bytes |
 | `alignment` | in | Required alignment (0 = default) |
-| `flags` | in | `FI_ACC_ALLOC_GPU_HBM` |
+| `flags` | in | `FI_ACC_ALLOC_DMABUF` |
 | `addr` | out | GPU device pointer to the allocated memory |
 | `fd` | out | DMA-BUF file descriptor (provider gives this to NIC) |
 | `offset` | out | Offset within the DMA-BUF |
@@ -145,7 +145,7 @@ fi_cntr_open(domain, attr={flags=FI_ACC, acc_info=&ai}, &cntr):
 
   Provider internally:
     ┌─────────────────────────────────────────────────────────┐
-    │ 1. ai->alloc(device, 8, 8, FI_ACC_ALLOC_GPU_HBM,       │
+    │ 1. ai->alloc(device, 8, 8, FI_ACC_ALLOC_DMABUF,       │
     │              &gpu_ptr, &fd, &offset)                    │
     │                                                         │
     │    Consumer does:                                        │
