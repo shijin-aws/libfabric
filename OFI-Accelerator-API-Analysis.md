@@ -764,13 +764,99 @@ monitoring is more practical for production.
 
 ### 10. Version/Compatibility Negotiation
 
+The provider's device-side structs are compiled into the consumer's binary via
+inlined `.cuh` headers. If the provider upgrades and changes struct layout, old
+consumer binaries break. This requires a multi-level compatibility mechanism:
+
+#### Level 1: `fi_getinfo` — Runtime Version Discovery
+
+The consumer discovers the provider's accelerator API version at runtime:
+
 ```c
-/* efa-dp-direct uses comp_mask + is_compatible() checks */
-struct fi_acc_ep_attrs {
-    uint64_t comp_mask;  /* Forward compatibility */
-    ...
+hints->caps |= FI_ACC;
+fi_getinfo(FI_VERSION(2,0), node, service, flags, hints, &info);
+
+// Provider reports its accelerator API version:
+info->acc_api_version = FI_ACC_VERSION(1, 0);  // major.minor
+```
+
+A consumer compiled against v1.1 headers can check `info->acc_api_version` and
+avoid calling v1.1 functions if the provider only supports v1.0.
+
+#### Level 2: Host-Side Attrs — `comp_mask` for Extensibility
+
+Exported attribute structs use `comp_mask` to indicate which optional fields are valid:
+
+```c
+struct fi_acc_ep_attr {
+    uint64_t comp_mask;          // bits indicate which optional fields are valid
+    struct fi_acc_wq_attr sq;    // always present (v1.0)
+    struct fi_acc_wq_attr rq;    // always present (v1.0)
+    uint32_t max_inline_data;    // always present (v1.0)
+    uint32_t max_rdma_sges;      // always present (v1.0)
+    // --- v1.1 additions (always at the end) ---
+    uint32_t max_atomic_size;    // valid only if comp_mask & FI_ACC_EP_ATTR_ATOMIC
+};
+
+#define FI_ACC_EP_ATTR_ATOMIC      (1ULL << 0)
+```
+
+A v1.0 consumer ignores unknown bits. A v1.1 consumer checks `comp_mask`
+before reading extension fields. A v1.0 provider leaves extension bits unset.
+
+#### Level 3: Device-Side Structs — `comp_mask` for Inlined Code
+
+The critical level. The `.cuh` header defines the struct that both the provider
+(filling it on host) and the consumer's GPU kernel (reading it) share:
+
+```c
+struct fi_acc_dev_ep {
+    uint64_t comp_mask;
+    // v1.0 fields (always present):
+    struct { uint8_t *buf; uint32_t *db; uint32_t pc; ... } sq;
+    uint64_t submitted_count;
+    volatile uint64_t *local_cntr;
+    uint32_t sq_size;
+    // --- v1.1 additions (at the end) ---
+    uint32_t new_feature_field;  // only if comp_mask & FI_ACC_DEV_EP_V1_1
 };
 ```
+
+The provider's `fi_acc_ep_export()` zeroes the struct, fills known fields, sets
+`comp_mask` bits for features it populated, then H2D copies to GPU memory.
+
+The device-side `fi_acc_write()` checks `comp_mask` only for optional paths:
+
+```cuda
+FI_ACC_DEV static inline int fi_acc_write(void *acc_ep, ...) {
+    struct fi_acc_dev_ep *ep = (struct fi_acc_dev_ep *)acc_ep;
+    // v1.0 path — always safe:
+    uint32_t slot = atomicAdd(&ep->sq.pc, 1);
+    // ... write WQE, doorbell, backpressure ...
+
+    // v1.1 optional behavior:
+    if (ep->comp_mask & FI_ACC_DEV_EP_V1_1) {
+        // use new_feature_field
+    }
+}
+```
+
+#### Compatibility Matrix
+
+| Provider version | Consumer headers | Behavior |
+|---|---|---|
+| v1.0 | v1.0 | Normal operation |
+| v1.1 | v1.0 | Works — consumer ignores v1.1 fields (at end of struct, never accessed) |
+| v1.0 | v1.1 | Works — consumer checks `comp_mask & V1_1` → false, skips v1.1 path |
+| v1.1 | v1.1 | Full v1.1 features active |
+
+#### Rules
+
+1. New fields always go at the **end** of structs — never reorder existing fields
+2. New fields always guarded by a new `comp_mask` bit
+3. Provider **zeroes the entire struct** before filling (unknown fields are 0)
+4. `acc_ep_size` output from export tells consumer the actual blob size
+5. Major version bump (breaking change) → consumer must recompile
 
 ---
 
@@ -789,7 +875,7 @@ struct fi_acc_ep_attrs {
 | **P2** | CQ export + polling API | perftest uses CQ; NCCL does not but other consumers may |
 | **P2** | GPU-side recv posting | perftest uses it; NCCL does not |
 | **P2** | Raw ring export (Layer 2) | For consumers with custom protocols beyond what scope+flags express |
-| **P3** | Version/comp_mask negotiation | Forward compatibility |
+| **P0** | Version/comp_mask in all exported structs | Forward compatibility — must be baked in from day one; impossible to retrofit once binaries ship |
 
 ### Validation Coverage from perftest
 
