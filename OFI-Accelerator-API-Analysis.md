@@ -682,7 +682,7 @@ The consumer only ever does:
 void *acc_ep;
 fi_ep_export_acc(ep, 0, &acc_ep, &size);
 // ... pass acc_ep to GPU kernel ...
-fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer, scope, flags);
+fi_acc_write(acc_ep, buf, desc, size, 0, peer, raddr, rkey, NULL, scope, flags);
 ```
 
 #### 2b. Counter Export
@@ -703,11 +703,11 @@ int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
 
 The consumer never distinguishes comp vs err memory — both live behind the
 single opaque handle. The device-side API exposes them as separate reads
-(`fi_acc_cntr_read()` for the completion value, `fi_acc_cntr_read_err()` for
+(`fi_acc_cntr_read()` for the completion value, `fi_acc_cntr_readerr()` for
 the error value — mirroring host-side `fi_cntr_read()` / `fi_cntr_readerr()`);
 the provider resolves each to the right offset internally.
 On hardware without a device-visible error counter, the provider sizes the
-allocation for comp only and `fi_acc_cntr_read_err()` degrades gracefully
+allocation for comp only and `fi_acc_cntr_readerr()` degrades gracefully
 (returns 0 or a comp_mask bit indicates its absence).
 
 **Counter semantics** (counters are THE completion mechanism in NCCL GIN — not CQ polling):
@@ -806,7 +806,7 @@ size_t peer_stride = peers_size / nranks;   // per-entry stride
 // Device side — select peer i and MR j:
 void *peer = (char *)acc_peers + i * peer_stride;
 void *desc = (char *)acc_descs + j * desc_stride;
-fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer, scope, flags);
+fi_acc_write(acc_ep, buf, desc, size, 0, peer, raddr, rkey, NULL, scope, flags);
 ```
 
 ### 3. Device-Side Post API
@@ -817,25 +817,34 @@ on SQ submission; `FI_MORE` controls doorbell deferral.
 
 #### Functions
 
+The proposal (slides, 4/21/2026) defines the full accelerator-side surface:
+
 ```c
-int fi_acc_write(void *acc_ep, const void *buf, size_t len, void *desc,
-                 uint64_t raddr, uint32_t rkey, void *acc_peer,
-                 enum fi_acc_scope scope, uint64_t flags);
-
-int fi_acc_send(void *acc_ep, const void *buf, size_t len, void *desc,
-                void *acc_peer, enum fi_acc_scope scope, uint64_t flags);
-
-int fi_acc_read(void *acc_ep, void *buf, size_t len, void *desc,
-                uint64_t raddr, uint32_t rkey, void *acc_peer,
-                enum fi_acc_scope scope, uint64_t flags);
-
-// Receive posting (for send/recv and write+IMM patterns)
-int fi_acc_recv(void *acc_ep, void *buf, size_t len, void *desc,
-                enum fi_acc_scope scope, uint64_t flags);
+fi_acc_send(acc_ep, buf, size, desc, data, peer, ctxt, scope, flags)
+fi_acc_recv(acc_ep, buf, desc, size, peer, ctxt, scope, flags)
+fi_acc_tsend(acc_ep, buf, size, desc, data, peer, tag, ctxt, scope, flags)
+fi_acc_trecv(acc_ep, buf, size, desc, peer, tag, ignore, ctxt, scope, flags)
+fi_acc_write(acc_ep, buf, desc, size, data, peer, raddr, rkey, ctxt, scope, flags)
+fi_acc_read(acc_ep, buf, desc, size, peer, raddr, rkey, ctxt, scope, flags)
+fi_acc_atomic(acc_ep, …, scope, flags)
+fi_acc_fetch_atomic(acc_ep, …, scope, flags)
+fi_acc_compare_atomic(acc_ep, …, scope, flags)
+fi_acc_flush(acc_ep)
 ```
 
-`FI_MORE` works the same for both TX and RX — defer the doorbell ring until a
-call without `FI_MORE` (or max_batch reached). No separate flush API needed.
+Notes against production usage:
+- **`fi_acc_write` covers the NCCL GIN data path** — the only post operation
+  GIN uses. `data` maps to write-with-imm (perftest validates it); `ctxt` is
+  the per-op context for CQ-based consumers (counter-only consumers pass NULL).
+- **`fi_acc_flush(acc_ep)` is the TX doorbell drain** — rings the doorbell
+  for all written-but-deferred (`FI_MORE`) WQEs. It does NOT wait for
+  completion; see section 4 for the consumer-owned completion pattern.
+- **`fi_acc_tsend`/`fi_acc_trecv`/atomics** — no current GDA consumer
+  (NCCL GIN is write-only; perftest covers send/recv/write/read). EFA has no
+  device-side tag matching or native atomics, so these would be unsupported
+  (or emulated) there; portability across providers TBD.
+- **`fi_acc_recv`** — validated by perftest (GPU-side RQ posting for
+  send/recv and write+imm patterns).
 
 #### Scope Parameter
 
@@ -852,8 +861,12 @@ uses this to coalesce SQ slot reservation and amortize doorbells.
 
 | Flag | Effect |
 |------|--------|
-| `FI_MORE` | Defer doorbell — provider writes WQE but does not ring until a subsequent call without `FI_MORE` (or max_batch reached) |
+| `FI_MORE` | Defer doorbell — provider writes WQE but does not ring until a subsequent call without `FI_MORE`, a `fi_acc_flush()`, or max_batch reached |
 | (none) | Ring doorbell immediately after this WQE batch |
+
+`FI_MORE` works the same for both TX and RX. Provider-specific op flags (bits
+60–63, e.g., EFA's `FI_EFA_WR_HIGH_PPS`) pass through unchanged, exactly as
+they do for host-side calls like `fi_writemsg()`.
 
 #### How NCCL GIN's Pattern Maps to the Post API
 
@@ -893,7 +906,7 @@ provider owns all the state. The consumer observes backpressure only as
 
 ```c
 // Consumer's GPU kernel — replaces NCCL GIN's 200-line postRdmaWrite<mode>():
-fi_acc_write(acc_ep, buf, len, desc, raddr, rkey, peer,
+fi_acc_write(acc_ep, buf, desc, size, 0, peer, raddr, rkey, NULL,
              FI_ACC_SUBGROUP, FI_MORE);
 
 // Provider internally does:
@@ -913,30 +926,62 @@ are simple reads/waits.
 
 #### Functions
 
+The proposal defines:
+
+```c
+fi_acc_cq_read(acc_cq, …)
+fi_acc_cntr_read(acc_cntr, …)
+fi_acc_cntr_readerr(acc_cntr, …)
+```
+
+Elaborated:
+
 ```c
 // Counter — primary completion mechanism (NCCL GIN path)
 uint64_t fi_acc_cntr_read(void *acc_cntr);
 void     fi_acc_cntr_wait(void *acc_cntr, uint64_t target);
 
-// Error counter — device-visible error detection (if HW supports it,
-// e.g., EFA's err_cntr_ext_mem; resolves to the err pointer inside the
-// same opaque handle)
-uint64_t fi_acc_cntr_read_err(void *acc_cntr);
+// Error counter — device-visible error detection, mirrors host-side
+// fi_cntr_readerr(). Resolves to the err counter inside the same opaque
+// handle (e.g., EFA's err_cntr_ext_mem — same DMA-BUF, distinct offset)
+uint64_t fi_acc_cntr_readerr(void *acc_cntr);
 
 // CQ — per-operation completion (perftest path)
-void    *fi_acc_cq_poll(void *acc_cq, uint32_t position);
-void     fi_acc_cq_pop(void *acc_cq, uint32_t amount);
+void    *fi_acc_cq_read(void *acc_cq, uint32_t position);  // poll one entry
+void     fi_acc_cq_pop(void *acc_cq, uint32_t amount);     // advance consumer
 
 // Error detection (for CQ consumers)
 uint32_t fi_acc_wc_read_vendor_err(void *cqe);
 ```
+
+#### Completion Drain: fi_acc_flush + Consumer-Owned Baseline
+
+`fi_acc_flush(acc_ep)` (section 3) only rings the doorbell for deferred WQEs —
+it does not wait. Full completion drain (GIN's Flush) is the consumer-owned
+baseline pattern; no provider-internal state needs exposing:
+
+```c
+uint64_t base = fi_acc_cntr_read(acc_cntr);   // baseline snapshot
+// ... N posts (consumer counts N — it makes the calls) ...
+fi_acc_flush(acc_ep);                          // ring db for deferred WQEs
+fi_acc_cntr_wait(acc_cntr, base + N);          // modular compare internally
+```
+
+Contract requirements:
+1. **1:1 tick** — each posted op increments the bound FI_WRITE counter by
+   exactly 1 (normative; true on EFA)
+2. **Flush before wait** — a `FI_MORE`-deferred WQE never completes until a
+   doorbell covers it
+3. **Multi-poster tally** — for an EP-wide quiet across threads/CTAs, the
+   consumer aggregates its own N
 
 #### Counter Completion (NCCL GIN Pattern)
 
 NCCL GIN uses counters exclusively — no CQ polling on data path:
 
 - **Flush (wait for local completion):**
-  `while ((submitted - fi_acc_cntr_read(cntr)) & 0x7FFFFFFF != 0) spin;`
+  baseline pattern — `fi_acc_cntr_wait(cntr, base + N)` after `fi_acc_flush()`
+  (see Completion Drain above)
 - **Signal detection (wait for remote arrival):**
   `while (fi_acc_cntr_read(signal_cntr) - offset < expected) spin;`
 - **Reset-without-zeroing:**
@@ -952,7 +997,7 @@ Counter semantics:
 
 For consumers that need per-operation status (opcode, error, imm data):
 
-- `fi_acc_cq_poll(cq, position)` — position-based parallel polling
+- `fi_acc_cq_read(cq, position)` — position-based parallel polling
   (thread N polls position N for cooperative bandwidth kernels)
 - `fi_acc_cq_pop(cq, amount)` — advance CQ consumer pointer after processing
 - Phase-bit protocol handled internally by the provider
@@ -960,7 +1005,7 @@ For consumers that need per-operation status (opcode, error, imm data):
 #### Error Handling
 
 NCCL GIN detects errors via counter timeout (counter stops advancing).
-`fi_acc_cntr_read_err()` improves on this where the HW exposes a device-visible
+`fi_acc_cntr_readerr()` improves on this where the HW exposes a device-visible
 error counter (EFA does): the GPU kernel can distinguish "slow" from "failed"
 without waiting for a timeout. `fi_acc_wc_read_vendor_err()` is available for
 CQ-based consumers.
@@ -990,20 +1035,25 @@ Layer 0 (Host-side export — both NCCL and simple consumers need this):
     fi_mr_export_acc() → lkey
 
 Layer 1 (Device-side operations — provider encapsulates the hard stuff):
-    fi_acc_write / fi_acc_send / fi_acc_read
-    fi_acc_cntr_read / fi_acc_cntr_wait
-    fi_acc_cq_poll / fi_acc_cq_pop
+    fi_acc_write / fi_acc_send / fi_acc_read (+ tagged, atomics per proposal)
     fi_acc_recv (with FI_MORE for batched posting)
-
-Layer 2 (Optional raw export — for custom posting protocols):
-    Returns fi_acc_ep_attrs directly to consumer
-    Consumer builds own device struct and implements own SQ management
-    Maximum control, provider-specific
+    fi_acc_flush
+    fi_acc_cntr_read / fi_acc_cntr_readerr / fi_acc_cntr_wait
+    fi_acc_cq_read / fi_acc_cq_pop
 ```
 
-**Layer 2 is NOT required for NCCL-level performance** — Layer 1's `fi_acc_write()`
-with `scope` + `FI_MORE` achieves the same throughput. Layer 2 exists as a future
-escape hatch for consumers with requirements beyond what scope+flags can express.
+**Raw resource export is NOT part of the proposed API.** It already exists in
+production today as vendor-specific extension ops — EFA's `fi_efa_ops_gda`
+exposes `query_qp_wqs()` (raw SQ/RQ buffer, doorbell, ring geometry) and
+`query_cq()` via `fi_open_ops(FI_EFA_GDA_OPS)`, and this is exactly what
+aws-ofi-nccl GDAKI consumes. The raw queue layout, WQE format, and doorbell
+semantics are inherently vendor-specific, so standardizing such an interface
+across providers would be meaningless — each provider's "raw" is different.
+
+The escape-hatch story is therefore: consumers with custom posting protocols
+beyond what `scope` + `flags` can express use the provider's own extension
+ops (as NCCL GIN does today), not a generalized API. This coexists cleanly
+with the accelerator API — both are reached from the same domain/EP objects.
 
 
 ### 6. Multi-Rail Support
@@ -1152,7 +1202,7 @@ FI_ACC_DEV static inline int fi_acc_write(void *acc_ep, ...) {
 | **P1** | Internal dual backpressure (max_batch + counter) | Provider checks both limits before posting |
 | **P2** | CQ export + polling API | perftest uses CQ; NCCL does not but other consumers may |
 | **P2** | GPU-side recv posting | perftest uses it; NCCL does not |
-| **P2** | Raw ring export (Layer 2) | For consumers with custom protocols beyond what scope+flags express |
+| — | Raw ring export | NOT proposed as a general API — inherently vendor-specific; already served by provider extension ops (EFA: `query_qp_wqs`/`query_cq` via `FI_EFA_GDA_OPS`) |
 | **P0** | Version/comp_mask in all exported structs | Forward compatibility — must be baked in from day one; impossible to retrofit once binaries ship |
 
 ### Validation Coverage from perftest
@@ -1237,3 +1287,186 @@ a black box. Fields directly accessed on the GPU:
 | `sq.wq.wqes_posted` | `cuda::atomic_ref.load/store` | Tracks last doorbell position (db_rung) |
 | `sq.wq.wqes_pending` | Not used (GIN tracks differently) | — |
 | `sq.wq.phase` | Not used (computed from slot) | — |
+
+---
+
+## Device API Design Discussion (WIP)
+
+Working notes from the device-side API deep dive, grounded in the actual
+`postRdmaWrite<mode>()` implementation in NCCL GIN
+(`upstream-to-nccl/src/include/nccl_device/gin/efa_gda/gin_efa_gda.h`).
+
+### Can postRdmaWrite simply call fi_acc_write?
+
+Yes — for the plain Put path it is nearly a drop-in replacement.
+
+**Today (inside GIN's `putImplMode`, per lane):**
+
+```c
+// GIN picks the target tuple from its own table:
+int idx = targetSlot * nranks + peer;
+uint16_t ah   = ep->target_address_handles[idx];
+uint16_t qpn  = ep->target_remote_qpns[idx];
+uint32_t qkey = ep->target_qkey[idx];
+
+postRdmaWrite<mode>(ep, ah, qpn, qkey,
+                    absSrcAddr, srcLkey, writeBytes,
+                    absDstAddr, dstRkey, optFlags);
+```
+
+**With our API:**
+
+```c
+// Same index math — but into the provider-exported AV table:
+void *peer_h = (char *)dev->acc_peers + (targetSlot * nranks + peer) * peer_stride;
+void *desc   = (char *)dev->acc_descs + rail_mr_idx * desc_stride;
+
+fi_acc_write(dev->data_acc_ep,
+             (void *)absSrcAddr, desc, writeBytes, 0, peer_h,
+             absDstAddr, dstRkey, NULL,
+             FI_ACC_SUBGROUP,
+             FI_EFA_WR_HIGH_PPS | (aggregate ? FI_MORE : 0));
+```
+
+The mapping is natural because `postRdmaWrite` is already a per-lane call that
+internally discovers its cooperation group — exactly the shape of
+`fi_acc_write` with `FI_ACC_SUBGROUP`. The provider's internals become a
+near-verbatim copy of GIN's protocol: `labeled_partition` on the EP, leader
+`fetch_add` reservation, chunked ≤ max_batch windows, dual backpressure,
+strict slot-order rendezvous, deferred doorbell for `FI_MORE`. The
+`(ah, qpn, qkey)` tuple becomes an opaque peer entry from the AV export;
+`srcLkey` becomes the desc from the MR export. Signal Add-by-N stays an
+application-level loop of N−1 zero-byte `fi_acc_write` calls.
+
+### Gap tally from the mapping exercise
+
+| Gap | Resolution |
+|---|---|
+| Doorbell drain for deferred WQEs | ✅ `fi_acc_flush(acc_ep)` — in the proposal; rings db for all written-but-un-rung WQEs, TX-side only |
+| Completion drain (GIN Flush / quiet) | ✅ No new API — consumer-owned baseline pattern (below) |
+| PPS processing hint | ✅ Existing `FI_EFA_WR_HIGH_PPS` (bit 60, `fi_ext_efa.h`) flows through `fi_acc_write` flags exactly as it does through `fi_writemsg()` today; provider-specific op flags (bits 60–63) pass through unchanged and fold away at compile time in inlined code |
+| PutValue staging | ⏳ Open — `fi_acc_inject_write` proposal (below) |
+| Sharing mode / atomic scope | ⏳ Open — compile-time scope parameterization (below) |
+| Return type | 💬 Discussable — void vs int (below) |
+
+### Completion drain: consumer-owned baseline pattern
+
+`fi_acc_flush()` only rings the doorbell — it does not wait for completion.
+GIN's Flush additionally waits until the FI_WRITE counter catches up to its
+internal `submitted_count`. Rather than exposing that provider-internal count
+(or adding a second wait primitive), the consumer owns the arithmetic:
+
+```c
+// Baseline snapshot (before posting, or at any known-quiescent point):
+uint64_t base = fi_acc_cntr_read(acc_cntr);
+
+// ... N calls to fi_acc_write — consumer counts N itself ...
+
+fi_acc_flush(acc_ep);   // ring db for any FI_MORE-deferred WQEs
+
+// Wait: modular compare per domain_attr->max_cntr_value
+while (((fi_acc_cntr_read(acc_cntr) - base) & max_cntr_value) < N) { /* spin */ }
+// or: fi_acc_cntr_wait(acc_cntr, base + N)
+```
+
+This is GIN's exact pattern generalized — GIN's baseline is implicitly 0
+(counter and submitted_count both start at zero); the explicit snapshot also
+subsumes reset-without-zeroing (the baseline IS the offset), and the remote
+side uses the identical pattern on its FI_REMOTE_WRITE counter for signal
+detection, including Add-by-N.
+
+Contract requirements the spec must state:
+1. **1:1 tick guarantee** — every posted operation increments the bound
+   FI_WRITE counter by exactly 1 (normative; true on EFA).
+2. **Flush before wait** — a `FI_MORE`-deferred WQE never completes until a
+   doorbell covers it; the wait must be preceded by `fi_acc_flush()` (or a
+   non-`FI_MORE` post).
+3. **Multi-poster tally** — for one EP-wide quiet across multiple
+   threads/CTAs, the consumer aggregates its own N (its concurrency layout,
+   its bookkeeping).
+
+### Two concurrency dimensions (from reading postRdmaWrite)
+
+GDAKI has two orthogonal concurrency dimensions; our single `scope` parameter
+currently captures only the first:
+
+**Dimension 1 — Cooperation grouping (who coalesces into one post):**
+dynamic, discovered at runtime via `coalesced_threads()` +
+`labeled_partition(qp)`. Groups form per-QP among currently-active warp lanes
+(1 to 32 lanes; different lanes may simultaneously target different QPs and
+form separate groups). Leader reserves the group's slots with one atomic;
+all lanes write WQEs in parallel; leader rings once. `FI_ACC_SUBGROUP` maps
+to this — with the note that NCCL never declares the group; it is discovered.
+
+**Dimension 2 — Resource sharing mode (who else contends on the same EP):**
+
+```c
+enum ncclGinResourceSharingMode : uint8_t {
+  NCCL_GIN_RESOURCE_SHARING_GPU    = 0,  // any CTA may post to this QP
+  NCCL_GIN_RESOURCE_SHARING_CTA    = 1,  // only this CTA posts to this QP
+  NCCL_GIN_RESOURCE_SHARING_THREAD = 2,
+};
+// maps to atomic scope for the coordination cursors (pc, wqes_completed,
+// wqes_posted, submitted_count):
+ncclGinScope = (mode == CTA) ? cuda::thread_scope_block : cuda::thread_scope_device;
+```
+
+Block-scope atomics are meaningfully cheaper than device-scope on the hot
+path. In GIN this is a **C++ template parameter** — compile-time, zero
+runtime dispatch. The HW counter load is always system-scope acquire
+regardless (NIC writes over PCIe).
+
+Open question: how `fi_acc_write` expresses dimension 2. A runtime parameter
+cannot select atomic scope without hot-path branching; candidates are a
+compile-time template/constexpr parameter on the device functions, or an
+export-time declaration (`FI_ACC_SHARE_CTA / FI_ACC_SHARE_GPU` on
+`fi_ep_export_acc`) that selects a provider code path.
+
+### PutValue staging (open)
+
+GIN's PutValue stages the register value into a pool slot addressed by the
+**reserved SQ slot index** (`my_slot % sq_size`), then points the WQE's SGE at
+the staged copy. The slot index is only known after reservation — which
+`fi_acc_write` hides. Proposal: an inject-style variant where the provider
+owns the staging pool and does the slot-indexed copy internally (it reserved
+the slot, it knows the index):
+
+```c
+int fi_acc_inject_write(void *acc_ep, const void *buf, size_t len,
+                        uint64_t raddr, uint64_t rkey, void *acc_peer,
+                        enum fi_acc_scope scope, uint64_t flags);
+```
+
+This matches host-side `fi_inject_write` semantics: buffer reusable on
+return, no desc needed, small-size limit (the pool slot size).
+
+### Return type: void vs int (discussable)
+
+Walking every wait inside `postRdmaWrite` shows the post path has no
+synchronous failure mode:
+
+| Wait | Resolution |
+|---|---|
+| Un-rung depth > max_batch | Leader actively force-rings deferred WQEs — guaranteed progress |
+| SQ ring overflow (31-bit masked diff vs HW counter) | Spins until NIC consumes |
+| Doorbell-turn rendezvous | Spins until predecessor hands off — resolves by slot-order induction |
+
+Backpressure, counter wraparound, and ordering are all absorbed internally —
+GDAKI's `postRdmaWrite` returns void, and if `fi_acc_write` encapsulates the
+same protocol (it must), there is nothing to report at post time. The
+consumer-owned completion pattern above also removes the last hidden state a
+return channel might have carried.
+
+The counterweight for `int`:
+- Libfabric convention (every host-side data op returns ssize_t/int);
+  retrofitting a return type later is an API break the versioning rules
+  cannot absorb.
+- Future escape hatches: a non-blocking flag returning `-FI_EAGAIN` instead
+  of spinning; debug-build argument validation.
+- Cost is zero: provider-inlined `return FI_SUCCESS;` constant-folds away.
+- If adopted, the spec must require **converged returns** for cooperative
+  scopes (all threads in the scope receive the same value) so error paths
+  never diverge the group.
+
+Status: leaning void-semantics-today either way; whether to keep the `int`
+shell as a forward-compatibility hedge is an open discussion point.
