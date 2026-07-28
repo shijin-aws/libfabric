@@ -71,24 +71,24 @@ the future.
 
 The OFI Accelerator API follows a two-phase model that mirrors how GDAKI
 works in practice: the CPU sets up communication resources and exports them
-as opaque handles, then the GPU kernel uses those handles to post operations
+as opaque handles, then the accelerator kernel uses those handles to post operations
 and check completions without further CPU involvement.
 
 On the host side, the API extends the existing libfabric object creation flow.
 The consumer creates endpoints, CQs, counters, AVs, and MRs using standard
 libfabric calls with a new `FI_ACC` flag and an accelerator info struct that
-describes the GPU environment. Once created, each object is exported to a
-GPU-accessible opaque handle. These handles encapsulate everything the
+describes the accelerator environment. Once created, each object is exported to a
+accelerator-accessible opaque handle. These handles encapsulate everything the
 device-side functions need — ring buffer pointers, doorbells, counter
 addresses, peer tables — without exposing hardware-specific details to the
 consumer.
 
 On the device side, the API provides communication functions callable from
-GPU kernels for posting RDMA operations (write, read, send/recv, tagged,
+accelerator kernels for posting RDMA operations (write, read, send/recv, tagged,
 atomics), doorbell control (flush), and completion tracking (counters and CQ
 polling). These device-side functions are provided as inlined implementations
 in a provider-supplied header (e.g., a `.cuh` file for CUDA), compiled
-directly into the consumer's GPU kernel.
+directly into the consumer's accelerator kernel.
 
 ---
 
@@ -120,16 +120,16 @@ struct fi_cq_attr {
 ```
 
 Endpoints, counters, and AVs are similarly extended. When the provider sees
-`FI_ACC`, it knows this object will later be exported to the GPU and may
+`FI_ACC`, it knows this object will later be exported to the accelerator and may
 perform additional internal setup (e.g., allocating the CQ buffer in
-GPU-accessible memory, or choosing a counter implementation that supports
-DMA-BUF). The `fi_acc_info` struct identifies the target GPU and
+accelerator-accessible memory, or choosing a counter implementation that supports
+DMA-BUF). The `fi_acc_info` struct identifies the target accelerator and
 tells the provider how to allocate and map memory between host and device:
 
 ```c
 struct fi_acc_info {
     enum fi_hmem_iface   iface;      /* FI_HMEM_CUDA, FI_HMEM_ROCR, FI_HMEM_ZE */
-    uint64_t             device;     /* GPU device ordinal */
+    uint64_t             device;     /* accelerator device ordinal */
     enum fi_acc_mem_type mem_type;   /* FI_ACC_MEM_USER or FI_ACC_MEM_PROVIDER */
     /* Callbacks (used when mem_type == FI_ACC_MEM_USER): */
     int  (*alloc)(uint64_t device, uint64_t size, uint64_t alignment,
@@ -140,35 +140,35 @@ struct fi_acc_info {
 };
 ```
 
-With `FI_ACC_MEM_PROVIDER` (the default), the provider manages GPU memory
+With `FI_ACC_MEM_PROVIDER` (the default), the provider manages accelerator memory
 internally using the libfabric HMEM interface, requiring no callbacks from the
 consumer. With `FI_ACC_MEM_USER`, the consumer provides three callbacks that
 the provider invokes during object creation and export — the consumer handles
-all GPU memory operations on behalf of the provider.
+all accelerator memory operations on behalf of the provider.
 
 **`alloc(device, size, alignment, flags, &addr, &fd, &offset)`** — The
-provider calls this when it needs fresh GPU memory. The consumer allocates
-`size` bytes on the specified GPU device and returns the GPU pointer in
+provider calls this when it needs fresh accelerator memory. The consumer allocates
+`size` bytes on the specified accelerator device and returns the device pointer in
 `*addr`. If the provider passes `FI_ACC_ALLOC_DMABUF` in `flags`, the
 consumer must also export a DMA-BUF file descriptor (returned in `*fd` and
-`*offset`) so the NIC driver can DMA directly to/from this GPU memory. This
+`*offset`) so the NIC driver can DMA directly to/from this accelerator memory. This
 is used for hardware counters and CQ buffers that the NIC writes into. If
-the flag is not set, `fd` can be -1 (the memory is only accessed by the GPU
+the flag is not set, `fd` can be -1 (the memory is only accessed by the accelerator
 kernel, not the NIC).
 
 **`import(device, host_addr, size, flags, &dev_addr)`** — The provider calls
 this when it has a host-side address (typically NIC BAR MMIO or host memory)
-that the GPU kernel needs to access. The consumer maps this host address into
-the GPU device address space and returns the GPU-visible pointer in
+that the accelerator kernel needs to access. The consumer maps this host address into
+the accelerator device address space and returns the device-visible pointer in
 `*dev_addr`. The flags tell the consumer what kind of memory it is:
 `FI_ACC_IMPORT_IOMEMORY` means the address points to PCIe BAR MMIO (NIC
 device I/O memory — e.g., SQ buffer, doorbell register), and
 `FI_ACC_IMPORT_DEVICEMAP` means the resulting pointer must be accessible from
-GPU kernels. For CUDA, the consumer translates these to
+accelerator kernels. For CUDA, the consumer translates these to
 `cuMemHostRegister(IOMEMORY | DEVICEMAP)` + `cuMemHostGetDevicePointer()`.
 
 **`free(device, addr)`** — The provider calls this to release memory
-previously allocated via `alloc`. The consumer frees the GPU memory.
+previously allocated via `alloc`. The consumer frees the accelerator memory.
 
 The callbacks use libfabric-defined flags rather than platform-specific ones,
 so the same provider code works regardless of whether the consumer uses CUDA,
@@ -198,7 +198,7 @@ fi_endpoint2(domain, info, &ep, FI_ACC, context);
 ### Exporting Objects
 
 Once objects are created, bound, and enabled, the consumer exports each to a
-GPU-accessible opaque handle. The provider builds the device-side blob
+accelerator-accessible opaque handle. The provider builds the device-side blob
 internally (populates ring geometry, doorbell pointers, phase state,
 backpressure fields) using the memory callbacks from `fi_acc_info`. The
 consumer never inspects or constructs these structs — it passes the opaque
@@ -206,7 +206,7 @@ handles directly to the device-side API.
 
 The exports fall into two categories: object handle exports (EP, Counter, CQ)
 where one object produces one opaque handle, and table exports (MR, AV) where
-N items produce one GPU-resident table.
+N items produce one accelerator-resident table.
 
 **Endpoint Export:**
 
@@ -219,8 +219,8 @@ What the provider does inside `fi_ep_export_acc()`:
 1. Queries raw HW queue addresses (e.g., SQ buffer, doorbell, RQ)
 2. Calls `acc_info.import()` with `FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP`
    for BAR MMIO regions (SQ buffer, doorbell), and `FI_ACC_IMPORT_DEVICEMAP`
-   only for regular host memory (RQ buffer) — gets GPU device pointers
-3. Allocates GPU memory for the internal device EP struct via `acc_info.alloc()`
+   only for regular host memory (RQ buffer) — gets accelerator device pointers
+3. Allocates accelerator memory for the internal device EP struct via `acc_info.alloc()`
 4. Fills the struct with device pointers, ring geometry, phase state, max_batch,
    sq_size
 5. H2D copies → returns opaque `void*` to consumer
@@ -243,7 +243,7 @@ What the provider does inside `fi_cntr_export_acc()`:
    error counter at different offsets within the same allocation
 2. Binds the fd to the NIC counter so the NIC DMAs counter updates directly
    into GPU memory
-3. Returns one opaque handle wrapping both GPU pointers
+3. Returns one opaque handle wrapping both accelerator pointers
 
 The consumer never distinguishes comp vs err memory — both live behind the
 single opaque handle. The device-side API exposes them as separate reads
@@ -283,7 +283,7 @@ int fi_mr_export_acc(struct fid_mr **mrs, size_t count, uint64_t flags,
 ```
 
 Unlike the object handle exports above, MR export is a table builder. It
-takes an array of MRs and exports their descriptors into one GPU-resident
+takes an array of MRs and exports their descriptors into one accelerator-resident
 table with a single alloc + H2D copy. `count == 1` is the trivial case;
 there is no separate single-item API. NCCL GIN uses this to export per-rail
 MR keys for payload, scratch, and PutValue buffers.
@@ -295,7 +295,7 @@ int fi_av_export_acc(struct fid_av *av, fi_addr_t *addrs, size_t count,
                      uint64_t flags, void **acc_peers, size_t *acc_peers_size);
 ```
 
-Like MR export, AV export takes an array and builds one GPU-resident peer
+Like MR export, AV export takes an array and builds one accelerator-resident peer
 table. NCCL GIN builds `[total_slots × nranks]` target tables — the GPU
 kernel indexes the table to select the remote target per write. Passing the
 full array in one call lets the provider resolve all peers with a single
@@ -324,7 +324,7 @@ void *desc = (char *)acc_descs + j * desc_stride;
 
 Putting it all together, here is a complete host-side workflow showing
 discovery, object creation with `FI_ACC`, binding, and export — resulting in a
-set of GPU-accessible handles ready to be passed to a CUDA kernel:
+set of accelerator-accessible handles ready to be passed to a CUDA kernel:
 
 ```c
 // Setup
@@ -359,7 +359,7 @@ fi_ep_bind(ep, cntr, FI_WRITE);
 fi_ep_bind(ep, av, 0);
 fi_enable(ep);
 
-// Export to GPU
+// Export to accelerator
 fi_ep_export_acc(ep, 0, &acc_ep, &acc_ep_size);
 fi_cntr_export_acc(cntr, 0, &acc_cntr, &acc_cntr_size);
 fi_av_export_acc(av, peer_addrs, nranks, 0, &acc_peers, &acc_peers_size);
@@ -370,10 +370,10 @@ fi_mr_export_acc(my_mrs, num_mrs, 0, &acc_descs, &acc_descs_size);
 
 ## 4. Device-Side API
 
-The device-side API provides communication functions callable from GPU kernels.
+The device-side API provides communication functions callable from accelerator kernels.
 These functions are provided as inlined implementations in the provider's
 device header (e.g., a `.cuh` file for CUDA), compiled directly into the
-consumer's GPU kernel. The provider encapsulates the full posting protocol
+consumer's accelerator kernel. The provider encapsulates the full posting protocol
 internally — WQE construction, ring management, phase bits, doorbells,
 backpressure — so the consumer only interacts with a high-level interface.
 
@@ -382,25 +382,36 @@ backpressure — so the consumer only interacts with a high-level interface.
 The full accelerator-side surface:
 
 ```c
-fi_acc_send(acc_ep, buf, size, desc, data, peer, ctxt, scope, flags)
-fi_acc_recv(acc_ep, buf, desc, size, peer, ctxt, scope, flags)
-fi_acc_tsend(acc_ep, buf, size, desc, data, peer, tag, ctxt, scope, flags)
-fi_acc_trecv(acc_ep, buf, size, desc, peer, tag, ignore, ctxt, scope, flags)
-fi_acc_write(acc_ep, buf, desc, size, data, peer, raddr, rkey, ctxt, scope, flags)
-fi_acc_read(acc_ep, buf, desc, size, peer, raddr, rkey, ctxt, scope, flags)
-fi_acc_atomic(acc_ep, …, scope, flags)
-fi_acc_fetch_atomic(acc_ep, …, scope, flags)
-fi_acc_compare_atomic(acc_ep, …, scope, flags)
-fi_acc_flush(acc_ep)
+int fi_acc_send(void *acc_ep, const void *buf, size_t size, void *desc,
+                uint64_t data, void *peer, void *ctxt,
+                enum fi_acc_scope scope, uint64_t flags);
+int fi_acc_recv(void *acc_ep, void *buf, void *desc, size_t size,
+                void *peer, void *ctxt,
+                enum fi_acc_scope scope, uint64_t flags);
+int fi_acc_tsend(void *acc_ep, const void *buf, size_t size, void *desc,
+                 uint64_t data, void *peer, uint64_t tag, void *ctxt,
+                 enum fi_acc_scope scope, uint64_t flags);
+int fi_acc_trecv(void *acc_ep, void *buf, size_t size, void *desc,
+                 void *peer, uint64_t tag, uint64_t ignore, void *ctxt,
+                 enum fi_acc_scope scope, uint64_t flags);
+int fi_acc_write(void *acc_ep, const void *buf, void *desc, size_t size,
+                 uint64_t data, void *peer, uint64_t raddr, uint64_t rkey,
+                 void *ctxt, enum fi_acc_scope scope, uint64_t flags);
+int fi_acc_read(void *acc_ep, void *buf, void *desc, size_t size,
+                void *peer, uint64_t raddr, uint64_t rkey, void *ctxt,
+                enum fi_acc_scope scope, uint64_t flags);
+int fi_acc_flush(void *acc_ep, uint64_t flags);
 ```
 
 Notes against production usage:
 - `fi_acc_write` covers the NCCL GIN data path — the only post operation GIN
   uses. `data` maps to write-with-imm (perftest validates it); `ctxt` is the
   per-op context for CQ-based consumers (counter-only consumers pass NULL).
-- `fi_acc_flush(acc_ep)` is the TX doorbell drain — rings the doorbell for
-  all written-but-deferred (`FI_MORE`) WQEs. It does NOT wait for completion;
-  see the Completion section below for the consumer-owned drain pattern.
+- `fi_acc_flush(acc_ep, flags)` flushes un-posted WQEs — rings the doorbell
+  for all WQEs written with `FI_MORE` that haven't been submitted to the NIC
+  yet. It applies to both TX and RX (distinguished by `flags`).
+  It does NOT wait for completion; see the Completion section below for the
+  consumer-owned drain pattern.
 - `fi_acc_tsend`/`fi_acc_trecv`/atomics — no current GDA consumer uses these
   (NCCL GIN is write-only; perftest covers send/recv/write/read). EFA has no
   device-side tag matching or native atomics, so these would be unsupported
@@ -428,11 +439,7 @@ template parameter on `postRdmaWrite`, and DOCA's
 warp is always within a CTA); they differ only in how the consumer organizes
 its threads, not in what the provider does internally.
 
-The cooperation model (how threads coalesce within a post — e.g., warp-
-cooperative `labeled_partition` in EFA-GDA) is provider-internal and not
-exposed to the consumer. The provider always picks the optimal cooperation
-strategy for its hardware; `scope` only tells it what synchronization
-strength is needed. Internally, the provider implements a runtime switch on
+Internally, the provider implements a runtime switch on
 `scope` dispatching to template-instantiated code where the atomic scope is a
 compile-time constant, so all atomic operations constant-fold to the
 appropriate hardware instructions (`atom.cta` vs `atom.gpu` vs plain
@@ -443,17 +450,251 @@ threads that may concurrently post to the same EP handle.
 
 ### Flags
 
-| Flag | Effect |
-|------|--------|
-| `FI_MORE` | Defer doorbell — provider writes WQE but does not ring until a subsequent call without `FI_MORE`, an `fi_acc_flush()`, or max_batch reached |
-| `FI_INJECT` | Provider copies data from `buf` internally; caller's buffer is reusable immediately on return. No MR descriptor needed (pass NULL for `desc`). On mlx5: WQE inline data. On EFA: internal staging pool indexed by SQ slot. |
-| (none) | Ring doorbell immediately after this WQE batch |
+The device-side post functions inherit the same flags defined for their
+host-side counterparts (`fi_write`, `fi_send`, etc.), including `FI_MORE`,
+`FI_INJECT`, and provider-specific op flags (bits 60–63). Their semantics are
+identical to the host-side definitions.
 
-`FI_MORE` works the same for both TX and RX. Provider-specific op flags (bits
-60–63, e.g., EFA's `FI_EFA_WR_HIGH_PPS`) pass through unchanged, exactly as
-they do for host-side calls like `fi_writemsg()`.
+### Return Code and Backpressure
 
-### How NCCL GIN's Pattern Maps to `fi_acc_write`
+The post functions return `int`, consistent with libfabric's host-side
+convention. There are two possible behaviors when the SQ is full:
+
+The provider can handle backpressure internally — polling the hardware
+completion counter and actively ringing doorbells for deferred WQEs to make
+progress, returning `FI_SUCCESS` once space becomes available. This simplifies
+the consumer — every call succeeds and the thread resumes once the NIC has
+consumed enough prior work. The trade-off is that the accelerator thread is occupied
+until the SQ drains.
+
+Alternatively, the provider can return `-FI_EAGAIN` when the SQ is full,
+letting the consumer own the retry. This gives the consumer flexibility to
+interleave other work (e.g., processing completions) before retrying, matching
+the host-side libfabric convention. The trade-off is added complexity in every
+consumer's posting loop.
+
+Which behavior is preferred for accelerator applications is an open discussion point.
+Regardless of the choice, for cooperative scopes (`FI_ACC_SUBGROUP` and
+above), all participating threads must receive the same return value so error
+paths never diverge the group.
+
+### Provider Implementation
+
+The provider implements `fi_acc_write()` as an inlined device function in its
+`.cuh` header. Internally it performs a runtime switch on `scope`, dispatching
+to template-instantiated code for each atomic scope level. Within each
+instantiation, the provider handles the full posting protocol: SQ slot
+reservation (with the appropriate atomic scope), WQE construction, phase bit
+computation, writing the WQE to the ring, backpressure enforcement, doorbell
+management, and slot-order handoff. All of this is invisible to the consumer.
+
+The provider handles all backpressure internally — `fi_acc_write()` spins when
+the SQ is full and never returns an error. The consumer never sees internal
+state like `sq_size`, `max_batch`, or `submitted_count`. It observes
+backpressure only as `fi_acc_write()` taking longer to return.
+
+For a detailed mapping of how NCCL GIN's `postRdmaWrite<mode>()` maps to
+`fi_acc_write()`, including before/after code examples, see
+[Appendix C](#appendix-c-nccl-gin-to-fi_acc_write-mapping).
+
+### Completion
+
+The completion API provides two mechanisms: hardware counters (primary, used by
+NCCL GIN) and CQ polling (secondary, used by perftest). No scope parameter is
+needed for completion — these are simple reads/waits.
+
+**Counter functions:**
+
+```c
+uint64_t fi_acc_cntr_read(void *acc_cntr);
+void     fi_acc_cntr_wait(void *acc_cntr, uint64_t target);
+uint64_t fi_acc_cntr_readerr(void *acc_cntr);
+```
+
+**CQ functions:**
+
+```c
+ssize_t  fi_acc_cq_read(void *acc_cq, void *buf, size_t count);
+ssize_t  fi_acc_cq_readerr(void *acc_cq, struct fi_cq_err_entry *buf, uint64_t flags);
+```
+
+**Waiting for completion — consumer-owned pattern:**
+
+The API supports both counter-based and CQ-based completion. In practice,
+CQ polling on the GPU is expensive (requires phase-bit checking, cache-line
+reads from NIC-written memory), so NCCL GIN exclusively uses the counter path
+— a single system-scope acquire load of a DMA-BUF-backed hardware counter in
+GPU HBM. The typical application pattern is: snapshot the counter before
+posting, count the number of posts, flush deferred WQEs, then spin on the
+counter until it reaches the expected value. See
+[Appendix B](#appendix-b-completion-drain-pattern) for a concrete code example.
+
+CQ-based completion (`fi_acc_cq_read`, `fi_acc_cq_readerr`) remains available
+for consumers that need per-operation status (opcode, error, immediate data),
+such as perftest's GDA mode.
+- Phase-bit protocol handled internally by the provider
+
+**Error handling:**
+
+NCCL GIN detects errors via counter timeout (counter stops advancing).
+`fi_acc_cntr_readerr()` improves on this where the HW exposes a device-visible
+error counter (EFA does): the GPU kernel can distinguish "slow" from "failed"
+without waiting for a timeout. `fi_acc_wc_read_vendor_err()` is available for
+CQ-based consumers. Host-side health monitoring remains more practical for
+production error recovery.
+
+---
+
+## 5. Device Header Packaging
+
+The device-side functions are shipped as provider-specific, accelerator-type-
+specific header files. Each provider supplies one header per supported accelerator
+runtime, implementing the same `fi_acc_*` function signatures. The consumer
+includes the appropriate header at build time based on which provider and accelerator
+runtime it targets.
+
+The naming convention is:
+
+```
+fi_acc_<provider>_<iface>.cuh    — CUDA
+fi_acc_<provider>_<iface>.hip.h  — HIP/ROCm
+fi_acc_<provider>_<iface>.hpp    — SYCL/Level Zero
+```
+
+For example:
+- `fi_acc_efa_cuda.cuh` — EFA provider for CUDA GPUs
+- `fi_acc_verbs_cuda.cuh` — verbs provider for CUDA GPUs
+- `fi_acc_efa_hip.h` — EFA provider for AMD GPUs
+
+The consumer includes the one matching their build environment:
+
+```c
+#include <rdma/fi_acc_efa_cuda.cuh>
+```
+
+Since all headers implement the same function signatures, the consumer's accelerator
+kernel code is portable across providers — switching providers only requires
+changing the include at build time, without modifying the kernel source. Each
+header contains the provider's inlined implementation (struct layouts, WQE
+formats, atomic scope dispatch, backpressure logic), all compiled directly
+into the consumer's accelerator binary.
+
+---
+
+## 6. Version/Compatibility Negotiation
+
+The device-side structs are compiled into the consumer's binary via inlined
+headers. The API leverages the existing `FI_VERSION(major, minor)` passed to
+`fi_getinfo()` to negotiate compatibility — the provider uses this to
+determine which device struct fields to populate at export time. No separate
+version argument is needed on the export calls. Major version bumps (breaking
+layout changes) require recompilation; minor versions are backward compatible
+through append-only struct extension (see
+[Appendix D](#appendix-d-comp_mask-extensibility) for implementation details).
+
+---
+
+## 7. Summary
+
+This document proposes an OFI Accelerator API that brings accelerator-initiated
+networking into the libfabric framework. The API follows a two-phase model:
+the host side creates and exports communication resources (endpoints, counters,
+CQs, MRs, AVs) as opaque accelerator-accessible handles, and the device side provides
+inlined post and completion functions callable from accelerator kernels.
+
+The next steps are to present this proposal to the libfabric community and
+open a pull request for review. This API is expected to evolve in the near
+term as it receives broader feedback and is validated through practical
+implementation across providers.
+
+---
+
+## Appendix A: CUDA Callback Implementation
+
+Example implementation of the `fi_acc_info` callbacks for CUDA:
+
+```c
+int my_cuda_alloc(uint64_t device, uint64_t size, uint64_t alignment,
+                  uint64_t flags, void **addr, int *fd, uint64_t *offset) {
+    cuCtxSetCurrent(gpu_contexts[device]);
+    CUdeviceptr ptr;
+    cuMemAlloc(&ptr, size);
+    *addr = (void *)ptr;
+
+    if (flags & FI_ACC_ALLOC_DMABUF) {
+        cuMemGetDmaBufFd(ptr, fd);
+        *offset = 0;
+    } else {
+        *fd = -1;
+        *offset = 0;
+    }
+    return 0;
+}
+
+int my_cuda_import(uint64_t device, void *host_addr, uint64_t size,
+                   uint64_t flags, void **dev_addr) {
+    unsigned int cuda_flags = 0;
+    if (flags & FI_ACC_IMPORT_IOMEMORY)
+        cuda_flags |= CU_MEMHOSTREGISTER_IOMEMORY;
+    if (flags & FI_ACC_IMPORT_DEVICEMAP)
+        cuda_flags |= CU_MEMHOSTREGISTER_DEVICEMAP;
+
+    cuMemHostRegister(host_addr, size, cuda_flags);
+    CUdeviceptr ptr;
+    cuMemHostGetDevicePointer(&ptr, host_addr, 0);
+    *dev_addr = (void *)ptr;
+    return 0;
+}
+
+void my_cuda_free(uint64_t device, void *addr) {
+    cuMemFree((CUdeviceptr)addr);
+}
+```
+
+---
+
+## Appendix B: Completion Drain Pattern
+
+The counter-based completion drain pattern used by NCCL GIN:
+
+```c
+// Baseline snapshot (before posting, or at any known-quiescent point):
+uint64_t base = fi_acc_cntr_read(acc_cntr);
+
+// ... N calls to fi_acc_write — consumer counts N itself ...
+
+fi_acc_flush(acc_ep, FI_TRANSMIT);   // flush any FI_MORE-deferred WQEs
+
+// Wait: modular compare per domain_attr->max_cntr_value
+while (((fi_acc_cntr_read(acc_cntr) - base) & max_cntr_value) < N) { /* spin */ }
+// or equivalently: fi_acc_cntr_wait(acc_cntr, base + N)
+```
+
+This is GIN's exact pattern generalized — GIN's baseline is implicitly 0
+(counter and `submitted_count` both start at zero); the explicit snapshot also
+subsumes reset-without-zeroing (the baseline IS the offset), and the remote
+side uses the identical pattern on its FI_REMOTE_WRITE counter for signal
+detection, including Add-by-N.
+
+Contract requirements:
+1. **1:1 tick guarantee** — every posted operation increments the bound
+   FI_WRITE counter by exactly 1
+2. **Flush before wait** — a `FI_MORE`-deferred WQE never completes until
+   it is flushed; the wait must be preceded by `fi_acc_flush()` (or a
+   non-`FI_MORE` post)
+3. **Multi-poster tally** — for one EP-wide quiet across multiple
+   threads/CTAs, the consumer aggregates its own N
+
+Counter semantics:
+- NIC-owned — software cannot write it
+- Wraps at `max_cntr_value + 1` (EFA: 2^31) — all arithmetic uses
+  `(a - b) & max_cntr_value`; wrap point queryable via `domain_attr`
+- Read via system-scope acquire (bypasses GPU caches, coherent with NIC PCIe
+  writes)
+
+---
+
+## Appendix C: NCCL GIN to `fi_acc_write` Mapping
 
 Today, NCCL GIN's `putImplMode` calls `postRdmaWrite<mode>()` — a 200-line
 warp-cooperative SQ posting function. With the accelerator API, this reduces
@@ -504,31 +745,7 @@ The `(ah, qpn, qkey)` tuple becomes an opaque peer entry from the AV export;
 `srcLkey` becomes the desc from the MR export. Signal Add-by-N stays an
 application-level loop of N−1 zero-byte `fi_acc_write` calls.
 
-### Backpressure (Internal to Provider)
-
-The provider handles all backpressure internally — `fi_acc_write()` spins when
-the SQ is full and never returns an error. NCCL GIN has two independent
-checks, both encapsulated inside the provider:
-
-```c
-// (a) Un-rung depth (EFA staging limit):
-//     chunk_next - db_rung ≤ max_batch
-//     If exceeded: force-ring deferred WQEs to make room
-//     (Must actively ring, not just wait — deferred groups don't ring)
-
-// (b) Ring overflow (SQ overrun):
-//     (chunk_next - *hw_cntr) & 0x7FFFFFFF ≤ sq_size
-//     Spin until NIC consumes enough WQEs
-```
-
-The consumer never sees `sq_size`, `submitted_count`, or `max_batch`. The
-provider owns all the state. The consumer observes backpressure only as
-`fi_acc_write()` taking longer to return.
-
-### Provider Internal Implementation
-
-When the consumer calls `fi_acc_write(acc_ep, ..., FI_ACC_SUBGROUP, FI_MORE)`,
-the provider internally does:
+**Provider internal steps** (when consumer calls with `FI_ACC_SUBGROUP, FI_MORE`):
 1. Detects subgroup (warp lanes targeting same EP) via `labeled_partition`
 2. Leader: atomic reserve N slots (one `fetch_add` for the whole group)
 3. All lanes: build WQE (opcode, SGE, remote addr), compute phase bit, write
@@ -539,189 +756,42 @@ the provider internally does:
    doorbell turn (strict slot-order rendezvous), ring doorbell, advance
    cursors, hand off to next group
 
-This is a near-verbatim encapsulation of GIN's `postRdmaWrite<mode>()`.
-
-### Completion
-
-The completion API provides two mechanisms: hardware counters (primary, used by
-NCCL GIN) and CQ polling (secondary, used by perftest). No scope parameter is
-needed for completion — these are simple reads/waits.
-
-**Counter functions:**
-
+**Backpressure** (both encapsulated inside the provider):
 ```c
-// Primary completion mechanism (NCCL GIN path)
-uint64_t fi_acc_cntr_read(void *acc_cntr);
-void     fi_acc_cntr_wait(void *acc_cntr, uint64_t target);
+// (a) Un-rung depth (EFA staging limit):
+//     chunk_next - db_rung ≤ max_batch
+//     If exceeded: force-ring deferred WQEs to make room
 
-// Error counter — device-visible error detection, mirrors host-side
-// fi_cntr_readerr(). Resolves to the err counter inside the same opaque
-// handle (same DMA-BUF, distinct offset)
-uint64_t fi_acc_cntr_readerr(void *acc_cntr);
+// (b) Ring overflow (SQ overrun):
+//     (chunk_next - *hw_cntr) & 0x7FFFFFFF ≤ sq_size
+//     Spin until NIC consumes enough WQEs
 ```
-
-**CQ functions:**
-
-```c
-// Per-operation completion (perftest path)
-ssize_t  fi_acc_cq_read(void *acc_cq, void *buf, size_t count);  // read completions
-ssize_t  fi_acc_cq_readerr(void *acc_cq, struct fi_cq_err_entry *buf, uint64_t flags);  // read errors
-```
-
-**Completion drain — `fi_acc_flush` + consumer-owned baseline:**
-
-`fi_acc_flush(acc_ep)` only rings the doorbell — it does not wait. Full
-completion drain (GIN's Flush) is a consumer-owned pattern; no
-provider-internal state needs exposing:
-
-```c
-// Baseline snapshot (before posting, or at any known-quiescent point):
-uint64_t base = fi_acc_cntr_read(acc_cntr);
-
-// ... N calls to fi_acc_write — consumer counts N itself ...
-
-fi_acc_flush(acc_ep);   // ring db for any FI_MORE-deferred WQEs
-
-// Wait: modular compare per domain_attr->max_cntr_value
-while (((fi_acc_cntr_read(acc_cntr) - base) & max_cntr_value) < N) { /* spin */ }
-// or equivalently: fi_acc_cntr_wait(acc_cntr, base + N)
-```
-
-This is GIN's exact pattern generalized — GIN's baseline is implicitly 0
-(counter and `submitted_count` both start at zero); the explicit snapshot also
-subsumes reset-without-zeroing (the baseline IS the offset), and the remote
-side uses the identical pattern on its FI_REMOTE_WRITE counter for signal
-detection, including Add-by-N.
-
-**Contract requirements the spec must state:**
-1. **1:1 tick guarantee** — every posted operation increments the bound
-   FI_WRITE counter by exactly 1 (normative; true on EFA)
-2. **Flush before wait** — a `FI_MORE`-deferred WQE never completes until a
-   doorbell covers it; the wait must be preceded by `fi_acc_flush()` (or a
-   non-`FI_MORE` post)
-3. **Multi-poster tally** — for one EP-wide quiet across multiple
-   threads/CTAs, the consumer aggregates its own N
-
-**Counter semantics:**
-- NIC-owned — software cannot write it
-- Wraps at `max_cntr_value + 1` (EFA: 2^31) — all arithmetic uses
-  `(a - b) & max_cntr_value`; wrap point queryable via `domain_attr`
-- Read via system-scope acquire (bypasses GPU caches, coherent with NIC PCIe
-  writes)
-
-**CQ completion (perftest pattern):**
-
-For consumers that need per-operation status (opcode, error, immediate data):
-- `fi_acc_cq_read(cq, buf, count)` — reads up to `count` completions into
-  `buf`, mirroring host-side `fi_cq_read()`
-- `fi_acc_cq_readerr(cq, buf, flags)` — reads error completions, mirroring
-  host-side `fi_cq_readerr()`
-- Phase-bit protocol handled internally by the provider
-
-**Error handling:**
-
-NCCL GIN detects errors via counter timeout (counter stops advancing).
-`fi_acc_cntr_readerr()` improves on this where the HW exposes a device-visible
-error counter (EFA does): the GPU kernel can distinguish "slow" from "failed"
-without waiting for a timeout. `fi_acc_wc_read_vendor_err()` is available for
-CQ-based consumers. Host-side health monitoring remains more practical for
-production error recovery.
 
 ---
 
-## 5. Version/Compatibility Negotiation
+## Appendix D: `comp_mask` Extensibility
 
-The provider's device-side structs are compiled into the consumer's binary via
-inlined headers. If the provider upgrades and changes struct layout, old
-consumer binaries break. To address this, the API uses a multi-level
-compatibility mechanism.
-
-Version exchange works in both directions. The consumer discovers the
-provider's accelerator API version via `fi_getinfo` (the provider reports
-`info->acc_api_version`). Conversely, the consumer declares which header
-version its device code was compiled against when calling export functions
-(e.g., `fi_ep_export_acc(ep, FI_ACC_VERSION(1,0), ...)`), so the provider
-populates structs accordingly.
-
-All exported device structs use `comp_mask` for forward compatibility: new
-fields are always appended at the end and guarded by new `comp_mask` bits.
-The provider zeroes the entire struct before filling, so unknown fields default
-to zero. A consumer compiled against v1.0 headers ignores unknown bits; a v1.1
-consumer checks `comp_mask` before reading extension fields. Major version
-bumps (breaking layout changes) require recompilation.
-
----
-
-## 6. Multi-Rail Support
-
-No explicit multi-rail API is needed. The consumer creates N independent
-EP/CQ/counter sets (one per rail) and manages rail selection externally, exactly
-as NCCL GIN does today (`rail_id = contextId % num_rails`). The API naturally
-supports this by allowing multiple independent exports from separate objects.
-
----
-
-## 7. Summary
-
-The proposed API addresses the growing GDA fragmentation by providing a
-unified, provider-agnostic interface within libfabric. The key design
-decisions — opaque exported handles, a `scope` parameter mapping directly to
-production resource sharing modes, `FI_MORE` for doorbell deferral,
-`FI_INJECT` for inline/staged data, counter-first completion, and batch-native
-AV/MR exports — are all validated against actual NCCL GIN production code on
-both EFA and InfiniBand/RoCE. The API is structured to be implementable by any
-provider while giving each the freedom to optimize internally (warp
-coalescing, backpressure strategies, WQE formats) without exposing
-hardware-specific details to the consumer.
-
-For detailed analysis of how each API element maps to the production NCCL GIN
-code (`postRdmaWrite`, `putImplMode`, `flushImplMode`), including the full
-gap analysis, field-by-field mapping tables, implementation trade-offs
-(HW creation timing, counter wrap semantics, PutValue staging mechanics,
-abstraction level decisions, raw resource export escape-hatch story), and
-the complete perftest GDA validation coverage, see the companion document
-[OFI-Accelerator-API-Analysis.md](./OFI-Accelerator-API-Analysis.md).
-
----
-
-## Appendix A: CUDA Callback Implementation
-
-Example implementation of the `fi_acc_info` callbacks for CUDA:
+All exported device structs use a `comp_mask` bitmask for forward-compatible
+extension. New fields are always appended at the end and guarded by new bits:
 
 ```c
-int my_cuda_alloc(uint64_t device, uint64_t size, uint64_t alignment,
-                  uint64_t flags, void **addr, int *fd, uint64_t *offset) {
-    cuCtxSetCurrent(gpu_contexts[device]);
-    CUdeviceptr ptr;
-    cuMemAlloc(&ptr, size);
-    *addr = (void *)ptr;
+struct fi_acc_dev_ep {
+    uint64_t comp_mask;
+    // v1.0 fields (always present):
+    uint8_t *sq_buf;
+    uint32_t *sq_db;
+    uint32_t sq_size;
+    uint32_t max_batch;
+    // v1.1 addition (only valid if comp_mask & FI_ACC_DEV_EP_INLINE):
+    uint32_t max_inline_size;
+};
 
-    if (flags & FI_ACC_ALLOC_DMABUF) {
-        cuMemGetDmaBufFd(ptr, fd);
-        *offset = 0;
-    } else {
-        *fd = -1;
-        *offset = 0;
-    }
-    return 0;
-}
-
-int my_cuda_import(uint64_t device, void *host_addr, uint64_t size,
-                   uint64_t flags, void **dev_addr) {
-    unsigned int cuda_flags = 0;
-    if (flags & FI_ACC_IMPORT_IOMEMORY)
-        cuda_flags |= CU_MEMHOSTREGISTER_IOMEMORY;
-    if (flags & FI_ACC_IMPORT_DEVICEMAP)
-        cuda_flags |= CU_MEMHOSTREGISTER_DEVICEMAP;
-
-    cuMemHostRegister(host_addr, size, cuda_flags);
-    CUdeviceptr ptr;
-    cuMemHostGetDevicePointer(&ptr, host_addr, 0);
-    *dev_addr = (void *)ptr;
-    return 0;
-}
-
-void my_cuda_free(uint64_t device, void *addr) {
-    cuMemFree((CUdeviceptr)addr);
-}
+#define FI_ACC_DEV_EP_INLINE  (1ULL << 0)
 ```
+
+Rules:
+- Provider zeroes the entire struct before filling (unknown fields = 0)
+- New fields always at the end — never reorder existing fields
+- Consumer checks `comp_mask` before reading extension fields
+- Old consumer ignores unknown bits; new consumer against old provider sees
+  bits unset and skips optional paths
