@@ -71,6 +71,7 @@ Based on deep analysis of:
 7. **Multiple endpoint flavors** — data EP, pvdata EP (PutValue staging), counter EPs, signal EPs (remote target only)
 8. **Provider-specific extension API** (`fi_efa_ops_gda`) — not portable across providers
 9. **Direct struct field access** — GIN accesses `qp->sq.wq.pc`, `qp->sq.wq.buf`, `qp->sq.wq.db`, `qp->sq.wq.max_batch`, `qp->sq.wq.wqes_completed`, `qp->sq.wq.wqes_posted` directly
+10. **Three resource sharing modes** — Exclusive (one thread, no atomics), CTA (block-scope atomics), GPU (device-scope atomics); selected at `ncclGin` construction via `resourceSharingMode`, carried in `ncclGinCtx`; runtime switch dispatches to template-instantiated code; EFA-GDA currently only distinguishes CTA vs GPU (collapses Exclusive into GPU)
 
 ### efa-dp-direct primitives actually used by NCCL GIN:
 
@@ -505,13 +506,13 @@ __global__ void run_iter_bw_kernel(...) {
 | **Completion** | `fi_acc_cq_read()` (CQ polling) | **NO CQ polling** — counter-only: `hwCounterLoad(local_cntr_value)` with system-scope acquire; `(submitted - *cntr) & 0x7FFFFFFF` | CQ polling (`efa_cuda_cq_poll`) | Counter export is P0; CQ export is P2 (used by perftest, not NCCL) |
 | **Backpressure** | Not elaborated | **Dual:** (a) un-rung depth ≤ max_batch (doorbell staging limit), (b) ring overflow via `(chunk_next - *hw_cntr) & 0x7FFF ≤ sq_size` | CQ-based: `scnt - ccnt < tx_depth` | Hidden inside `fi_acc_write()` — provider enforces both limits internally |
 | **Doorbell control** | Not elaborated | **Deferred aggregation:** `ncclGinOptFlagsAggregateRequests` skips doorbell; later group drains all deferred WQEs with one ring | `flush_sq_wrs()` after batch of ≤16 WQEs | Hidden inside `fi_acc_write()` — `FI_MORE` flag defers doorbell; provider rings when max_batch reached or `FI_MORE` absent |
-| **Concurrency model** | `FI_ACC_WORK_ITEM/SUBGROUP/WORK_GROUP` scope param | **Warp coalescing:** `cooperative_groups::labeled_partition(qp)` → leader reserves, all lanes write WQEs in parallel, strict slot-order rendezvous | Fixed thread-block: `__syncthreads()` | `FI_ACC_SUBGROUP` scope maps to warp coalescing; provider implements cooperative reservation + rendezvous internally |
+| **Concurrency model** | `FI_ACC_WORK_ITEM/SUBGROUP/WORK_GROUP/DEVICE` scope param | **Warp coalescing:** `cooperative_groups::labeled_partition(qp)` → leader reserves, all lanes write WQEs in parallel, strict slot-order rendezvous. **Resource sharing mode** (3 modes: Exclusive/CTA/GPU) selects atomic scope for coordination cursors | Fixed thread-block: `__syncthreads()` | `scope` parameter unifies both: `WORK_ITEM`=Exclusive (no atomics), `SUBGROUP`/`WORK_GROUP`=CTA (block-scope), `DEVICE`=GPU (device-scope); one runtime switch dispatches |
 | **Counter support** | Not shown in proposal | **Central to everything:** HW counter in GPU HBM (FI_WRITE for local completion, FI_REMOTE_WRITE for signals), 31-bit wrap semantics | Not used (CQ-only) | **P0 gap** — counters ARE the completion mechanism in production |
 | **Counter wrapping** | Not elaborated | 2^31 wrap: `(producer - consumer) & 0x7FFFFFFF`; in-flight bounded by sq_size (4096) « 2^31 | N/A | Already queryable via existing `domain_attr->max_cntr_value` / `max_err_cntr_value`; acc API just documents device-side modulo arithmetic |
 | **Signal delivery** | Not elaborated | EFA FI_REMOTE_WRITE ticks +1 per write; Add-by-N emulated as N separate 0-byte writes to peer scratch | N/A | Signal semantics are transport-specific |
 | **Multi-endpoint** | Not elaborated | data EP, pvdata EP (PutValue staging), counter EPs (per-counterId), signal EPs (remote target only) | Single QP or multi-QP | Production uses many specialized EPs per context |
 | **Multi-rail** | Not elaborated | `rail_id = contextId % num_rails`; per-rail domains/EPs/MRs; window arrays indexed by rail_id | Multiple QPs sharing single CQ | Important for production bandwidth |
-| **Per-QP serialization** | Not in proposal | NOT used by NCCL GIN — uses fine-grained atomics (`pc`, `wqes_completed`, `wqes_posted`) | N/A | Provider-internal: `fi_acc_write()` is multi-CTA safe via atomic reservation + rendezvous; no public lock API needed |
+| **Per-QP serialization** | Not in proposal | Three modes: **Exclusive** (plain loads/stores, no atomics — one thread owns QP), **CTA** (block-scope atomics), **GPU** (device-scope atomics). Selected at construction time via `ctx.resourceSharingMode`. All three compile into the binary; runtime switch dispatches. | N/A | Unified into `scope` parameter: `WORK_ITEM`=Exclusive, `SUBGROUP`/`WORK_GROUP`=CTA, `DEVICE`=GPU; provider dispatches internally with one switch |
 | **PutValue staging** | Not elaborated | Dedicated pvdata EP; per-EP slot pool (`pvSliceBase + slot_idx * pvSlotSize`); stages value then RDMA writes from pool | N/A | Application-level pattern, but API must support separate staging EP |
 | **Recv posting on GPU** | Not elaborated | NOT used (NCCL is write-only) | `efa_cuda_post_recv_wr()` + `efa_cuda_flush_rq_wrs()` | perftest demonstrates it's viable; not needed by primary consumer |
 | **GPU-side timing** | Not elaborated | N/A | `clock64()` before/after each op | Useful for benchmarking only |
@@ -677,12 +678,20 @@ int fi_ep_export_acc(struct fid_ep *ep, uint64_t flags,
 4. Fills the struct with device pointers, ring geometry, phase state, max_batch, sq_size
 5. H2D copies → returns opaque `void*` to consumer
 
+The resource sharing mode (atomic scope) is NOT declared at export time —
+it is determined per-call by the `scope` parameter on `fi_acc_write()`.
+The provider compiles all three template instantiations (Exclusive/CTA/GPU)
+into its `.cuh` header; `fi_acc_write()` dispatches with a single runtime
+switch on `scope`, matching the upstream NCCL pattern where `putImpl` switches
+on `ctx.resourceSharingMode` into template-instantiated `putImplMode<MODE>()`.
+
 The consumer only ever does:
 ```c
 void *acc_ep;
 fi_ep_export_acc(ep, 0, &acc_ep, &size);
 // ... pass acc_ep to GPU kernel ...
-fi_acc_write(acc_ep, buf, desc, size, 0, peer, raddr, rkey, NULL, scope, flags);
+fi_acc_write(acc_ep, buf, desc, size, 0, peer, raddr, rkey, NULL,
+             FI_ACC_SUBGROUP, flags);  // scope selects atomic scope too
 ```
 
 #### 2b. Counter Export
@@ -848,14 +857,31 @@ Notes against production usage:
 
 #### Scope Parameter
 
-All threads in the declared scope must issue the same operation. The provider
-uses this to coalesce SQ slot reservation and amortize doorbells.
+The `scope` parameter declares the contention level on the EP — who else may
+be posting to the same EP concurrently. The provider uses this to select the
+atomic scope for internal coordination (slot reservation, rendezvous, doorbell
+tracking). This maps directly to NCCL GIN's `ncclGinResourceSharingMode`
+template parameter on `postRdmaWrite`.
 
-| Scope | CUDA | SYCL | Behavior |
-|-------|------|------|----------|
-| `FI_ACC_WORK_ITEM` | Single thread | Work item | One slot reserved, one WQE posted, doorbell immediate |
-| `FI_ACC_SUBGROUP` | Warp | Subgroup | Provider coalesces: leader reserves N slots atomically, all lanes write WQEs in parallel, leader rings one doorbell |
-| `FI_ACC_WORK_GROUP` | Thread block | Work group | Same as subgroup but at block scope |
+The cooperation model (how threads coalesce within a post — e.g., warp-
+cooperative `labeled_partition` in EFA-GDA) is provider-internal and not
+exposed to the consumer. The provider always picks the optimal cooperation
+strategy for its hardware; `scope` only tells it what synchronization
+strength is needed.
+
+| Scope | CUDA contention boundary | Internal atomic scope | NCCL GIN equivalent |
+|-------|-------------------------|----------------------|---------------------|
+| `FI_ACC_WORK_ITEM` | One thread owns this EP | None (plain loads/stores) | `NCCL_GIN_RESOURCE_SHARING_THREAD` / `DOCA_EXCLUSIVE` |
+| `FI_ACC_SUBGROUP` | Warps within one CTA | `thread_scope_block` | `NCCL_GIN_RESOURCE_SHARING_CTA` |
+| `FI_ACC_WORK_GROUP` | Threads within one CTA | `thread_scope_block` | `NCCL_GIN_RESOURCE_SHARING_CTA` |
+| `FI_ACC_DEVICE` | Multiple CTAs on the GPU | `thread_scope_device` | `NCCL_GIN_RESOURCE_SHARING_GPU` |
+
+`FI_ACC_SUBGROUP` and `FI_ACC_WORK_GROUP` both use block-scope atomics (a
+warp is always within a CTA); they differ only in how the consumer organizes
+its threads, not in what the provider does internally.
+
+Rule of thumb: use the scope that matches the widest set of threads that
+may concurrently post to the same EP handle.
 
 #### Flags
 
@@ -883,6 +909,7 @@ they do for host-side calls like `fi_writemsg()`.
 | 64-byte WQE write to BAR MMIO | Provider does the memcpy internally |
 | `__threadfence_system()` + doorbell MMIO write | Provider does fence + MMIO internally |
 | `submitted_count += (chunk_next - db_rung)` | Provider tracks internally for flush |
+| `ncclGinScope` template (Exclusive/CTA/GPU atomic scope) | `scope` parameter — `WORK_ITEM`=Exclusive, `SUBGROUP`/`WORK_GROUP`=CTA (block-scope), `DEVICE`=GPU (device-scope); one switch dispatches |
 
 #### Backpressure (Internal to Provider)
 
@@ -1016,9 +1043,9 @@ Host-side health monitoring is more practical for production error recovery.
 
 NCCL GIN's warp-cooperative protocol is sophisticated, but its underlying
 operations (reserve slots, write WQE, fence, ring doorbell, check counter)
-can all be encapsulated inside `fi_acc_write()` with appropriate `scope`
-and `flags` parameters. The provider has enough information to implement
-the same optimizations.
+can all be encapsulated inside `fi_acc_write()` with appropriate `scope`,
+`flags`, and resource sharing mode. The provider has enough information to
+implement the same optimizations.
 
 The key insight: **NCCL's custom protocol exists because efa-dp-direct's
 `start_sq_batch`/`place_wr`/`flush_sq_wrs` was too limiting** (single-threaded,
@@ -1029,13 +1056,15 @@ a higher-level call that INTERNALLY implements the advanced protocol.
 
 ```
 Layer 0 (Host-side export — both NCCL and simple consumers need this):
-    fi_ep_export_acc() → structured attrs (or opaque blob + provider .cuh)
+    fi_ep_export_acc() → opaque blob + provider .cuh
     fi_cntr_export_acc() → GPU HBM counter pointer (for signal/flush)
     fi_av_export_acc() → (AHN, QPN, QKEY) per peer
     fi_mr_export_acc() → lkey
 
 Layer 1 (Device-side operations — provider encapsulates the hard stuff):
     fi_acc_write / fi_acc_send / fi_acc_read (+ tagged, atomics per proposal)
+        ↳ scope param = cooperation grouping AND atomic scope (unified)
+          WORK_ITEM=Exclusive, SUBGROUP/WORK_GROUP=CTA, DEVICE=GPU
     fi_acc_recv (with FI_MORE for batched posting)
     fi_acc_flush
     fi_acc_cntr_read / fi_acc_cntr_readerr / fi_acc_cntr_wait
@@ -1193,7 +1222,7 @@ FI_ACC_DEV static inline int fi_acc_write(void *acc_ep, ...) {
 | Priority | Improvement | Rationale |
 |----------|------------|-----------|
 | **P0** | Hardware counter export (GPU HBM pointer) | THE completion/backpressure/signaling mechanism in NCCL; NOT CQ |
-| **P0** | `fi_acc_write()` with `scope` + `FI_MORE` flags | Must support warp-cooperative posting + deferred doorbells internally |
+| **P0** | `fi_acc_write()` with `scope` + `FI_MORE` flags | `scope` unifies cooperation grouping AND atomic scope (WORK_ITEM/SUBGROUP/WORK_GROUP/DEVICE → Exclusive/CTA/CTA/GPU); `FI_MORE` defers doorbells; must support warp-cooperative posting internally |
 | **P0** | Address resolution export + batch | NCCL builds [total_slots × nranks] target tables |
 | **P0** | MR lkey/rkey export | WQE construction needs local + remote keys |
 | **P1** | DMA-BUF support for counters | NIC writes counter directly to GPU HBM |
@@ -1239,8 +1268,8 @@ protocol instead. perftest validates WQE format correctness across all operation
 | `fi_acc_cq_read()` | `efa_cuda_cq_poll` + `cq_pop` | **NOT used on data path** — counter-only completion. CQ struct exists but is never polled. | `efa_cuda_cq_poll(cq, tid)` + `cq_pop(batch)` |
 | Backpressure | N/A (TODO in source) | **Dual:** (a) `chunk_next - db_rung ≤ max_batch` (EFA staging), (b) `(chunk_next - *hw_cntr) & 0x7FFFFFFF ≤ sq_size` (ring overflow) | CQ-based: `scnt - ccnt < tx_depth` |
 | Doorbell control | `flush_sq_wrs()` rings immediately | **Deferred aggregation:** `aggregate` flag → write WQEs, hand off WITHOUT ringing; later group drains all deferred WQEs with one doorbell ring, bounded by `max_batch` | `flush_sq_wrs()` after each batch (immediate) |
-| Concurrency | `FI_ACC_WORK_GROUP` scope | `cooperative_groups::labeled_partition(qp)` → dynamic warp groups; leader atomics on `pc`/`wqes_completed`/`wqes_posted`; strict slot-order rendezvous | `__syncthreads()` block sync |
-| Per-QP serialization | Provider-internal (no public API) | Fine-grained atomics: `pc` (reserve), `wqes_completed` (handoff turn), `wqes_posted` (db_rung) — encapsulated inside provider's `fi_acc_write()` | Single-thread (no contention) |
+| Concurrency | `FI_ACC_WORK_GROUP` scope | `cooperative_groups::labeled_partition(qp)` → dynamic warp groups; leader atomics on `pc`/`wqes_completed`/`wqes_posted`; strict slot-order rendezvous. Resource sharing mode (Exclusive/CTA/GPU) selects atomic scope via template dispatch | `__syncthreads()` block sync |
+| Per-QP serialization | `scope` parameter (unified) | Three modes: **Exclusive** = plain loads/stores (no atomics); **CTA** = `thread_scope_block` atomics; **GPU** = `thread_scope_device` atomics. Runtime switch at entry dispatches to template-instantiated code. `scope` maps: `WORK_ITEM`→Exclusive, `SUBGROUP`/`WORK_GROUP`→CTA, `DEVICE`→GPU. EFA-GDA currently collapses Exclusive→GPU. | Single-thread (no contention) |
 | Counter semantics | (missing) | 2^31 wrap; offset-based reset (NIC counter is read-only); FI_WRITE = local completion, FI_REMOTE_WRITE = remote signal | Not used |
 | Multi-EP | (missing) | data + pvdata + counter_handles[N] + signal_handles[N]; different roles per endpoint | Single QP/CQ pair |
 
@@ -1333,8 +1362,14 @@ internally discovers its cooperation group — exactly the shape of
 `fi_acc_write` with `FI_ACC_SUBGROUP`. The provider's internals become a
 near-verbatim copy of GIN's protocol: `labeled_partition` on the EP, leader
 `fetch_add` reservation, chunked ≤ max_batch windows, dual backpressure,
-strict slot-order rendezvous, deferred doorbell for `FI_MORE`. The
-`(ah, qpn, qkey)` tuple becomes an opaque peer entry from the AV export;
+strict slot-order rendezvous, deferred doorbell for `FI_MORE`. The `scope`
+parameter (`FI_ACC_SUBGROUP`) also tells the provider to use block-scope
+atomics for the internal coordination — matching GIN's CTA sharing mode.
+If the consumer uses `FI_ACC_WORK_ITEM` instead, the provider skips all
+atomics entirely (plain loads/stores), matching GIN's Exclusive mode.
+If multiple CTAs share an EP, the consumer uses `FI_ACC_DEVICE` for
+device-scope atomics, matching GIN's GPU sharing mode.
+The `(ah, qpn, qkey)` tuple becomes an opaque peer entry from the AV export;
 `srcLkey` becomes the desc from the MR export. Signal Add-by-N stays an
 application-level loop of N−1 zero-byte `fi_acc_write` calls.
 
@@ -1345,8 +1380,8 @@ application-level loop of N−1 zero-byte `fi_acc_write` calls.
 | Doorbell drain for deferred WQEs | ✅ `fi_acc_flush(acc_ep)` — in the proposal; rings db for all written-but-un-rung WQEs, TX-side only |
 | Completion drain (GIN Flush / quiet) | ✅ No new API — consumer-owned baseline pattern (below) |
 | PPS processing hint | ✅ Existing `FI_EFA_WR_HIGH_PPS` (bit 60, `fi_ext_efa.h`) flows through `fi_acc_write` flags exactly as it does through `fi_writemsg()` today; provider-specific op flags (bits 60–63) pass through unchanged and fold away at compile time in inlined code |
-| PutValue staging | ⏳ Open — `fi_acc_inject_write` proposal (below) |
-| Sharing mode / atomic scope | ⏳ Open — compile-time scope parameterization (below) |
+| PutValue staging | ✅ Resolved — `FI_INJECT` flag on `fi_acc_write()`; provider copies data internally (mlx5: WQE inline, EFA: pool slot staging) |
+| Sharing mode / atomic scope | ✅ Resolved — unified into `scope` parameter: `WORK_ITEM`=Exclusive, `SUBGROUP`/`WORK_GROUP`=CTA, `DEVICE`=GPU; one runtime switch dispatches |
 | Return type | 💬 Discussable — void vs int (below) |
 
 ### Completion drain: consumer-owned baseline pattern
@@ -1385,60 +1420,157 @@ Contract requirements the spec must state:
    threads/CTAs, the consumer aggregates its own N (its concurrency layout,
    its bookkeeping).
 
-### Two concurrency dimensions (from reading postRdmaWrite)
+### Concurrency: scope unifies cooperation and atomic scope
 
-GDAKI has two orthogonal concurrency dimensions; our single `scope` parameter
-currently captures only the first:
+GDAKI has two concurrency concerns that initially appear orthogonal but
+collapse into our single `scope` parameter:
 
-**Dimension 1 — Cooperation grouping (who coalesces into one post):**
+**Concern 1 — Cooperation grouping (who coalesces into one post):**
 dynamic, discovered at runtime via `coalesced_threads()` +
 `labeled_partition(qp)`. Groups form per-QP among currently-active warp lanes
 (1 to 32 lanes; different lanes may simultaneously target different QPs and
 form separate groups). Leader reserves the group's slots with one atomic;
-all lanes write WQEs in parallel; leader rings once. `FI_ACC_SUBGROUP` maps
-to this — with the note that NCCL never declares the group; it is discovered.
+all lanes write WQEs in parallel; leader rings once.
 
-**Dimension 2 — Resource sharing mode (who else contends on the same EP):**
+**Concern 2 — Resource sharing mode (what contention level on this EP):**
+
+All three NCCL GIN backends (EFA-GDA, GDAKI/DOCA, GPI) implement three
+resource sharing modes that control the scope of internal atomics/fences:
 
 ```c
+// NCCL's unified enum (gin_device_common.h):
 enum ncclGinResourceSharingMode : uint8_t {
-  NCCL_GIN_RESOURCE_SHARING_GPU    = 0,  // any CTA may post to this QP
-  NCCL_GIN_RESOURCE_SHARING_CTA    = 1,  // only this CTA posts to this QP
-  NCCL_GIN_RESOURCE_SHARING_THREAD = 2,
+  NCCL_GIN_RESOURCE_SHARING_GPU    = 0,  // any CTA on the GPU may post to this QP
+  NCCL_GIN_RESOURCE_SHARING_CTA    = 1,  // only threads in one CTA post to this QP
+  NCCL_GIN_RESOURCE_SHARING_THREAD = 2,  // exclusive — one thread owns this QP
 };
-// maps to atomic scope for the coordination cursors (pc, wqes_completed,
-// wqes_posted, submitted_count):
-ncclGinScope = (mode == CTA) ? cuda::thread_scope_block : cuda::thread_scope_device;
+
+// DOCA/NVIDIA equivalent (doca_gpunetio_verbs_def.h):
+enum doca_gpu_dev_verbs_resource_sharing_mode {
+  DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE = 0,  // one thread
+  DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_CTA       = 1,  // one CTA
+  DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU       = 2,  // whole GPU
+};
+
+// GPI equivalent (gin_gpi_device_host_common.h):
+enum gpi_resource_sharing_mode {
+  GPI_RESOURCE_SHARING_MODE_EXCLUSIVE = 0,
+  GPI_RESOURCE_SHARING_MODE_CTA       = 1,
+  GPI_RESOURCE_SHARING_MODE_GPU       = 2,
+};
 ```
 
-Block-scope atomics are meaningfully cheaper than device-scope on the hot
-path. In GIN this is a **C++ template parameter** — compile-time, zero
-runtime dispatch. The HW counter load is always system-scope acquire
-regardless (NIC writes over PCIe).
+Each mode determines what synchronization primitives the provider uses
+internally on QP coordination state (producer index, ready index, cursors):
 
-Open question: how `fi_acc_write` expresses dimension 2. A runtime parameter
-cannot select atomic scope without hot-path branching; candidates are a
-compile-time template/constexpr parameter on the device functions, or an
-export-time declaration (`FI_ACC_SHARE_CTA / FI_ACC_SHARE_GPU` on
-`fi_ep_export_acc`) that selects a provider code path.
+| Mode | Atomic scope | Atomic add | Lock | mark_wqes_ready |
+|------|-------------|------------|------|-----------------|
+| **Exclusive/Thread** | None | Plain load + store (no atomic instruction) | Plain `*lock = 1` | Direct store — no CAS, no fence, no spin |
+| **CTA** | `thread_scope_block` | `cuda::atomic_ref<T, block>::fetch_add(relaxed)` | `atomicCAS_block` spin + block-scope acquire fence | Block-scope CAS spin (rendezvous) + block-scope fences |
+| **GPU** | `thread_scope_device` | `cuda::atomic_ref<T, device>::fetch_add(relaxed)` | `atomicCAS` (global) spin + device-scope acquire fence | Device-scope CAS spin (rendezvous) + device-scope fences |
 
-### PutValue staging (open)
+The performance impact is significant: Exclusive eliminates ALL atomic
+instructions on the hot path (just plain memory loads/stores), CTA uses
+cheaper block-scoped atomics, and GPU uses full device-scoped atomics.
+The HW counter load is always system-scope acquire regardless of mode
+(NIC writes over PCIe).
+
+**How backends implement the dispatch:** All three backends use a runtime
+`switch` at the top-level entry point that dispatches to template-instantiated
+per-mode functions. All three template instantiations are compiled into the
+same GPU binary; the switch selects which one runs. Within each instantiation,
+the mode is a compile-time constant so all conditional logic
+(`if (resource_sharing_mode == EXCLUSIVE)`) is constant-folded by the compiler
+and optimal code is generated for each path. The cost is one branch at entry
+plus code size (3 copies of the function body in the binary):
+
+```c
+// GDAKI pattern (gin_gdaki.h):
+template <typename Coop>
+NCCL_DEVICE_INLINE static void putImpl(ncclGinCtx ctx, Coop coop, ...) {
+  switch ((ncclGinResourceSharingMode)ctx.resourceSharingMode) {
+  case NCCL_GIN_RESOURCE_SHARING_THREAD:
+    putImplMode<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE>(...);
+    break;
+  case NCCL_GIN_RESOURCE_SHARING_CTA:
+    putImplMode<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_CTA>(...);
+    break;
+  default:
+    putImplMode<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(...);
+    break;
+  }
+}
+
+// EFA-GDA pattern (gin_efa_gda.h) — currently only distinguishes two:
+template <typename Coop>
+NCCL_DEVICE_INLINE static void putImpl(ncclGinCtx ctx, Coop coop, ...) {
+  switch ((ncclGinResourceSharingMode)ctx.resourceSharingMode) {
+  case NCCL_GIN_RESOURCE_SHARING_CTA:
+    putImplMode<NCCL_GIN_RESOURCE_SHARING_CTA>(...);
+    break;
+  default:  // GPU and THREAD both fall here → device scope
+    putImplMode<NCCL_GIN_RESOURCE_SHARING_GPU>(...);
+    break;
+  }
+}
+```
+
+**EFA-GDA only implements 2 of 3 modes:** It collapses THREAD/Exclusive into
+GPU (device-scope atomics) because its warp-cooperative protocol
+(`coalesced_threads` + `labeled_partition` + `pc.fetch_add`) inherently
+uses atomics even for a group of size 1. A single exclusive thread still
+enters the cooperative protocol — it just gets a group of 1 lane but still
+does an atomic `fetch_add` on `pc`. GDAKI and GPI fully implement all three
+because their protocol structure (lock + single-poster WQE build + unlock)
+can trivially degrade to plain memory ops in exclusive mode.
+
+**Unified mapping to our `scope` parameter:** These two concerns collapse
+into a single parameter because the cooperation group directly implies the
+contention level:
+
+| `scope` | Contention boundary | Atomic scope |
+|---------|-------------------|--------------|
+| `FI_ACC_WORK_ITEM` | One thread owns this EP | None (plain loads/stores) |
+| `FI_ACC_SUBGROUP` | Warps within one CTA | `thread_scope_block` |
+| `FI_ACC_WORK_GROUP` | Threads within one CTA | `thread_scope_block` |
+| `FI_ACC_DEVICE` | Multiple CTAs on the GPU | `thread_scope_device` |
+
+The provider dispatches on `scope` with a single runtime switch (same
+pattern as NCCL's switch on `ctx.resourceSharingMode`), entering template-
+instantiated code where the atomic scope is a compile-time constant.
+
+**Edge case — multiple CTAs, warp-cooperative:** If multiple CTAs each use
+`FI_ACC_SUBGROUP` on the same EP simultaneously, the caller must use
+`FI_ACC_DEVICE` instead to signal device-scope contention. The scope
+declares the *maximum* contention level, not just the cooperation width.
+Rule of thumb: use the scope that matches the widest set of threads that
+may concurrently post to the same EP handle.
+
+### PutValue staging (resolved)
 
 GIN's PutValue stages the register value into a pool slot addressed by the
 **reserved SQ slot index** (`my_slot % sq_size`), then points the WQE's SGE at
 the staged copy. The slot index is only known after reservation — which
-`fi_acc_write` hides. Proposal: an inject-style variant where the provider
-owns the staging pool and does the slot-indexed copy internally (it reserved
-the slot, it knows the index):
+`fi_acc_write` hides.
+
+**Resolution:** Use the existing `FI_INJECT` flag on `fi_acc_write()`:
 
 ```c
-int fi_acc_inject_write(void *acc_ep, const void *buf, size_t len,
-                        uint64_t raddr, uint64_t rkey, void *acc_peer,
-                        enum fi_acc_scope scope, uint64_t flags);
+fi_acc_write(acc_ep, &value, NULL /*no desc*/, sizeof(value), 0, peer,
+             raddr, rkey, NULL, scope, FI_INJECT | flags);
 ```
 
-This matches host-side `fi_inject_write` semantics: buffer reusable on
-return, no desc needed, small-size limit (the pool slot size).
+`FI_INJECT` already exists in libfabric with this semantic: the provider
+copies the data from `buf` internally and the caller's buffer is reusable
+immediately on return. No MR descriptor needed (pass NULL for `desc`).
+
+- On mlx5/GDAKI: provider embeds the value directly in the WQE inline
+  data segment (`doca_gpu_dev_verbs_p<T>` — no staging buffer needed)
+- On EFA: provider stages the value into an internal pool slot indexed by
+  the reserved SQ slot (`my_slot % sq_size`), then points the WQE's SGE
+  at the staged copy (same as GIN's PutValue path today)
+
+No separate `fi_acc_inject_write` function needed — one API, one flag.
 
 ### Return type: void vs int (discussable)
 
