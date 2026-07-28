@@ -52,7 +52,10 @@ directly manages the SQ ring, doorbells, backpressure, and completion
 counters — all built on top of the raw queue metadata exposed by the host-side
 ops.
 
-To address this fragmentation, the libfabric community has proposed a
+To address the fragmentation of provider-specific host APIs (e.g.,
+`fi_efa_ops_gda`), vendor device libraries (e.g., efa-dp-direct), and
+provider details hardcoded in consumer kernels (SQ ring management,
+doorbells, phase bits), the libfabric community has proposed a
 [preliminary fi_accelerator API](https://github.com/ofiwg/libfabric/discussions/12166)
 defining host-side export functions and device-side post/completion primitives.
 This document aims to enhance and polish that preliminary API to ensure it
