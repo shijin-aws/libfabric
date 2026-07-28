@@ -498,6 +498,13 @@ int efa_prov_info_alloc(struct fi_info **prov_info_ptr,
 		    device->device_caps & EFADV_DEVICE_ATTR_CAPS_RDMA_WRITE)
 			prov_info->caps |= (OFI_TX_RMA_CAPS | OFI_RX_RMA_CAPS);
 #endif
+
+#if HAVE_EFADV_QUERY_QP_WQS
+		/* OFI Accelerator API (GPU-initiated data path) is
+		 * supported when rdma-core can export raw queue
+		 * geometry for device-side access. */
+		prov_info->caps |= FI_ACC;
+#endif
 	} else {
 		if (ep_type != FI_EP_DGRAM) {
 			EFA_WARN(FI_LOG_DOMAIN, "Unsupported EFA info type: %d\n", ep_type);

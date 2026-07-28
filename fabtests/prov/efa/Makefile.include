@@ -54,7 +54,8 @@ if BUILD_EFA_RDMA_CHECKER
 bin_PROGRAMS += prov/efa/src/fi_efa_rdma_checker
 endif BUILD_EFA_RDMA_CHECKER
 if EFAGDA
-bin_PROGRAMS += prov/efa/src/fi_efa_gda
+bin_PROGRAMS += prov/efa/src/fi_efa_gda \
+		prov/efa/src/fi_acc_gda
 endif EFAGDA
 if HAVE_EFADV_CREATE_COMP_CNTR
 bin_PROGRAMS += prov/efa/src/fi_efa_hw_cntr
@@ -152,11 +153,22 @@ EXTRA_prov_efa_src_fi_efa_gda_DEPENDENCIES = $(srcdir)/prov/efa/src/efagda/libef
 $(srcdir)/prov/efa/src/efagda/libefagda.so:
 	$(MAKE) -C $(srcdir)/prov/efa/src/efagda EFA_DP_DIRECT=$(EFA_DP_DIRECT)
 
+prov_efa_src_fi_acc_gda_SOURCES = prov/efa/src/fi_acc_gda.c
+prov_efa_src_fi_acc_gda_LDFLAGS = -L$(srcdir)/prov/efa/src/fi_acc \
+    -Wl,-rpath=$(abs_srcdir)/prov/efa/src/fi_acc
+prov_efa_src_fi_acc_gda_LDADD = -lfiacckernels -L/usr/local/cuda/lib64 -lcudart -lcuda libfabtests.la
+EXTRA_prov_efa_src_fi_acc_gda_DEPENDENCIES = $(srcdir)/prov/efa/src/fi_acc/libfiacckernels.so
+
+$(srcdir)/prov/efa/src/fi_acc/libfiacckernels.so:
+	$(MAKE) -C $(srcdir)/prov/efa/src/fi_acc LIBFABRIC_INCLUDE=$(LIBFABRIC_INCLUDE)
+
 clean-local:
 	$(MAKE) -C $(srcdir)/prov/efa/src/efagda EFA_DP_DIRECT=$(EFA_DP_DIRECT) clean
+	$(MAKE) -C $(srcdir)/prov/efa/src/fi_acc clean
 endif EFAGDA
 
 EXTRA_DIST += prov/efa/src/efagda
+EXTRA_DIST += prov/efa/src/fi_acc
 
 prov_efa_src_fi_efa_hw_cntr_SOURCES = \
 	prov/efa/src/efa_hw_cntr_test.c \

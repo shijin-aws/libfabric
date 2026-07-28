@@ -11,6 +11,7 @@
 
 #include "efa.h"
 #include "efa_av.h"
+#include "efa_acc.h"
 #include "rdm/efa_rdm_domain.h"
 #include "rdm/efa_rdm_fabric.h"
 #include "rdm/efa_rdm_pke_utils.h"
@@ -825,7 +826,7 @@ static struct fi_ops efa_av_fi_ops = {
 	.close = efa_av_close,
 	.bind = fi_no_bind,
 	.control = fi_no_control,
-	.ops_open = fi_no_ops_open,
+	.ops_open = efa_acc_ops_open,
 };
 
 /**

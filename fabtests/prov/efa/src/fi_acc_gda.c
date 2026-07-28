@@ -62,10 +62,16 @@ static int acc_alloc(uint64_t device, uint64_t size, uint64_t alignment,
 	if (ret)
 		return ret;
 
-	ret = ft_hmem_get_dmabuf_fd(opts.iface, buf, (size_t)size, fd, offset);
-	if (ret) {
-		ft_hmem_free(opts.iface, buf);
-		return ret;
+	if (flags & FI_ACC_ALLOC_DMABUF) {
+		ret = ft_hmem_get_dmabuf_fd(opts.iface, buf, (size_t)size,
+					    fd, offset);
+		if (ret) {
+			ft_hmem_free(opts.iface, buf);
+			return ret;
+		}
+	} else {
+		*fd = -1;
+		*offset = 0;
 	}
 
 	*addr = buf;
@@ -75,12 +81,14 @@ static int acc_alloc(uint64_t device, uint64_t size, uint64_t alignment,
 static int acc_import(uint64_t device, void *host_addr,
 		      uint64_t size, uint64_t flags, void **dev_addr)
 {
-	unsigned int cuda_flags = CU_MEMHOSTREGISTER_DEVICEMAP;
+	unsigned int cuda_flags = 0;
 	CUdeviceptr dev_ptr = 0;
 	int status;
 
-	if (flags & (1ULL << 0)) /* I/O memory (BAR MMIO) */
+	if (flags & FI_ACC_IMPORT_IOMEMORY)
 		cuda_flags |= CU_MEMHOSTREGISTER_IOMEMORY;
+	if (flags & FI_ACC_IMPORT_DEVICEMAP)
+		cuda_flags |= CU_MEMHOSTREGISTER_DEVICEMAP;
 
 	status = cuMemHostRegister(host_addr, (size_t)size, cuda_flags);
 	if (status != CUDA_SUCCESS) {

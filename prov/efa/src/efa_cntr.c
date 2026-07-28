@@ -82,7 +82,7 @@ static struct fi_ops efa_cntr_fi_ops = {
 	.close = efa_cntr_close,
 	.bind = fi_no_bind,
 	.control = fi_no_control,
-	.ops_open = fi_no_ops_open,
+	.ops_open = efa_acc_ops_open,
 };
 
 void efa_cntr_progress_ibv_cq_poll_list(struct efa_cntr *efa_cntr)
@@ -165,7 +165,7 @@ int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 					free(cntr);
 					return -FI_EINVAL;
 				}
-				ret = ai->alloc(ai->device, 8, 8, 0,
+				ret = ai->alloc(ai->device, 8, 8, FI_ACC_ALLOC_DMABUF,
 						&comp_ptr, &comp_fd, &comp_offset);
 			} else {
 				ret = ofi_hmem_dev_alloc(ai->iface, ai->device,
@@ -184,7 +184,7 @@ int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 
 			/* Allocate GPU HBM for error counter (8 bytes) */
 			if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
-				ret = ai->alloc(ai->device, 8, 8, 0,
+				ret = ai->alloc(ai->device, 8, 8, FI_ACC_ALLOC_DMABUF,
 						&err_ptr, &err_fd, &err_offset);
 			} else {
 				ret = ofi_hmem_dev_alloc(ai->iface, ai->device,

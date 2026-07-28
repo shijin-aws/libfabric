@@ -36,11 +36,12 @@
 #include "acc_cuda/fi_ext_efa_acc.cuh"
 
 /*
- * Flag passed to import/get_device_ptr to indicate the host VA is
- * BAR MMIO (PCIe I/O memory) rather than regular host RAM.
- * Maps to cudaHostRegisterIoMemory on the CUDA path.
+ * Import flag legend (defined in fi_acc.h):
+ *   FI_ACC_IMPORT_IOMEMORY  — host VA is PCIe BAR MMIO
+ *   FI_ACC_IMPORT_DEVICEMAP — map into accelerator address space
+ * BAR regions (SQ buffer, doorbells) need both; host RAM regions
+ * (RQ buffer, host CQ ring) need DEVICEMAP only.
  */
-#define ACC_IOMEMORY	(1ULL << 0)
 
 #if HAVE_EFADV_QUERY_QP_WQS
 #include <infiniband/efadv.h>
@@ -166,14 +167,14 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 	void *sq_buf_dev = NULL;
 	ret = acc_import_region(ai, qp_sq_attr.buffer,
 				(size_t)qp_sq_attr.num_entries * qp_sq_attr.entry_size,
-				ACC_IOMEMORY,
+				FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
 				&sq_buf_dev);
 	if (ret) return ret;
 
 	/* Map SQ doorbell (BAR MMIO) → GPU */
 	void *sq_db_dev = NULL;
 	ret = acc_import_region(ai, qp_sq_attr.doorbell, (size_t)page_size,
-				ACC_IOMEMORY,
+				FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
 				&sq_db_dev);
 	if (ret) return ret;
 
@@ -183,11 +184,11 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
 	if (qp_rq_attr.buffer) {
 		ret = acc_import_region(ai, qp_rq_attr.buffer,
 					(size_t)qp_rq_attr.num_entries * qp_rq_attr.entry_size,
-					0, &rq_buf_dev);
+					FI_ACC_IMPORT_DEVICEMAP, &rq_buf_dev);
 		if (ret) return ret;
 
 		ret = acc_import_region(ai, qp_rq_attr.doorbell, (size_t)page_size,
-					ACC_IOMEMORY,
+					FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
 					&rq_db_dev);
 		if (ret) return ret;
 	}
@@ -289,7 +290,7 @@ int efa_acc_cq_export(struct fid_cq *cq_fid, uint64_t flags,
 	} else {
 		ret = acc_import_region(ai, efadv_attr.buffer,
 					(size_t)efadv_attr.num_entries * efadv_attr.entry_size,
-					0, &cq_buf_dev);
+					FI_ACC_IMPORT_DEVICEMAP, &cq_buf_dev);
 		if (ret) return ret;
 	}
 
@@ -476,6 +477,31 @@ int efa_acc_mr_get_info(struct fid_mr *mr_fid, uint64_t flags,
 	if (addr) *addr = (uint64_t)(uintptr_t)efa_mr->ibv_mr->addr;
 	if (rkey) *rkey = (uint64_t)fi_mr_key(&efa_mr->mr_fid);
 
+	return FI_SUCCESS;
+}
+
+/*
+ * =============================================================================
+ * fi_open_ops dispatch — shared fi_acc_ops table
+ * =============================================================================
+ */
+static struct fi_acc_ops efa_acc_ops = {
+	.size        = sizeof(struct fi_acc_ops),
+	.ep_export   = efa_acc_ep_export,
+	.cq_export   = efa_acc_cq_export,
+	.cntr_export = efa_acc_cntr_export,
+	.mr_export   = efa_acc_mr_export,
+	.av_export   = efa_acc_av_export,
+	.mr_get_info = efa_acc_mr_get_info,
+};
+
+int efa_acc_ops_open(struct fid *fid, const char *name, uint64_t flags,
+		     void **ops, void *context)
+{
+	if (!name || strcmp(name, FI_ACC_OPS_NAME))
+		return -FI_EINVAL;
+
+	*ops = &efa_acc_ops;
 	return FI_SUCCESS;
 }
 

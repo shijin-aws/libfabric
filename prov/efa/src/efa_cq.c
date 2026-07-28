@@ -1005,7 +1005,7 @@ struct fi_ops efa_cq_fi_ops = {
 	.close = efa_cq_close,
 	.bind = fi_no_bind,
 	.control = efa_cq_control,
-	.ops_open = fi_no_ops_open,
+	.ops_open = efa_acc_ops_open,
 };
 
 
@@ -1181,7 +1181,8 @@ int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 				return -FI_EINVAL;
 			}
 			err = ai->alloc(ai->device, (uint64_t)buf_size, 4096,
-					0, &gpu_ptr, &fd, &offset);
+					FI_ACC_ALLOC_DMABUF, &gpu_ptr, &fd,
+					&offset);
 		} else {
 			/* FI_ACC_MEM_PROVIDER */
 			err = ofi_hmem_dev_alloc(ai->iface, ai->device, &gpu_ptr, buf_size);

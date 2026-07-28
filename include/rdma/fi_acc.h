@@ -117,6 +117,24 @@ enum fi_acc_mem_type {
 	FI_ACC_MEM_PROVIDER,     /* Provider manages device memory internally */
 };
 
+/* Proposal-facing alias */
+#define FI_ACC_MEM_USER		FI_ACC_MEM_USER_ALLOC
+
+/*
+ * Flags passed by the provider to the consumer's alloc callback.
+ */
+#define FI_ACC_ALLOC_DMABUF	(1ULL << 0) /* Consumer must export a DMA-BUF
+					     * fd for the allocation (NIC will
+					     * DMA directly to this memory) */
+
+/*
+ * Flags passed by the provider to the consumer's import callback.
+ * The consumer translates these to its platform's equivalents
+ * (e.g., CUDA: CU_MEMHOSTREGISTER_IOMEMORY / CU_MEMHOSTREGISTER_DEVICEMAP).
+ */
+#define FI_ACC_IMPORT_IOMEMORY	(1ULL << 0) /* Host addr is PCIe BAR MMIO */
+#define FI_ACC_IMPORT_DEVICEMAP	(1ULL << 1) /* Map into device addr space */
+
 struct fi_acc_info {
 	enum fi_hmem_iface   iface;     /* FI_HMEM_CUDA, FI_HMEM_ZE, etc. */
 	uint64_t             device;    /* Device ordinal */
@@ -165,9 +183,10 @@ struct fi_acc_info {
 #ifndef FI_ACC_SCOPE_DEFINED
 #define FI_ACC_SCOPE_DEFINED
 enum fi_acc_scope {
-	FI_ACC_WORK_ITEM,    /* Single thread */
-	FI_ACC_SUBGROUP,     /* Warp (CUDA) / Subgroup (SYCL) */
-	FI_ACC_WORK_GROUP,   /* Thread block (CUDA) / Work-group (SYCL) */
+	FI_ACC_WORK_ITEM  = 0,   /* Single thread owns the EP */
+	FI_ACC_SUBGROUP   = 1,   /* Warp (CUDA) / Subgroup (SYCL) */
+	FI_ACC_WORK_GROUP = 2,   /* Thread block (CUDA) / Work-group (SYCL) */
+	FI_ACC_DEVICE     = 3,   /* Multiple work-groups on the device */
 };
 #endif
 
@@ -180,6 +199,40 @@ enum fi_acc_scope {
  * or constructing the contents.
  * =============================================================================
  */
+
+/*
+ * =============================================================================
+ * Provider dispatch — fi_open_ops() extension pattern
+ *
+ * Each exportable object (EP, CQ, counter, MR, AV) exposes an fi_acc ops
+ * struct via fi_open_ops() on its fid. The static-inline fi_*_export_acc()
+ * wrappers below hide this from the consumer.
+ * =============================================================================
+ */
+
+#define FI_ACC_OPS_NAME "fi_acc_ops"
+
+struct fi_acc_ops {
+	size_t size;
+	int (*ep_export)(struct fid_ep *ep, uint64_t flags,
+			 void **acc_ep, size_t *size);
+	int (*cq_export)(struct fid_cq *cq, uint64_t flags,
+			 void **acc_cq, size_t *size);
+	int (*cntr_export)(struct fid_cntr *cntr, uint64_t flags,
+			   void **acc_cntr, size_t *size);
+	int (*mr_export)(struct fid_mr **mrs, size_t count, uint64_t flags,
+			 void **acc_descs, size_t *size);
+	int (*av_export)(struct fid_av *av, const fi_addr_t *fi_addrs,
+			 size_t count, uint64_t flags,
+			 void **acc_peers, size_t *size);
+	int (*mr_get_info)(struct fid_mr *mr, uint64_t flags,
+			   uint32_t *lkey, uint64_t *addr, uint64_t *rkey);
+};
+
+static inline int fi_acc_get_ops(struct fid *fid, struct fi_acc_ops **ops)
+{
+	return fid->ops->ops_open(fid, FI_ACC_OPS_NAME, 0, (void **)ops, NULL);
+}
 
 /**
  * fi_ep_export_acc - Export endpoint for accelerator access.
@@ -194,8 +247,15 @@ enum fi_acc_scope {
  *   - Allocates and populates a GPU-resident descriptor
  *   - Returns a pointer the device kernel can use with fi_acc_write() etc.
  */
-int fi_ep_export_acc(struct fid_ep *ep, uint64_t flags,
-		     void **acc_ep, size_t *size);
+static inline int fi_ep_export_acc(struct fid_ep *ep, uint64_t flags,
+				   void **acc_ep, size_t *size)
+{
+	struct fi_acc_ops *ops;
+	int ret = fi_acc_get_ops(&ep->fid, &ops);
+	if (ret)
+		return ret;
+	return ops->ep_export(ep, flags, acc_ep, size);
+}
 
 /**
  * fi_cq_export_acc - Export CQ for accelerator completion polling.
@@ -204,8 +264,15 @@ int fi_ep_export_acc(struct fid_ep *ep, uint64_t flags,
  * @acc_cq:   [out] Opaque device-accessible CQ handle (GPU memory)
  * @size:     [out] Size of the exported handle
  */
-int fi_cq_export_acc(struct fid_cq *cq, uint64_t flags,
-		     void **acc_cq, size_t *size);
+static inline int fi_cq_export_acc(struct fid_cq *cq, uint64_t flags,
+				   void **acc_cq, size_t *size)
+{
+	struct fi_acc_ops *ops;
+	int ret = fi_acc_get_ops(&cq->fid, &ops);
+	if (ret)
+		return ret;
+	return ops->cq_export(cq, flags, acc_cq, size);
+}
 
 /**
  * fi_cntr_export_acc - Export counter for accelerator access.
@@ -218,8 +285,15 @@ int fi_cq_export_acc(struct fid_cq *cq, uint64_t flags,
  * writes directly. fi_acc_cntr_read() on the device reads it in one
  * instruction with zero overhead.
  */
-int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
-		       void **acc_cntr, size_t *size);
+static inline int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
+				     void **acc_cntr, size_t *size)
+{
+	struct fi_acc_ops *ops;
+	int ret = fi_acc_get_ops(&cntr->fid, &ops);
+	if (ret)
+		return ret;
+	return ops->cntr_export(cntr, flags, acc_cntr, size);
+}
 
 /**
  * fi_mr_export_acc - Export MR descriptors for accelerator WQE construction.
@@ -227,13 +301,25 @@ int fi_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
  * @count:    Number of MRs to export
  * @flags:    Reserved, must be 0
  * @acc_descs:[out] Contiguous array of opaque device-accessible MR descriptors
- * @size:     [out] Total size of the exported array
+ * @size:     [out] Total size of the exported array (stride = size / count)
  *
- * The device kernel indexes into this array and passes the entry as `desc`
- * to fi_acc_write/send/read. For single MR, pass count=1.
+ * Batch-native: the device kernel indexes into this array and passes the
+ * entry as `desc` to fi_acc_write/send/read. For single MR, pass count=1.
  */
-int fi_mr_export_acc(struct fid_mr **mrs, size_t count, uint64_t flags,
-		     void **acc_descs, size_t *size);
+static inline int fi_mr_export_acc(struct fid_mr **mrs, size_t count,
+				   uint64_t flags, void **acc_descs,
+				   size_t *size)
+{
+	struct fi_acc_ops *ops;
+	int ret;
+
+	if (!mrs || !count)
+		return -FI_EINVAL;
+	ret = fi_acc_get_ops(&mrs[0]->fid, &ops);
+	if (ret)
+		return ret;
+	return ops->mr_export(mrs, count, flags, acc_descs, size);
+}
 
 /**
  * fi_av_export_acc - Export resolved peer addresses for accelerator use.
@@ -242,15 +328,23 @@ int fi_mr_export_acc(struct fid_mr **mrs, size_t count, uint64_t flags,
  * @count:     Number of entries to export
  * @flags:     Reserved, must be 0
  * @acc_peers: [out] Contiguous array of opaque peer handles (GPU memory)
- * @size:      [out] Total size of the exported array
+ * @size:      [out] Total size of the exported array (stride = size / count)
  *
- * The device kernel indexes into this array and passes the entry as
- * `acc_peer` to fi_acc_write/send. For single peer, pass count=1.
+ * Batch-native: the device kernel indexes into this array and passes the
+ * entry as `acc_peer` to fi_acc_write/send. For single peer, pass count=1.
  * FI_ADDR_UNSPEC entries are zeroed.
  */
-int fi_av_export_acc(struct fid_av *av, const fi_addr_t *fi_addrs,
-		     size_t count, uint64_t flags,
-		     void **acc_peers, size_t *size);
+static inline int fi_av_export_acc(struct fid_av *av,
+				   const fi_addr_t *fi_addrs, size_t count,
+				   uint64_t flags, void **acc_peers,
+				   size_t *size)
+{
+	struct fi_acc_ops *ops;
+	int ret = fi_acc_get_ops(&av->fid, &ops);
+	if (ret)
+		return ret;
+	return ops->av_export(av, fi_addrs, count, flags, acc_peers, size);
+}
 
 /**
  * fi_mr_get_acc_info - Get local MR info for key exchange / allgather.
@@ -262,8 +356,16 @@ int fi_av_export_acc(struct fid_av *av, const fi_addr_t *fi_addrs,
  *
  * Used for allgather-based key exchange (regMrSym pattern).
  */
-int fi_mr_get_acc_info(struct fid_mr *mr, uint64_t flags,
-		       uint32_t *lkey, uint64_t *addr, uint64_t *rkey);
+static inline int fi_mr_get_acc_info(struct fid_mr *mr, uint64_t flags,
+				     uint32_t *lkey, uint64_t *addr,
+				     uint64_t *rkey)
+{
+	struct fi_acc_ops *ops;
+	int ret = fi_acc_get_ops(&mr->fid, &ops);
+	if (ret)
+		return ret;
+	return ops->mr_get_info(mr, flags, lkey, addr, rkey);
+}
 
 #ifdef __cplusplus
 }

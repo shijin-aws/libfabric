@@ -4,6 +4,7 @@
 #include "config.h"
 #include <ofi_util.h>
 #include "efa.h"
+#include "efa_acc.h"
 #include "efa_direct_ope.h"
 #include "rdm/efa_rdm_ep.h"
 #include "rdm/efa_rdm_ope.h"
@@ -287,7 +288,7 @@ struct fi_ops efa_mr_ops = {
 	.close = efa_mr_close,
 	.bind = fi_no_bind,
 	.control = fi_no_control,
-	.ops_open = fi_no_ops_open,
+	.ops_open = efa_acc_ops_open,
 };
 
 #if HAVE_EFA_DMABUF_MR

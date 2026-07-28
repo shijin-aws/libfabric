@@ -47,6 +47,14 @@ int efa_acc_av_export(struct fid_av *av, const fi_addr_t *fi_addrs,
 int efa_acc_mr_get_info(struct fid_mr *mr, uint64_t flags,
 			uint32_t *lkey, uint64_t *addr, uint64_t *rkey);
 
+/*
+ * Shared fi_acc_ops table + ops_open dispatcher. Wired into the
+ * .ops_open of EP/CQ/CNTR/AV/MR fid ops so consumers can reach the
+ * export functions via fi_open_ops(fid, FI_ACC_OPS_NAME, ...).
+ */
+int efa_acc_ops_open(struct fid *fid, const char *name, uint64_t flags,
+		     void **ops, void *context);
+
 /* State lifecycle */
 struct efa_acc_ep_state *efa_acc_ep_state_create(const struct fi_acc_info *acc_info);
 struct efa_acc_cq_state *efa_acc_cq_state_create(const struct fi_acc_info *acc_info);

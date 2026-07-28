@@ -3,9 +3,10 @@
  *
  * GPU kernels using the OFI Accelerator high-level device API.
  * Consumer never touches WQE formats, ring buffers, or doorbells.
- * All operations go through fi_acc_write/send/cq_poll/cntr_read.
+ * All operations go through fi_acc_write/send/recv/cq_poll/cntr_read.
  */
 
+#include <stdio.h>
 #include <rdma/fi_ext_efa_acc.cuh>
 #include "fi_acc_kernels.h"
 
@@ -26,10 +27,11 @@ __global__ void fi_acc_lat_send_kernel(
 	uint64_t send_cntr_start = send_cntr ? fi_acc_cntr_read(send_cntr) : 0;
 	uint64_t recv_cntr_start = recv_cntr ? fi_acc_cntr_read(recv_cntr) : 0;
 
-	/* Post initial receives */
+	/* Post initial receives (batched: defer RQ doorbell, then flush) */
 	for (int i = 0; i < rx_depth; i++)
-		fi_acc_post_recv(ep, (void *)recv_addr, recv_length, desc);
-	fi_acc_flush_recv(ep);
+		fi_acc_recv(ep, (void *)recv_addr, desc, recv_length,
+			    NULL, NULL, FI_ACC_WORK_ITEM, FI_MORE);
+	fi_acc_flush(ep, FI_RECV);
 
 	while (scnt < iters || rcnt < iters) {
 		/* Wait for receive (except first client send) */
@@ -42,16 +44,17 @@ __global__ void fi_acc_lat_send_kernel(
 			rcnt++;
 			fi_acc_cq_pop(recv_cq, 1);
 
-			if (rcnt + rx_depth <= iters) {
-				fi_acc_post_recv(ep, (void *)recv_addr, recv_length, desc);
-				fi_acc_flush_recv(ep);
-			}
+			if (rcnt + rx_depth <= iters)
+				fi_acc_recv(ep, (void *)recv_addr, desc,
+					    recv_length, NULL, NULL,
+					    FI_ACC_WORK_ITEM, 0);
 		}
 
 		/* Send */
 		if (scnt < iters) {
 			scnt++;
-			fi_acc_send(ep, (void *)send_addr, send_length, desc, peer, 0);
+			fi_acc_send(ep, (void *)send_addr, send_length, desc,
+				    0, peer, NULL, FI_ACC_WORK_ITEM, 0);
 
 			if (send_cntr) {
 				fi_acc_cntr_wait(send_cntr, send_cntr_start + scnt);
@@ -64,7 +67,8 @@ __global__ void fi_acc_lat_send_kernel(
 }
 
 /*
- * Bandwidth: RDMA write/read/send (single thread)
+ * Bandwidth: RDMA write / write+imm / read / send (single thread)
+ * opcode: 0=send, 1=write, 2=writedata, 3=read
  */
 __global__ void fi_acc_bw_kernel(
 	void *ep, void *send_cq, void *send_cntr,
@@ -80,13 +84,31 @@ __global__ void fi_acc_bw_kernel(
 
 	while (scnt < iters || ccnt < iters) {
 		while (scnt < iters && (scnt - ccnt) < tx_depth) {
-			if (opcode == 1 || opcode == 3) {
-				/* write or read */
-				fi_acc_write(ep, (void *)send_addr, send_length, desc,
-					     remote_addr, remote_rkey, peer, 0);
-			} else {
-				/* send */
-				fi_acc_send(ep, (void *)send_addr, send_length, desc, peer, 0);
+			switch (opcode) {
+			case 1: /* write */
+				fi_acc_write(ep, (void *)send_addr, desc,
+					     send_length, 0, peer,
+					     remote_addr, remote_rkey, NULL,
+					     FI_ACC_WORK_ITEM, 0);
+				break;
+			case 2: /* writedata (write with imm) */
+				fi_acc_write(ep, (void *)send_addr, desc,
+					     send_length, 0x12345678, peer,
+					     remote_addr, remote_rkey, NULL,
+					     FI_ACC_WORK_ITEM,
+					     FI_REMOTE_CQ_DATA);
+				break;
+			case 3: /* read */
+				fi_acc_read(ep, (void *)send_addr, desc,
+					    send_length, peer,
+					    remote_addr, remote_rkey, NULL,
+					    FI_ACC_WORK_ITEM, 0);
+				break;
+			default: /* send */
+				fi_acc_send(ep, (void *)send_addr, send_length,
+					    desc, 0, peer, NULL,
+					    FI_ACC_WORK_ITEM, 0);
+				break;
 			}
 			scnt++;
 		}
@@ -97,7 +119,11 @@ __global__ void fi_acc_bw_kernel(
 				fi_acc_cq_pop(send_cq, 1);
 				ccnt++;
 			} else {
-				if (fi_acc_cq_poll(send_cq, 0)) {
+				void *cqe = fi_acc_cq_poll(send_cq, 0);
+				if (cqe) {
+					uint32_t err = fi_acc_wc_read_vendor_err(cqe);
+					if (err)
+						printf("bw comp err %u\n", err);
 					fi_acc_cq_pop(send_cq, 1);
 					ccnt++;
 				}
@@ -120,8 +146,9 @@ __global__ void fi_acc_bw_recv_kernel(
 	uint64_t cntr_start = recv_cntr ? fi_acc_cntr_read(recv_cntr) : 0;
 
 	for (int i = 0; i < rx_depth; i++)
-		fi_acc_post_recv(ep, (void *)recv_addr, recv_length, desc);
-	fi_acc_flush_recv(ep);
+		fi_acc_recv(ep, (void *)recv_addr, desc, recv_length,
+			    NULL, NULL, FI_ACC_WORK_ITEM, FI_MORE);
+	fi_acc_flush(ep, FI_RECV);
 
 	while (rcnt < iters) {
 		if (recv_cntr) {
@@ -132,10 +159,9 @@ __global__ void fi_acc_bw_recv_kernel(
 		rcnt++;
 		fi_acc_cq_pop(recv_cq, 1);
 
-		if (rcnt + rx_depth <= iters) {
-			fi_acc_post_recv(ep, (void *)recv_addr, recv_length, desc);
-			fi_acc_flush_recv(ep);
-		}
+		if (rcnt + rx_depth <= iters)
+			fi_acc_recv(ep, (void *)recv_addr, desc, recv_length,
+				    NULL, NULL, FI_ACC_WORK_ITEM, 0);
 	}
 }
 

@@ -91,3 +91,10 @@ AS_IF([test "x$enable_efagda" = xyes], [
 
 AM_CONDITIONAL([EFAGDA], [test x$enable_efagda = xyes])
 AC_SUBST([EFA_DP_DIRECT], [$efa_dp_direct_path])
+
+dnl Libfabric include dir for the fi_acc CUDA kernel sub-make
+dnl (needs <rdma/fi_ext_efa_acc.cuh> from the libfabric install)
+AS_IF([test -n "$with_libfabric" && test "$with_libfabric" != "yes"],
+	[libfabric_include_path="$with_libfabric/include"],
+	[libfabric_include_path="/usr/include"])
+AC_SUBST([LIBFABRIC_INCLUDE], [$libfabric_include_path])
