@@ -33,18 +33,18 @@ struct efa_acc_cntr_state {
 };
 
 /* Opaque export implementations */
-int efa_acc_ep_export(struct fid_ep *ep, uint64_t flags,
+int efa_ep_export_acc(struct fid_ep *ep, uint64_t flags,
 		      void **acc_ep, size_t *size);
-int efa_acc_cq_export(struct fid_cq *cq, uint64_t flags,
+int efa_cq_export_acc(struct fid_cq *cq, uint64_t flags,
 		      void **acc_cq, size_t *size);
-int efa_acc_cntr_export(struct fid_cntr *cntr, uint64_t flags,
+int efa_cntr_export_acc(struct fid_cntr *cntr, uint64_t flags,
 			void **acc_cntr, size_t *size);
-int efa_acc_mr_export(struct fid_mr **mrs, size_t count, uint64_t flags,
+int efa_mr_export_acc(struct fid_mr **mrs, size_t count, uint64_t flags,
 		      void **acc_descs, size_t *size);
-int efa_acc_av_export(struct fid_av *av, const fi_addr_t *fi_addrs,
+int efa_av_export_acc(struct fid_av *av, const fi_addr_t *fi_addrs,
 		      size_t count, uint64_t flags,
 		      void **acc_peers, size_t *size);
-int efa_acc_mr_get_info(struct fid_mr *mr, uint64_t flags,
+int efa_mr_get_acc_info(struct fid_mr *mr, uint64_t flags,
 			uint32_t *lkey, uint64_t *addr, uint64_t *rkey);
 
 /*

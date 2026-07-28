@@ -131,7 +131,7 @@ static int acc_gpu_alloc_and_copy(struct fi_acc_info *ai, const void *host_data,
  * fi_ep_export_acc — Build opaque GPU-resident EP descriptor
  * =============================================================================
  */
-int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
+int efa_ep_export_acc(struct fid_ep *ep_fid, uint64_t flags,
 		      void **acc_ep, size_t *size)
 {
 #if HAVE_EFADV_QUERY_QP_WQS
@@ -253,7 +253,7 @@ int efa_acc_ep_export(struct fid_ep *ep_fid, uint64_t flags,
  * fi_cq_export_acc — Build opaque GPU-resident CQ descriptor
  * =============================================================================
  */
-int efa_acc_cq_export(struct fid_cq *cq_fid, uint64_t flags,
+int efa_cq_export_acc(struct fid_cq *cq_fid, uint64_t flags,
 		      void **acc_cq, size_t *size)
 {
 #if HAVE_EFADV_QUERY_CQ
@@ -316,7 +316,7 @@ int efa_acc_cq_export(struct fid_cq *cq_fid, uint64_t flags,
  * fi_cntr_export_acc — Return opaque GPU-resident counter handle
  * =============================================================================
  */
-int efa_acc_cntr_export(struct fid_cntr *cntr_fid, uint64_t flags,
+int efa_cntr_export_acc(struct fid_cntr *cntr_fid, uint64_t flags,
 			void **acc_cntr, size_t *size)
 {
 	struct efa_cntr *efa_cntr;
@@ -349,7 +349,7 @@ int efa_acc_cntr_export(struct fid_cntr *cntr_fid, uint64_t flags,
  * fi_mr_export_acc — Export MR descriptors as contiguous GPU array
  * =============================================================================
  */
-int efa_acc_mr_export(struct fid_mr **mrs, size_t count, uint64_t flags,
+int efa_mr_export_acc(struct fid_mr **mrs, size_t count, uint64_t flags,
 		      void **acc_descs, size_t *size)
 {
 	struct fi_acc_efa_desc *h_descs;
@@ -401,7 +401,7 @@ int efa_acc_mr_export(struct fid_mr **mrs, size_t count, uint64_t flags,
  * fi_av_export_acc — Export peer addresses as contiguous GPU array
  * =============================================================================
  */
-int efa_acc_av_export(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
+int efa_av_export_acc(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
 		      size_t count, uint64_t flags,
 		      void **acc_peers, size_t *size)
 {
@@ -461,7 +461,7 @@ int efa_acc_av_export(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
  * fi_mr_get_acc_info — Export MR info for key exchange
  * =============================================================================
  */
-int efa_acc_mr_get_info(struct fid_mr *mr_fid, uint64_t flags,
+int efa_mr_get_acc_info(struct fid_mr *mr_fid, uint64_t flags,
 			uint32_t *lkey, uint64_t *addr, uint64_t *rkey)
 {
 	struct efa_mr *efa_mr;
@@ -487,12 +487,12 @@ int efa_acc_mr_get_info(struct fid_mr *mr_fid, uint64_t flags,
  */
 static struct fi_acc_ops efa_acc_ops = {
 	.size        = sizeof(struct fi_acc_ops),
-	.ep_export   = efa_acc_ep_export,
-	.cq_export   = efa_acc_cq_export,
-	.cntr_export = efa_acc_cntr_export,
-	.mr_export   = efa_acc_mr_export,
-	.av_export   = efa_acc_av_export,
-	.mr_get_info = efa_acc_mr_get_info,
+	.ep_export   = efa_ep_export_acc,
+	.cq_export   = efa_cq_export_acc,
+	.cntr_export = efa_cntr_export_acc,
+	.mr_export   = efa_mr_export_acc,
+	.av_export   = efa_av_export_acc,
+	.mr_get_info = efa_mr_get_acc_info,
 };
 
 int efa_acc_ops_open(struct fid *fid, const char *name, uint64_t flags,
