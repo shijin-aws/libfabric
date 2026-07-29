@@ -155,6 +155,13 @@ int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 			int comp_fd = -1, err_fd = -1;
 			uint64_t comp_offset = 0, err_offset = 0;
 
+			EFA_INFO(FI_LOG_CNTR,
+				 "Opening FI_ACC counter: iface=%d device=%lu "
+				 "mem_type=%s\n",
+				 ai->iface, ai->device,
+				 ai->mem_type == FI_ACC_MEM_USER_ALLOC ?
+					"user" : "provider");
+
 			/* Clear FI_ACC from flags before passing to hw_cntr_open
 			 * (it rejects unknown flags) */
 			acc_attr.flags &= ~FI_ACC;
@@ -223,6 +230,12 @@ int efa_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 			ret = efa_hw_cntr_open(domain, &acc_attr, cntr, cntr_fid,
 					       context, &efa_cc_attr);
 			if (ret) {
+				EFA_WARN(FI_LOG_CNTR,
+					 "FI_ACC counter requires a hardware "
+					 "counter, but efa_hw_cntr_open failed: "
+					 "%d (%s). Note hw counter must be "
+					 "enabled with FI_EFA_USE_HW_CNTR=1.\n",
+					 ret, fi_strerror(-ret));
 				if (ai->mem_type == FI_ACC_MEM_USER_ALLOC) {
 					if (ai->free) {
 						ai->free(ai->device, comp_ptr);

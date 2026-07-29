@@ -1143,6 +1143,23 @@ int efa_cq_open_ibv_cq(struct fi_cq_attr *attr,
 }
 #endif
 
+/*
+ * FI_ACC CQs have their ring buffer in GPU memory: the host must never
+ * dereference CQEs (segfault). Completions are consumed by the GPU
+ * kernel via the device-side API; host progress is a no-op, same as
+ * efa_domain_cq_open_ext() for external-memory CQs.
+ */
+static void efa_cq_acc_progress_no_op(struct util_cq *cq)
+{
+	return;
+}
+
+static int efa_cq_acc_no_poll_ibv_cq(ssize_t cqe_to_process,
+				     struct efa_ibv_cq *ibv_cq)
+{
+	return ENOENT;
+}
+
 int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 		struct fid_cq **cq_fid, void *context)
 {
@@ -1159,7 +1176,6 @@ int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 	}
 
 	cq->poll_ibv_cq = efa_cq_poll_ibv_cq;
-
 	/*
 	 * OFI Accelerator API: if FI_ACC flag + acc_info present,
 	 * allocate GPU memory for the CQ buffer via acc_info.alloc()
@@ -1223,6 +1239,9 @@ int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 			return -FI_ENOMEM;
 		}
 		cq->acc_state->cq_buf_dev = gpu_ptr;
+
+		/* CQ ring lives in GPU memory — host must not poll it */
+		cq->poll_ibv_cq = efa_cq_acc_no_poll_ibv_cq;
 	}
 
 	/* efa uses its own implementation of wait objects for CQ */
@@ -1230,7 +1249,9 @@ int efa_cq_open(struct fid_domain *domain_fid, struct fi_cq_attr *attr,
 	tmp_attr.wait_obj = FI_WAIT_NONE;
 	tmp_attr.flags &= ~FI_ACC; /* Strip FI_ACC — handled above */
 	err = ofi_cq_init(&efa_prov, domain_fid, &tmp_attr, &cq->util_cq,
-					  &efa_cq_progress, context);
+			  cq->acc_state ? &efa_cq_acc_progress_no_op :
+					  &efa_cq_progress,
+			  context);
 	if (err) {
 		EFA_WARN(FI_LOG_CQ, "Unable to create UTIL_CQ\n");
 		goto err_free_cq;

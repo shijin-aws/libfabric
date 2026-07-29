@@ -115,8 +115,12 @@ int efa_hw_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 	struct ibv_comp_cntr_init_attr cc_attr = {0};
 	int ret;
 
-	if (!efa_env.use_hw_cntr)
+	if (!efa_env.use_hw_cntr) {
+		EFA_INFO(FI_LOG_CNTR,
+			 "Hardware counter is disabled (FI_EFA_USE_HW_CNTR is "
+			 "not set). Set FI_EFA_USE_HW_CNTR=1 to enable it.\n");
 		return -FI_EOPNOTSUPP;
+	}
 
 	efa_domain = container_of(domain, struct efa_domain, util_domain.domain_fid);
 
