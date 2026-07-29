@@ -449,6 +449,8 @@ int main(int argc, char **argv)
 							(uintptr_t) rx_buf,
 				.key = fi_mr_key(mr),
 			};
+			ACC_LOG("  my_iov: addr=%#lx key=%#lx",
+				my_iov.addr, my_iov.key);
 			ret = ft_sock_send(oob_sock, &my_iov, sizeof(my_iov));
 			if (ret)
 				return ret;
@@ -456,6 +458,9 @@ int main(int argc, char **argv)
 					   sizeof(remote_iov));
 			if (ret)
 				return ret;
+			ACC_LOG("  remote_iov: addr=%#lx key=%#lx (rkey=%u)",
+				remote_iov.addr, remote_iov.key,
+				(uint32_t) remote_iov.key);
 
 			ret = fi_acc_run_bw(
 				d_ep, d_send_cq,
@@ -518,7 +523,8 @@ int main(int argc, char **argv)
 	if (ret) {
 		FT_PRINTERR("kernel execution", -ret);
 	} else {
-		ACC_LOG("step 15: kernel complete, reporting perf");
+		ACC_LOG("step 15: kernel complete — %d WQEs posted and %d completions polled from GPU",
+			opts.iterations, opts.iterations);
 		show_perf(NULL, opts.transfer_size, opts.iterations, &start,
 			  &end, (gda_op == 0) ? 2 : 1);
 	}

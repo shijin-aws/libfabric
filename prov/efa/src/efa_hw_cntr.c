@@ -3,6 +3,7 @@
 
 #include "ofi_util.h"
 #include "efa.h"
+#include "efa_acc.h"
 #include "efa_cq.h"
 #include "efa_hw_cntr.h"
 
@@ -12,7 +13,7 @@ struct fi_ops efa_hw_cntr_fi_ops = {
 	.close = efa_hw_cntr_close,
 	.bind = fi_no_bind,
 	.control = fi_no_control,
-	.ops_open = fi_no_ops_open,
+	.ops_open = efa_acc_ops_open,
 };
 
 struct fi_ops_cntr efa_hw_cntr_ops = {

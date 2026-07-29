@@ -221,8 +221,6 @@ static int efa_ep_close(fid_t fid)
 	}
 	if (efa_env.track_mr)
 		efa_direct_ope_pool_destroy(ep);
-	if (ep->acc_state)
-		efa_acc_ep_state_destroy(ep->acc_state);
 	free(ep);
 
 	return 0;
