@@ -1109,6 +1109,9 @@ int cuda_get_device_ptr(void *host_addr, size_t size,
 	if (flags & (1ULL << 0)) /* bit 0 = I/O memory (BAR MMIO) */
 		reg_flags |= cudaHostRegisterIoMemory;
 
+	if (flags & (1ULL << 1)) /* bit 1 = map into device address space */
+		reg_flags |= cudaHostRegisterMapped;
+
 	cuda_ret = ofi_cudaHostRegister(host_addr, size, reg_flags);
 	if (cuda_ret != cudaSuccess) {
 		FI_WARN(&core_prov, FI_LOG_CORE,

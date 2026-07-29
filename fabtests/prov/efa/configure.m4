@@ -92,6 +92,15 @@ AS_IF([test "x$enable_efagda" = xyes], [
 AM_CONDITIONAL([EFAGDA], [test x$enable_efagda = xyes])
 AC_SUBST([EFA_DP_DIRECT], [$efa_dp_direct_path])
 
+dnl OFI Accelerator API GDA test (uses fi_acc_* API, no efa-dp-direct needed)
+AC_ARG_ENABLE([fi-acc-gda],
+	[AS_HELP_STRING([--enable-fi-acc-gda],
+		[Enable OFI Accelerator API GDA test (requires CUDA and installed libfabric)])],
+	[],
+	[enable_fi_acc_gda=no])
+
+AM_CONDITIONAL([FI_ACC_GDA], [test x$enable_fi_acc_gda = xyes])
+
 dnl Libfabric include dir for the fi_acc CUDA kernel sub-make
 dnl (needs <rdma/fi_ext_efa_acc.cuh> from the libfabric install)
 AS_IF([test -n "$with_libfabric" && test "$with_libfabric" != "yes"],

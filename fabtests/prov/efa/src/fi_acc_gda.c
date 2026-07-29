@@ -32,98 +32,23 @@ static void *d_recv_cntr;
 static void *d_mr_desc;
 static void *d_peer;
 
-static bool use_hw_cntr;
+static bool use_hw_cntr = true;
 static int  gda_op; /* 0=send, 1=write, 2=write_imm, 3=read */
 
-enum {
-	LONG_OPT_USE_HW_CNTR = 1000,
-};
-
 /*
- * =============================================================================
- * acc_info callbacks
- *
- * alloc: Allocate GPU HBM exportable via DMA-BUF.
- *        Provider calls this for CQ buffers and HW counters.
- *
- * import: Map a provider-owned host VA (BAR MMIO or host RAM) into GPU.
- *         Provider calls this for SQ buffer, doorbell, CQ buffer.
- *
- * free: Release GPU memory from alloc.
- * =============================================================================
+ * FI_ACC_MEM_PROVIDER: the provider manages all accelerator memory
+ * internally via the libfabric HMEM interface — no callbacks needed.
  */
-static int acc_alloc(uint64_t device, uint64_t size, uint64_t alignment,
-		     uint64_t flags, void **addr, int *fd, uint64_t *offset)
-{
-	int ret;
-	void *buf;
-
-	ret = ft_hmem_alloc(opts.iface, opts.device, &buf, (size_t)size);
-	if (ret)
-		return ret;
-
-	if (flags & FI_ACC_ALLOC_DMABUF) {
-		ret = ft_hmem_get_dmabuf_fd(opts.iface, buf, (size_t)size,
-					    fd, offset);
-		if (ret) {
-			ft_hmem_free(opts.iface, buf);
-			return ret;
-		}
-	} else {
-		*fd = -1;
-		*offset = 0;
-	}
-
-	*addr = buf;
-	return 0;
-}
-
-static int acc_import(uint64_t device, void *host_addr,
-		      uint64_t size, uint64_t flags, void **dev_addr)
-{
-	unsigned int cuda_flags = 0;
-	CUdeviceptr dev_ptr = 0;
-	int status;
-
-	if (flags & FI_ACC_IMPORT_IOMEMORY)
-		cuda_flags |= CU_MEMHOSTREGISTER_IOMEMORY;
-	if (flags & FI_ACC_IMPORT_DEVICEMAP)
-		cuda_flags |= CU_MEMHOSTREGISTER_DEVICEMAP;
-
-	status = cuMemHostRegister(host_addr, (size_t)size, cuda_flags);
-	if (status != CUDA_SUCCESS) {
-		FT_WARN("cuMemHostRegister failed: %d\n", status);
-		return -FI_EIO;
-	}
-
-	status = cuMemHostGetDevicePointer(&dev_ptr, host_addr, 0);
-	if (status != CUDA_SUCCESS) {
-		FT_WARN("cuMemHostGetDevicePointer failed: %d\n", status);
-		return -FI_EIO;
-	}
-
-	*dev_addr = (void *)dev_ptr;
-	return 0;
-}
-
-static void acc_free(uint64_t device, void *addr)
-{
-	ft_hmem_free(opts.iface, addr);
-}
-
 static struct fi_acc_info acc_info = {
 	.iface   = FI_HMEM_CUDA,
 	.device  = 0,
-	.mem_type = FI_ACC_MEM_USER_ALLOC,
+	.mem_type = FI_ACC_MEM_PROVIDER,
 };
 
 static void setup_acc_info(void)
 {
 	acc_info.iface = opts.iface;
 	acc_info.device = opts.device;
-	acc_info.alloc = acc_alloc;
-	acc_info.import = acc_import;
-	acc_info.free = acc_free;
 }
 
 int main(int argc, char **argv)
@@ -140,8 +65,6 @@ int main(int argc, char **argv)
 	while ((op = getopt_long(argc, argv,
 				 "vho:" ADDR_OPTS INFO_OPTS CS_OPTS API_OPTS,
 				 (struct option[]){
-					{"use-hw-cntr", no_argument, NULL,
-					 LONG_OPT_USE_HW_CNTR},
 					{0, 0, 0, 0}
 				 }, NULL)) != -1) {
 		switch (op) {
@@ -154,9 +77,6 @@ int main(int argc, char **argv)
 		case 'v':
 			opts.options |= FT_OPT_VERIFY_DATA;
 			break;
-		case LONG_OPT_USE_HW_CNTR:
-			use_hw_cntr = true;
-			break;
 		default:
 			ft_parse_addr_opts(op, optarg, &opts);
 			ft_parseinfo(op, optarg, hints, &opts);
@@ -168,8 +88,6 @@ int main(int argc, char **argv)
 			ft_usage(argv[0], "OFI Accelerator API GDA test");
 			FT_PRINT_OPTS_USAGE("-o <op>",
 				"op: msg, write, writedata, read");
-			FT_PRINT_OPTS_USAGE("--use-hw-cntr",
-				"Use hardware counter in GPU HBM");
 			return EXIT_FAILURE;
 		}
 	}
@@ -183,7 +101,7 @@ int main(int argc, char **argv)
 	hints->caps |= FI_MSG | FI_RMA | FI_HMEM | FI_ACC;
 	hints->domain_attr->mr_mode = FI_MR_ALLOCATED | FI_MR_LOCAL |
 				      FI_MR_VIRT_ADDR | FI_MR_PROV_KEY | FI_MR_HMEM;
-	hints->domain_attr->progress = FI_PROGRESS_MANUAL;
+	hints->mode |= FI_CONTEXT2;
 	hints->ep_attr->acc_info = &acc_info;
 
 	ret = ft_init_fabric();
