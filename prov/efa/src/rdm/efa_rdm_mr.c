@@ -563,6 +563,9 @@ static int efa_rdm_mr_reg_impl(struct efa_rdm_mr *efa_rdm_mr, uint64_t flags,
 	 * For cuda and rocr iface when p2p is unavailable, skip ibv_reg_mr() and
 	 * generate proprietary mr_fid key.
 	 */
+	/* Cache acc_info before branching — needed for fi_mr_export_acc */
+	efa_rdm_mr->efa_mr.acc_info = mr_attr->acc_info;
+
 	if ((mr_attr->iface == FI_HMEM_CUDA || mr_attr->iface == FI_HMEM_ROCR)
 		&& !g_efa_hmem_info[mr_attr->iface].p2p_supported_by_device) {
 		ret = efa_mr_hmem_setup(&efa_rdm_mr->efa_mr, mr_attr, flags);

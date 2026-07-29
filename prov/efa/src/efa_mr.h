@@ -22,6 +22,8 @@ struct efa_mr {
 	 * gen check is what guards against using a stale lkey.
 	 */
 	uint32_t		lkey;
+	/* OFI Accelerator API: cached from mr_attr at registration */
+	struct fi_acc_info	*acc_info;
 };
 
 struct efa_mr *efa_mr_alloc(struct efa_domain *efa_domain);

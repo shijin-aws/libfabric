@@ -85,12 +85,6 @@ static int init_fabric_acc(void)
 		return ret;
 	}
 
-	if (oob_sock >= 0 && opts.dst_addr) {
-		ret = ft_sock_sync(oob_sock, 0);
-		if (ret)
-			return ret;
-	}
-
 	ACC_LOG("step 3: fi_getinfo (API %u.%u)", FI_MAJOR(ft_fiversion),
 		FI_MINOR(ft_fiversion));
 	ret = ft_getinfo(hints, &fi);
@@ -167,6 +161,8 @@ static int init_fabric_acc(void)
 	if (fi->domain_attr->av_type != FI_AV_UNSPEC)
 		av_attr.type = fi->domain_attr->av_type;
 	av_attr.count = opts.av_size;
+	av_attr.flags = FI_ACC;
+	av_attr.acc_info = &acc_info;
 	ret = fi_av_open(domain, &av_attr, &av, NULL);
 	if (ret) {
 		FT_PRINTERR("fi_av_open", ret);
@@ -228,10 +224,38 @@ static int init_fabric_acc(void)
 		return ret;
 	}
 
-	ACC_LOG("step 10: ft_alloc_msgs (buffers + MR)");
+	ACC_LOG("step 10: ft_alloc_msgs (buffers only, MR registered separately)");
+	opts.options |= FT_OPT_SKIP_REG_MR;
 	ret = ft_alloc_msgs();
 	if (ret)
 		return ret;
+
+	/* Register MR with acc_info so the provider can export it later */
+	ACC_LOG("step 10b: fi_mr_regattr (acc_info=%p)", (void *) &acc_info);
+	{
+		struct iovec iov = {
+			.iov_base = rx_buf,
+			.iov_len = buf_size,
+		};
+		struct fi_mr_attr mr_attr = {
+			.mr_iov = &iov,
+			.iov_count = 1,
+			.access = ft_info_to_mr_access(fi),
+			.requested_key = FT_MR_KEY,
+			.iface = opts.iface,
+			.acc_info = &acc_info,
+		};
+		mr_attr.device.cuda = opts.device;
+
+		ret = fi_mr_regattr(domain, &mr_attr,
+				    FI_HMEM_DEVICE_ONLY | FI_ACC, &mr);
+		if (ret) {
+			FT_PRINTERR("fi_mr_regattr", ret);
+			return ret;
+		}
+		mr_desc = fi_mr_desc(mr);
+		ACC_LOG("  mr=%p key=%#lx", (void *) mr, fi_mr_key(mr));
+	}
 
 	ACC_LOG("step 11: ft_init_av_dst_addr (address exchange, oob_sock=%d)",
 		oob_sock);
@@ -321,8 +345,7 @@ int main(int argc, char **argv)
 
 	/* === Export all resources as opaque device handles === */
 
-	ACC_LOG("step 12: export EP/CQ/MR/AV/CNTR to device handles");
-
+	ACC_LOG("step 12a: export EP to device handle");
 	ret = fi_ep_export_acc(ep, 0, &d_ep, &export_size);
 	if (ret) {
 		FT_PRINTERR("fi_ep_export_acc", -ret);
@@ -330,6 +353,7 @@ int main(int argc, char **argv)
 	}
 	ACC_LOG("  d_ep=%p size=%zu", d_ep, export_size);
 
+	ACC_LOG("step 12b: export TX CQ to device handle");
 	ret = fi_cq_export_acc(txcq, 0, &d_send_cq, &export_size);
 	if (ret) {
 		FT_PRINTERR("fi_cq_export_acc tx", -ret);
@@ -337,6 +361,7 @@ int main(int argc, char **argv)
 	}
 	ACC_LOG("  d_send_cq=%p size=%zu", d_send_cq, export_size);
 
+	ACC_LOG("step 12c: export RX CQ to device handle");
 	ret = fi_cq_export_acc(rxcq, 0, &d_recv_cq, &export_size);
 	if (ret) {
 		FT_PRINTERR("fi_cq_export_acc rx", -ret);
@@ -344,6 +369,7 @@ int main(int argc, char **argv)
 	}
 	ACC_LOG("  d_recv_cq=%p size=%zu", d_recv_cq, export_size);
 
+	ACC_LOG("step 12d: export MR to device handle");
 	ret = fi_mr_export_acc(&mr, 1, 0, &d_mr_desc, &export_size);
 	if (ret) {
 		FT_PRINTERR("fi_mr_export_acc", -ret);
@@ -351,6 +377,7 @@ int main(int argc, char **argv)
 	}
 	ACC_LOG("  d_mr_desc=%p size=%zu", d_mr_desc, export_size);
 
+	ACC_LOG("step 12e: export AV to device handle");
 	ret = fi_av_export_acc(av, &remote_fi_addr, 1, 0, &d_peer,
 			       &export_size);
 	if (ret) {
@@ -359,6 +386,7 @@ int main(int argc, char **argv)
 	}
 	ACC_LOG("  d_peer=%p size=%zu", d_peer, export_size);
 
+	ACC_LOG("step 12f: export TX CNTR to device handle");
 	ret = fi_cntr_export_acc(txcntr, 0, &d_send_cntr, &export_size);
 	if (ret) {
 		FT_PRINTERR("fi_cntr_export_acc tx", -ret);
@@ -366,6 +394,7 @@ int main(int argc, char **argv)
 	}
 	ACC_LOG("  d_send_cntr=%p size=%zu", d_send_cntr, export_size);
 
+	ACC_LOG("step 12g: export RX CNTR to device handle");
 	ret = fi_cntr_export_acc(rxcntr, 0, &d_recv_cntr, &export_size);
 	if (ret) {
 		FT_PRINTERR("fi_cntr_export_acc rx", -ret);

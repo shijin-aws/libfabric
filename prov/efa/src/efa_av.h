@@ -81,6 +81,8 @@ struct efa_av {
 	size_t implicit_av_size;
 	struct dlist_entry implicit_av_lru_list;
 	struct efa_ep_addr_hashable *evicted_peers_hashset;
+	/* OFI Accelerator API: cached from av_attr at open */
+	struct fi_acc_info	*acc_info;
 };
 
 int efa_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,

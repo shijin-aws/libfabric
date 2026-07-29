@@ -141,7 +141,6 @@ int efa_ep_export_acc(struct fid_ep *ep_fid, uint64_t flags,
 	struct efadv_wq_attr qp_sq_attr = {};
 	struct efadv_wq_attr qp_rq_attr = {};
 	struct fi_acc_efa_ep h_ep = {};
-	long page_size;
 	int ret;
 
 	if (!ep_fid || !acc_ep || !size)
@@ -161,8 +160,6 @@ int efa_ep_export_acc(struct fid_ep *ep_fid, uint64_t flags,
 	if (ret)
 		return (ret == EOPNOTSUPP) ? -FI_EOPNOTSUPP : -FI_EINVAL;
 
-	page_size = sysconf(_SC_PAGESIZE);
-
 	/* Map SQ buffer (BAR MMIO) → GPU */
 	void *sq_buf_dev = NULL;
 	ret = acc_import_region(ai, qp_sq_attr.buffer,
@@ -171,9 +168,12 @@ int efa_ep_export_acc(struct fid_ep *ep_fid, uint64_t flags,
 				&sq_buf_dev);
 	if (ret) return ret;
 
-	/* Map SQ doorbell (BAR MMIO) → GPU */
+	/* Map SQ doorbell (BAR MMIO) → GPU. Register only the 4-byte
+	 * doorbell register (as efa_gda.c does): the doorbell VA is not
+	 * page-aligned and registering a full page would cross into an
+	 * unmapped page. */
 	void *sq_db_dev = NULL;
-	ret = acc_import_region(ai, qp_sq_attr.doorbell, (size_t)page_size,
+	ret = acc_import_region(ai, qp_sq_attr.doorbell, sizeof(uint32_t),
 				FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
 				&sq_db_dev);
 	if (ret) return ret;
@@ -187,7 +187,7 @@ int efa_ep_export_acc(struct fid_ep *ep_fid, uint64_t flags,
 					FI_ACC_IMPORT_DEVICEMAP, &rq_buf_dev);
 		if (ret) return ret;
 
-		ret = acc_import_region(ai, qp_rq_attr.doorbell, (size_t)page_size,
+		ret = acc_import_region(ai, qp_rq_attr.doorbell, sizeof(uint32_t),
 					FI_ACC_IMPORT_IOMEMORY | FI_ACC_IMPORT_DEVICEMAP,
 					&rq_db_dev);
 		if (ret) return ret;
@@ -353,8 +353,6 @@ int efa_mr_export_acc(struct fid_mr **mrs, size_t count, uint64_t flags,
 		      void **acc_descs, size_t *size)
 {
 	struct fi_acc_efa_desc *h_descs;
-	struct efa_base_ep *base_ep;
-	struct efa_acc_ep_state *acc;
 	struct fi_acc_info *ai;
 	size_t i;
 	int ret;
@@ -362,27 +360,32 @@ int efa_mr_export_acc(struct fid_mr **mrs, size_t count, uint64_t flags,
 	if (!mrs || !acc_descs || !size || count == 0)
 		return -FI_EINVAL;
 
-	/* Get acc_info from first MR's domain's first EP */
-	struct efa_mr *first_mr = container_of(mrs[0], struct efa_mr, mr_fid);
-	base_ep = container_of(
-		first_mr->domain->base_ep_list.next,
-		struct efa_base_ep, base_ep_entry);
-	acc = base_ep ? base_ep->acc_state : NULL;
-	if (!acc)
-		return -FI_ENODATA;
-	ai = &acc->base.acc_info;
-
-	/* Build host array */
+	/* Build host array, validating each MR has acc_info */
 	h_descs = calloc(count, sizeof(*h_descs));
 	if (!h_descs)
 		return -FI_ENOMEM;
 
+	ai = NULL;
 	for (i = 0; i < count; i++) {
 		struct efa_mr *efa_mr = container_of(mrs[i], struct efa_mr, mr_fid);
-		if (!efa_mr->ibv_mr) {
+
+		if (!efa_mr->acc_info) {
+			EFA_WARN(FI_LOG_MR,
+				 "MR[%zu] missing acc_info (not registered with FI_ACC)\n", i);
 			free(h_descs);
 			return -FI_ENODATA;
 		}
+		if (!efa_mr->ibv_mr) {
+			EFA_WARN(FI_LOG_MR,
+				 "MR[%zu] missing ibv_mr\n", i);
+			free(h_descs);
+			return -FI_ENODATA;
+		}
+
+		/* Use acc_info from the first MR for GPU allocation */
+		if (!ai)
+			ai = efa_mr->acc_info;
+
 		h_descs[i].lkey = efa_mr->ibv_mr->lkey;
 	}
 
@@ -407,7 +410,6 @@ int efa_av_export_acc(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
 {
 	struct efa_av *efa_av;
 	struct fi_acc_efa_peer *h_peers;
-	struct efa_acc_ep_state *acc;
 	struct fi_acc_info *ai;
 	size_t i;
 	int ret;
@@ -417,17 +419,12 @@ int efa_av_export_acc(struct fid_av *av_fid, const fi_addr_t *fi_addrs,
 
 	efa_av = container_of(av_fid, struct efa_av, util_av.av_fid);
 
-	/* Get acc_info from domain's first EP */
-	acc = NULL;
-	if (efa_av->domain && !dlist_empty(&efa_av->domain->base_ep_list)) {
-		struct efa_base_ep *ep = container_of(
-			efa_av->domain->base_ep_list.next,
-			struct efa_base_ep, base_ep_entry);
-		acc = ep->acc_state;
-	}
-	if (!acc)
+	ai = efa_av->acc_info;
+	if (!ai) {
+		EFA_WARN(FI_LOG_AV,
+			 "AV missing acc_info (not opened with acc_info)\n");
 		return -FI_ENODATA;
-	ai = &acc->base.acc_info;
+	}
 
 	/* Build host array */
 	h_peers = calloc(count, sizeof(*h_peers));

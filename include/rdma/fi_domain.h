@@ -70,6 +70,7 @@ struct fi_av_attr {
 	const char		*name;
 	void			*map_addr;
 	uint64_t		flags;
+	struct fi_acc_info	*acc_info;	/* OFI Accelerator API */
 };
 
 struct fi_av_set_attr {
@@ -185,6 +186,7 @@ struct fi_mr_attr {
 	size_t			page_size;
 	const struct fid_mr	*base_mr;
 	size_t			sub_mr_cnt;
+	struct fi_acc_info	*acc_info;	/* OFI Accelerator API */
 };
 
 struct fi_mr_modify {

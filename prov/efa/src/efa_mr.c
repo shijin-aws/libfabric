@@ -84,7 +84,7 @@ int efa_mr_regattr_validate(struct fid *fid, const struct fi_mr_attr *attr,
 	 * usable for domains opened with FI_HMEM capability support.
 	 * This flag is introduced since Libfabric 1.20.
 	 */
-	supported_flags = FI_HMEM_DEVICE_ONLY;
+	supported_flags = FI_HMEM_DEVICE_ONLY | FI_ACC;
 	api_version = domain->util_domain.fabric->fabric_fid.api_version;
 
 	if (FI_VERSION_GE(api_version, FI_VERSION(1, 20)))
@@ -542,6 +542,7 @@ int efa_mr_reg_impl(struct efa_mr *efa_mr, uint64_t flags, const struct fi_mr_at
 	efa_mr->mr_fid.key = efa_mr->ibv_mr->rkey;
 	efa_mr->mr_fid.mem_desc = efa_mr;
 	efa_mr->lkey = efa_mr->ibv_mr->lkey;
+	efa_mr->acc_info = mr_attr->acc_info;
 	assert(efa_mr->mr_fid.key != FI_KEY_NOTAVAIL);
 
 	return 0;

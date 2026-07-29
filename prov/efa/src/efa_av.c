@@ -869,7 +869,7 @@ int efa_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 		return -FI_ENOSYS;
 
 	/* FI_EVENT, FI_READ, and FI_SYMMETRIC are not supported */
-	if (attr->flags)
+	if (attr->flags & ~FI_ACC)
 		return -FI_ENOSYS;
 
 	/*
@@ -936,6 +936,7 @@ int efa_av_open(struct fid_domain *domain_fid, struct fi_av_attr *attr,
 
 	av->domain = efa_domain;
 	av->type = attr->type;
+	av->acc_info = attr->acc_info;
 	av->implicit_av_size = efa_env.implicit_av_size;
 	av->shm_used = 0;
 

@@ -296,6 +296,8 @@ void ofi_mr_update_attr(uint32_t user_version, uint64_t caps,
 		cur_abi_attr->base_mr = NULL;
 		cur_abi_attr->sub_mr_cnt = 0;
 	}
+
+	cur_abi_attr->acc_info = user_attr->acc_info;
 }
 
 int ofi_mr_regattr(struct fid *fid, const struct fi_mr_attr *attr,

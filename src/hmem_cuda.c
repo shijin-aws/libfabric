@@ -90,6 +90,9 @@ CUresult CUDAAPI cuCtxCreate_v2(CUcontext *pctx, unsigned int flags, CUdevice de
 	_(cuEventSynchronize)		\
 	_(cuEventQuery)			\
 	_(cuMemcpyDtoDAsync)		\
+	_(cuMemHostRegister)		\
+	_(cuMemHostUnregister)		\
+	_(cuMemHostGetDevicePointer)	\
 	CUDA_DRIVER_DMABUF_FUNCS_DEF(_)
 
 #define CUDA_RUNTIME_FUNCS_DEF(_)	\
@@ -205,6 +208,11 @@ static struct {
 	CUresult (*cuEventQuery)(CUevent hEvent);
 	CUresult (*cuMemcpyDtoDAsync)(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
 				      size_t byte_count, CUstream hStream);
+	CUresult (*cuMemHostRegister)(void *p, size_t byte_size,
+				      unsigned int flags);
+	CUresult (*cuMemHostUnregister)(void *p);
+	CUresult (*cuMemHostGetDevicePointer)(CUdeviceptr *pdptr, void *p,
+					      unsigned int flags);
 	cudaError_t (*cudaHostAlloc)(void **pHost, size_t size, unsigned int flags);
 	cudaError_t (*cudaFreeHost)(void *ptr);
 } cuda_ops
@@ -1103,33 +1111,44 @@ int cuda_host_unregister(void *ptr)
 int cuda_get_device_ptr(void *host_addr, size_t size,
 			uint64_t flags, void **dev_addr)
 {
-	cudaError_t cuda_ret;
-	unsigned int reg_flags = cudaHostRegisterDefault;
+	CUresult cu_ret;
+	unsigned int reg_flags = 0;
+	CUdeviceptr dev_ptr = 0;
 
 	if (flags & (1ULL << 0)) /* bit 0 = I/O memory (BAR MMIO) */
-		reg_flags |= cudaHostRegisterIoMemory;
+		reg_flags |= CU_MEMHOSTREGISTER_IOMEMORY;
 
 	if (flags & (1ULL << 1)) /* bit 1 = map into device address space */
-		reg_flags |= cudaHostRegisterMapped;
+		reg_flags |= CU_MEMHOSTREGISTER_DEVICEMAP;
 
-	cuda_ret = ofi_cudaHostRegister(host_addr, size, reg_flags);
-	if (cuda_ret != cudaSuccess) {
+	/*
+	 * Driver API, matching GDA usage (see fabtests efa_gda.c):
+	 * cuMemHostRegister accepts raw BAR MMIO addresses.
+	 * Requires PeerMappingOverride=1 in the NVIDIA kernel module
+	 * for mapping external (device I/O) memory.
+	 */
+	cu_ret = cuda_ops.cuMemHostRegister(host_addr, size, reg_flags);
+	if (cu_ret != CUDA_SUCCESS &&
+	    cu_ret != CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED) {
+		CUDA_DRIVER_LOG_ERR(cu_ret, "cuMemHostRegister");
 		FI_WARN(&core_prov, FI_LOG_CORE,
-			"cudaHostRegister failed for get_device_ptr: %s:%s\n",
-			ofi_cudaGetErrorName(cuda_ret),
-			ofi_cudaGetErrorString(cuda_ret));
+			"cuMemHostRegister failed: addr=%p size=%zu "
+			"reg_flags=%#x\n", host_addr, size, reg_flags);
 		return -FI_EIO;
 	}
 
-	cuda_ret = ofi_cudaHostGetDevicePointer(dev_addr, host_addr, 0);
-	if (cuda_ret != cudaSuccess) {
-		FI_WARN(&core_prov, FI_LOG_CORE,
-			"cudaHostGetDevicePointer failed: %s:%s\n",
-			ofi_cudaGetErrorName(cuda_ret),
-			ofi_cudaGetErrorString(cuda_ret));
-		ofi_cudaHostUnregister(host_addr);
+	cu_ret = cuda_ops.cuMemHostGetDevicePointer(&dev_ptr, host_addr, 0);
+	if (cu_ret != CUDA_SUCCESS) {
+		CUDA_DRIVER_LOG_ERR(cu_ret, "cuMemHostGetDevicePointer");
+		cuda_ops.cuMemHostUnregister(host_addr);
 		return -FI_EIO;
 	}
+
+	*dev_addr = (void *) dev_ptr;
+
+	FI_INFO(&core_prov, FI_LOG_CORE,
+		"get_device_ptr: host=%p size=%zu flags=%#lx -> dev=%p\n",
+		host_addr, size, flags, *dev_addr);
 
 	return FI_SUCCESS;
 }
