@@ -72,6 +72,27 @@ enum fi_acc_scope {
 };
 #endif
 
+/* Provider identifiers for runtime dispatch */
+#ifndef FI_ACC_PROV_DEFINED
+#define FI_ACC_PROV_DEFINED
+#define FI_ACC_PROV_EFA    1
+#define FI_ACC_PROV_VERBS  2
+#define FI_ACC_PROV_CXI    3
+#endif
+
+/*
+ * Common handle header — every exported opaque handle (EP, CQ, CNTR)
+ * MUST embed this struct as its first member. The dispatch layer reads
+ * it to route to the correct provider implementation at runtime.
+ *
+ * Providers populate this at export time (fi_ep_export_acc, etc.).
+ * Consumers never inspect it — handles remain opaque void*.
+ */
+struct fi_acc_hdr {
+	uint32_t provider;   /* FI_ACC_PROV_EFA, FI_ACC_PROV_VERBS, ... */
+	uint32_t version;    /* handle layout version (provider-defined) */
+};
+
 /*
  * Device-side API functions (provided by provider device header):
  *

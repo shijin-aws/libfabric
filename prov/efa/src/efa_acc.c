@@ -194,6 +194,8 @@ int efa_ep_export_acc(struct fid_ep *ep_fid, uint64_t flags,
 	}
 
 	/* Build fi_acc_dev_ep on host stack */
+	h_ep.hdr.provider       = FI_ACC_PROV_EFA;
+	h_ep.hdr.version        = 1;
 	h_ep.sq.buf             = (uint8_t *)sq_buf_dev;
 	h_ep.sq.db              = (uint32_t *)sq_db_dev;
 	h_ep.sq.queue_mask      = qp_sq_attr.num_entries - 1;
@@ -294,6 +296,8 @@ int efa_cq_export_acc(struct fid_cq *cq_fid, uint64_t flags,
 		if (ret) return ret;
 	}
 
+	h_cq.hdr.provider     = FI_ACC_PROV_EFA;
+	h_cq.hdr.version      = 1;
 	h_cq.buf              = (uint8_t *)cq_buf_dev;
 	h_cq.entry_size       = efadv_attr.entry_size;
 	h_cq.queue_mask       = efadv_attr.num_entries - 1;
@@ -334,6 +338,8 @@ int efa_cntr_export_acc(struct fid_cntr *cntr_fid, uint64_t flags,
 		return -FI_ENODATA;
 
 	ai = &acc->base.acc_info;
+	h_cntr.hdr.provider = FI_ACC_PROV_EFA;
+	h_cntr.hdr.version = 1;
 	h_cntr.value = (volatile uint64_t *)acc->cntr_value_dev;
 	h_cntr.err_value = (volatile uint64_t *)acc->cntr_err_dev;
 

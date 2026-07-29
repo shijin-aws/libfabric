@@ -7,7 +7,7 @@
  */
 
 #include <stdio.h>
-#include <rdma/fi_ext_efa_acc.cuh>
+#include <rdma/fi_acc_cuda.cuh>
 #include "fi_acc_kernels.h"
 
 /*

@@ -2,31 +2,23 @@
 /* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All
  * rights reserved. */
 
-#ifndef FI_ACC_EFA_DEVICE_H
-#define FI_ACC_EFA_DEVICE_H
+#ifndef FI_ACC_EFA_CUDA_CUH
+#define FI_ACC_EFA_CUDA_CUH
 
 /*
  * =============================================================================
- * EFA Provider — Accelerator Device-Side Implementation
+ * EFA Provider — Accelerator Device-Side Implementation (CUDA)
  *
- * Inlined device functions for EFA hardware, implementing the OFI
- * Accelerator API device surface (see fi_acc.h for the host side).
- * This is the replacement for efa-dp-direct (efa_cuda_dp_impl.cuh).
+ * Provider-specific inlined device functions for EFA hardware.
+ * All public functions use the _efa suffix (e.g., fi_acc_write_efa).
+ * Included by the unified rdma/fi_acc_cuda.cuh dispatch header.
  *
- * Consumers include THIS file (not fi_acc_device.h directly) from their
- * .cu files to get the full inlined implementation.
- *
- * The struct definitions below exist so the compiler can inline the
- * functions. Consumers MUST NOT access struct fields directly — treat
- * all handles as opaque void* and only call fi_acc_* functions.
- *
- * Source of truth: prov/efa/src/acc_cuda/fi_ext_efa_acc.cuh
- * Installed as:    <rdma/fi_ext_efa_acc.cuh>
+ * Consumers MUST NOT include this file directly — include
+ * <rdma/fi_acc_cuda.cuh> instead.
  * =============================================================================
  */
 
-#define FI_ACC_DEVICE_IMPL  /* Suppress declarations in fi_acc_device.h */
-#include <rdma/fi_acc_device.h>
+/* Uses FI_ACC_DEV and fi_acc_scope from the parent fi_acc_cuda.cuh */
 
 /*
  * Operation flags (subset used on the device path). Values match
@@ -346,7 +338,7 @@ FI_ACC_DEV void fi_acc_efa_set_buf(struct fi_acc_efa_tx_buf_desc *d,
  * @flags:  FI_MORE (defer doorbell), FI_REMOTE_CQ_DATA (write with imm)
  */
 FI_ACC_DEV int
-fi_acc_write(void *acc_ep, const void *buf, void *desc, uint64_t size,
+fi_acc_write_efa(void *acc_ep, const void *buf, void *desc, uint64_t size,
 	     uint64_t data, void *peer, uint64_t raddr, uint64_t rkey,
 	     void *ctxt, int scope, uint64_t flags)
 {
@@ -383,7 +375,7 @@ fi_acc_write(void *acc_ep, const void *buf, void *desc, uint64_t size,
  * fi_acc_read - RDMA read from a device kernel.
  */
 FI_ACC_DEV int
-fi_acc_read(void *acc_ep, void *buf, void *desc, uint64_t size,
+fi_acc_read_efa(void *acc_ep, void *buf, void *desc, uint64_t size,
 	    void *peer, uint64_t raddr, uint64_t rkey,
 	    void *ctxt, int scope, uint64_t flags)
 {
@@ -416,7 +408,7 @@ fi_acc_read(void *acc_ep, void *buf, void *desc, uint64_t size,
  * fi_acc_send - message send from a device kernel.
  */
 FI_ACC_DEV int
-fi_acc_send(void *acc_ep, const void *buf, uint64_t size, void *desc,
+fi_acc_send_efa(void *acc_ep, const void *buf, uint64_t size, void *desc,
 	    uint64_t data, void *peer, void *ctxt, int scope, uint64_t flags)
 {
 	struct fi_acc_efa_ep *ep = (struct fi_acc_efa_ep *)acc_ep;
@@ -452,7 +444,7 @@ fi_acc_send(void *acc_ep, const void *buf, uint64_t size, void *desc,
  *         or a subsequent post without FI_MORE.
  */
 FI_ACC_DEV int
-fi_acc_recv(void *acc_ep, void *buf, void *desc, uint64_t size,
+fi_acc_recv_efa(void *acc_ep, void *buf, void *desc, uint64_t size,
 	    void *peer, void *ctxt, int scope, uint64_t flags)
 {
 	struct fi_acc_efa_ep *ep = (struct fi_acc_efa_ep *)acc_ep;
@@ -511,7 +503,7 @@ fi_acc_recv(void *acc_ep, void *buf, void *desc, uint64_t size,
 #endif
 
 FI_ACC_DEV void
-fi_acc_flush(void *acc_ep, uint64_t flags)
+fi_acc_flush_efa(void *acc_ep, uint64_t flags)
 {
 	struct fi_acc_efa_ep *ep = (struct fi_acc_efa_ep *)acc_ep;
 
@@ -534,14 +526,14 @@ fi_acc_flush(void *acc_ep, uint64_t flags)
  */
 
 FI_ACC_DEV uint64_t
-fi_acc_cntr_read(void *acc_cntr)
+fi_acc_cntr_read_efa(void *acc_cntr)
 {
 	struct fi_acc_efa_cntr *c = (struct fi_acc_efa_cntr *)acc_cntr;
 	return *c->value;
 }
 
 FI_ACC_DEV uint64_t
-fi_acc_cntr_readerr(void *acc_cntr)
+fi_acc_cntr_readerr_efa(void *acc_cntr)
 {
 	struct fi_acc_efa_cntr *c = (struct fi_acc_efa_cntr *)acc_cntr;
 	if (!c->err_value)
@@ -550,7 +542,7 @@ fi_acc_cntr_readerr(void *acc_cntr)
 }
 
 FI_ACC_DEV void
-fi_acc_cntr_wait(void *acc_cntr, uint64_t target)
+fi_acc_cntr_wait_efa(void *acc_cntr, uint64_t target)
 {
 	struct fi_acc_efa_cntr *c = (struct fi_acc_efa_cntr *)acc_cntr;
 	while (*c->value < target)
@@ -563,7 +555,7 @@ fi_acc_cntr_wait(void *acc_cntr, uint64_t target)
  * Returns the raw CQE pointer when ready, NULL otherwise.
  */
 FI_ACC_DEV void *
-fi_acc_cq_poll(void *acc_cq, uint32_t position)
+fi_acc_cq_poll_efa(void *acc_cq, uint32_t position)
 {
 	struct fi_acc_efa_cq *cq = (struct fi_acc_efa_cq *)acc_cq;
 	uint32_t cq_offset = ((cq->cc + position) & cq->queue_mask) *
@@ -582,7 +574,7 @@ fi_acc_cq_poll(void *acc_cq, uint32_t position)
 }
 
 FI_ACC_DEV void
-fi_acc_cq_pop(void *acc_cq, uint32_t amount)
+fi_acc_cq_pop_efa(void *acc_cq, uint32_t amount)
 {
 	struct fi_acc_efa_cq *cq = (struct fi_acc_efa_cq *)acc_cq;
 	cq->phase = cq->phase ^
@@ -596,7 +588,7 @@ fi_acc_cq_pop(void *acc_cq, uint32_t amount)
  * (byte 2 = status in the EFA common completion descriptor).
  */
 FI_ACC_DEV uint32_t
-fi_acc_wc_read_vendor_err(void *cqe)
+fi_acc_wc_read_vendor_err_efa(void *cqe)
 {
 	return ((uint8_t *)cqe)[2];
 }
@@ -605,4 +597,4 @@ fi_acc_wc_read_vendor_err(void *cqe)
 }
 #endif
 
-#endif /* FI_ACC_EFA_DEVICE_H */
+#endif /* FI_ACC_EFA_CUDA_CUH */
