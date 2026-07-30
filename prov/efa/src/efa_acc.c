@@ -33,7 +33,7 @@
 
 /* Include EFA device struct definitions for building opaque blobs.
  * This is the same header consumers include from their .cu files. */
-#include "acc_cuda/fi_ext_efa_acc.cuh"
+#include <rdma/fi_acc_device.h>
 
 /*
  * Import flag legend (defined in fi_acc.h):

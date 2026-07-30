@@ -378,12 +378,13 @@ fi_mr_export_acc(my_mrs, num_mrs, 0, &acc_descs, &acc_descs_size);
 
 The device-side API provides communication functions callable from accelerator kernels.
 These functions are provided as inlined implementations in a single unified
-device header per accelerator runtime (e.g., `fi_acc_cuda.cuh` for CUDA),
-compiled directly into the consumer's accelerator kernel. The unified header
-contains all provider implementations and dispatches at runtime via a provider
-tag in the exported handle. The provider encapsulates the full posting protocol
-internally — WQE construction, ring management, phase bits, doorbells,
-backpressure — so the consumer only interacts with a high-level interface.
+device header (`rdma/fi_acc_device.h`), compiled directly into the consumer's
+accelerator kernel using any supported compiler (nvcc, hipcc, SYCL, or plain C).
+The unified header contains all provider implementations and dispatches at
+runtime via a provider tag in the exported handle. The provider encapsulates
+the full posting protocol internally — WQE construction, ring management,
+phase bits, doorbells, backpressure — so the consumer only interacts with a
+high-level interface.
 
 ### Post Operations
 
@@ -556,128 +557,91 @@ production error recovery.
 
 ## 5. Device Header Packaging
 
-The device-side headers are organized in two layers:
-
-**Layer 1: `rdma/fi_acc_common.h`** — A plain C header (no accelerator
-compiler required) containing only accelerator-agnostic definitions shared
-across all runtimes:
-- Common handle structs (`fi_acc_ep_hdr`, `fi_acc_cntr_hdr`, `fi_acc_cq_hdr`)
-- Provider identifier enum / constants
-- Flag definitions (`FI_ACC_ALLOC_DMABUF`, `FI_ACC_IMPORT_IOMEMORY`, etc.)
-- Scope enum (`fi_acc_scope`)
-- Ops table struct (if Option B is chosen)
-
-This header is also usable from host-side code (e.g., for struct layout
-queries or building test harnesses) since it has no device-compiler
-dependencies.
-
-**Layer 2: Runtime-specific headers** — One per accelerator runtime, each
-containing the actual device-side function implementations that use
-runtime-specific intrinsics:
+The device-side API is delivered as a single unified header:
 
 ```
-rdma/fi_acc_cuda.cuh     — CUDA (__device__, __threadfence_system, atomics)
-rdma/fi_acc_hip.h        — HIP  (__device__, __threadfence_system, atomics)
-rdma/fi_acc.hpp          — SYCL (sycl::atomic_ref, sycl::group_barrier, etc.)
+rdma/fi_acc_device.h
 ```
 
-Each runtime-specific header `#include`s `fi_acc_common.h` internally, then
-provides the inlined device functions (`fi_acc_write`, `fi_acc_flush`,
-`fi_acc_cntr_read`, etc.) implemented using that runtime's native primitives.
-The function signatures are identical across all three headers — only the
-implementation bodies differ.
-
-The consumer includes the one matching their accelerator compiler:
+This header works with **any** accelerator compiler — nvcc (CUDA), hipcc
+(HIP/ROCm), DPC++ (SYCL), or even plain C (for host-side type checking and
+test harnesses). Compiler-specific intrinsics (fences, atomics, device
+qualifiers) are abstracted behind preprocessor macros that adapt
+automatically:
 
 ```c
-#include <rdma/fi_acc_cuda.cuh>   // when compiling with nvcc
+// Adapts to the active compiler:
+#if defined(__CUDACC__) || (defined(__HIP_DEVICE_COMPILE__) && __HIP_DEVICE_COMPILE__)
+  #define FI_ACC_DEV __device__ static inline
+#elif defined(__SYCL_DEVICE_ONLY__)
+  #define FI_ACC_DEV static inline
+#else
+  #define FI_ACC_DEV static inline
+#endif
 ```
 
-This single include gives access to the full API. The same consumer binary
-works with any provider (EFA, verbs, CXI, etc.) without recompilation — only
-the runtime-specific header needs to match the accelerator compiler.
+The consumer includes this one file regardless of their accelerator runtime:
+
+```c
+#include <rdma/fi_acc_device.h>   // works with nvcc, hipcc, SYCL, or gcc
+```
+
+### Header Structure
+
+Internally, `fi_acc_device.h` is organized as follows:
+
+1. **Common definitions** — compiler-adaptive macros (`FI_ACC_DEV`), scope
+   enum (`fi_acc_scope`), provider identifiers (`FI_ACC_PROV_EFA`, etc.),
+   and the common handle header struct (`struct fi_acc_hdr`)
+
+2. **Provider implementations** — included inline, one per provider
+
+3. **Dispatch functions** — top-level `fi_acc_write()`, `fi_acc_send()`, etc.
+   that switch on the provider tag in the handle and route to the correct
+   provider implementation
+
+Provider implementations use `_<prov>` suffixed names (e.g.,
+`fi_acc_write_efa()`) to avoid collisions.
 
 ### Common Handle Header
 
-Every exported opaque handle must begin with a common header struct (defined
-in `fi_acc_common.h`). This is the contract between the dispatch layer and
-each provider's export implementation:
+Every exported opaque handle (EP, CQ, CNTR) MUST embed `struct fi_acc_hdr`
+as its first member. This is the contract between the dispatch layer and each
+provider's export implementation:
 
 ```c
-/* rdma/fi_acc_common.h */
+/* Defined in rdma/fi_acc_device.h */
 
-struct fi_acc_ep_hdr {
-    uint32_t             provider;   /* provider identifier */
-    uint32_t             version;    /* header layout version */
-};
-
-struct fi_acc_cntr_hdr {
-    uint32_t             provider;
-    uint32_t             version;
-};
-
-struct fi_acc_cq_hdr {
-    uint32_t             provider;
-    uint32_t             version;
-};
-```
-
-Each provider's internal device struct embeds the appropriate common header as
-its first member:
-
-```c
-// Provider-internal example:
-struct fi_acc_efa_ep {
-    struct fi_acc_ep_hdr hdr;       /* must be first */
-    /* EFA-specific fields follow */
-    ...
+struct fi_acc_hdr {
+    uint32_t provider;   /* FI_ACC_PROV_EFA, FI_ACC_PROV_VERBS, ... */
+    uint32_t version;    /* handle layout version (provider-defined) */
 };
 ```
 
 At export time (`fi_ep_export_acc()`), the provider populates `hdr.provider`
-and `hdr.version`. The consumer never inspects these structs — they remain
-opaque.
+and `hdr.version`. The consumer never inspects these fields — handles remain
+opaque `void*`.
 
-### Dispatch Mechanism (Open Discussion)
-
-The unified header must dispatch `fi_acc_write()` (and other device-side
-functions) to the correct provider's implementation based on the handle. Two
-approaches are under consideration:
-
-#### Option A: Switch-Case Dispatch (Inlined)
+### Dispatch Mechanism: Switch-Case (Inlined)
 
 The unified header includes all provider implementations and dispatches via a
 switch on the provider tag:
 
 ```c
-__device__ int fi_acc_write(void *acc_ep, const void *buf, void *desc,
-                            size_t size, uint64_t data, void *peer,
+FI_ACC_DEV int fi_acc_write(void *acc_ep, const void *buf, void *desc,
+                            uint64_t size, uint64_t data, void *peer,
                             uint64_t raddr, uint64_t rkey, void *ctxt,
-                            enum fi_acc_scope scope, uint64_t flags) {
-    struct fi_acc_ep_hdr *hdr = (struct fi_acc_ep_hdr *)acc_ep;
+                            int scope, uint64_t flags) {
+    struct fi_acc_hdr *hdr = (struct fi_acc_hdr *)acc_ep;
     switch (hdr->provider) {
     case FI_ACC_PROV_EFA:
         return fi_acc_write_efa(acc_ep, buf, desc, size, data, peer,
                                 raddr, rkey, ctxt, scope, flags);
-    case FI_ACC_PROV_VERBS:
-        return fi_acc_write_verbs(acc_ep, buf, desc, size, data, peer,
-                                  raddr, rkey, ctxt, scope, flags);
-    /* ... */
+    /* case FI_ACC_PROV_VERBS: ... */
     default:
         return -FI_ENOSYS;
     }
 }
-```
-
-The unified header internally includes each provider's runtime-specific
-implementation:
-
-```c
-// Inside rdma/fi_acc_cuda.cuh:
-#include <rdma/fi_acc_common.h>           // plain C: structs, enums, flags
-#include <rdma/acc/fi_acc_efa_cuda.cuh>   // EFA impl using CUDA intrinsics
-#include <rdma/acc/fi_acc_verbs_cuda.cuh> // verbs impl using CUDA intrinsics
-#include <rdma/acc/fi_acc_cxi_cuda.cuh>   // CXI impl using CUDA intrinsics
 ```
 
 **Precedent:** NCCL GIN uses this exact pattern in
@@ -686,101 +650,26 @@ implementation:
 a switch on `ctx.backend`, with `#if` guards to dead-strip disabled backends
 and `__builtin_unreachable()` for optimization hints.
 
-Pros:
-- Full inlining — compiler sees all code, optimizes across the call boundary
-- Dead-code elimination via `#if` guards (e.g., `FI_ACC_PROVIDERS_ENABLED` macro)
-- Proven pattern in production GPU code (NCCL GIN)
-- Zero overhead when only one provider is compiled in (switch constant-folds away)
-- Uniform branch across warp — no divergence
+**Why a single header instead of per-runtime files (`fi_acc_cuda.cuh`,
+`fi_acc_hip.h`, etc.)?**
 
-Cons:
-- Unified header must `#include` every provider's implementation — tightly coupled
-- Adding a new provider requires updating the unified header (new include + new case)
-- All provider code compiled into every consumer binary (code size)
+The provider implementations use compiler-adaptive macros for all
+runtime-specific intrinsics (fences, atomics, device qualifiers). Since the
+same source works across all compilers, there is no need for separate
+per-runtime copies of the header. One file, any compiler.
 
-#### Option B: Function Table Dispatch (Indirect Call)
+### Design Properties
 
-Each exported handle embeds a pointer to a device-resident function table
-populated by the provider at export time:
-
-```c
-struct fi_acc_ep_ops {
-    int (*write)(void *acc_ep, const void *buf, void *desc, size_t size,
-                 uint64_t data, void *peer, uint64_t raddr, uint64_t rkey,
-                 void *ctxt, enum fi_acc_scope scope, uint64_t flags);
-    int (*read)(void *acc_ep, void *buf, void *desc, size_t size,
-                void *peer, uint64_t raddr, uint64_t rkey, void *ctxt,
-                enum fi_acc_scope scope, uint64_t flags);
-    int (*send)(void *acc_ep, const void *buf, size_t size, void *desc,
-                uint64_t data, void *peer, void *ctxt,
-                enum fi_acc_scope scope, uint64_t flags);
-    int (*recv)(void *acc_ep, void *buf, void *desc, size_t size,
-                void *peer, void *ctxt,
-                enum fi_acc_scope scope, uint64_t flags);
-    int (*flush)(void *acc_ep, uint64_t flags);
-};
-
-struct fi_acc_ep_hdr {
-    struct fi_acc_ep_ops *ops;       /* device-resident function table */
-    uint32_t             provider;
-    uint32_t             version;
-};
-```
-
-Dispatch is a single indirect call:
-
-```c
-__device__ int fi_acc_write(void *acc_ep, const void *buf, void *desc,
-                            size_t size, uint64_t data, void *peer,
-                            uint64_t raddr, uint64_t rkey, void *ctxt,
-                            enum fi_acc_scope scope, uint64_t flags) {
-    struct fi_acc_ep_hdr *hdr = (struct fi_acc_ep_hdr *)acc_ep;
-    return hdr->ops->write(acc_ep, buf, desc, size, data, peer,
-                           raddr, rkey, ctxt, scope, flags);
-}
-```
-
-Providers ship their device implementations as separate compilation units
-(device libraries / fatbinary objects). The provider populates the ops table
-with device function pointers at export time.
-
-Pros:
-- True decoupling — unified header only defines the ops struct, not provider code
-- Adding a new provider never touches the unified header
-- Only the active provider's code is linked into the binary (no dead code)
-- Mirrors host-side libfabric's `fi_ops` design philosophy
-- Provider-internal structs are completely private
-
-Cons:
-- Indirect calls inhibit inlining on GPUs — register spill at call boundaries
-- Slightly higher overhead (~5-10 cycles per call for jump + return)
-- Device function pointers require careful handling across CUDA compilation units
-- Cannot dead-code-eliminate unused scope paths within a provider
-
-#### Discussion Points
-
-1. **Performance impact:** The body of `fi_acc_write()` is ~200 instructions
-   (atomics, WQE construction, MMIO, fence). The indirect call overhead in
-   Option B is likely <1% of the critical path since NIC/PCIe latency
-   dominates. However, register pressure from the call boundary may affect
-   occupancy — this needs benchmarking.
-
-2. **Ecosystem fit:** Option A matches NCCL GIN's existing dispatch pattern.
-   Option B matches libfabric's host-side ops-table architecture. Which
-   precedent should the accelerator API follow?
-
-3. **Extensibility vs. coupling:** Option A requires the unified header to
-   know about all providers at package time. Option B allows providers to be
-   added/updated independently as separate device libraries. For a fast-moving
-   ecosystem with new providers (e.g., future Intel GPU support), Option B
-   reduces coordination overhead.
-
-4. **Hybrid approach:** Use Option A's switch dispatch but with the provider
-   implementations compiled as separate device libraries rather than inlined
-   headers. The switch calls non-inlined `__noinline__` device functions
-   linked from provider libraries — gives predictable branching without
-   requiring all source in one header. Trade-off: still no cross-boundary
-   inlining, but avoids function pointer complexities.
+- **Full inlining** — the compiler sees all code and optimizes across the
+  dispatch boundary; dead-code elimination removes unused providers
+- **Zero overhead** — when only one provider is compiled in, the switch
+  constant-folds away entirely
+- **Uniform branch** — all threads in a warp take the same switch path
+  (same provider), so no divergence
+- **Self-contained** — `fi_acc_device.h` has no external dependencies beyond
+  `<stdint.h>` and `<rdma/fi_errno.h>`; no link-time provider libraries needed
+- **Extensible** — adding a new provider means adding one `#include` and one
+  `case` in each dispatch function
 
 ---
 

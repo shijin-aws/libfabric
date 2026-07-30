@@ -2,8 +2,8 @@
 /* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All
  * rights reserved. */
 
-#ifndef FI_ACC_EFA_CUDA_CUH
-#define FI_ACC_EFA_CUDA_CUH
+#ifndef FI_ACC_EFA_DEVICE_H
+#define FI_ACC_EFA_DEVICE_H
 
 /*
  * =============================================================================
@@ -597,4 +597,4 @@ fi_acc_wc_read_vendor_err_efa(void *cqe)
 }
 #endif
 
-#endif /* FI_ACC_EFA_CUDA_CUH */
+#endif /* FI_ACC_EFA_DEVICE_H */
