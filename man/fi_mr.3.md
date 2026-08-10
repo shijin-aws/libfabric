@@ -43,6 +43,9 @@ fi_mr_enable
 fi_hmem_ze_device
 : Returns an hmem device identifier for a level zero driver and device.
 
+fi_mr_get_desc
+:   Retrieve a memory region descriptor with extended options.
+
 # SYNOPSIS
 
 ```c
@@ -81,6 +84,9 @@ int fi_mr_refresh(struct fid_mr *mr, const struct iovec *iov,
 int fi_mr_enable(struct fid_mr *mr);
 
 int fi_hmem_ze_device(int driver_index, int device_index);
+
+int fi_mr_get_desc(struct fid_mr *mr, void *buf, size_t *len,
+    uint64_t flags, struct fid_xpu_ctx *ctx);
 ```
 
 # ARGUMENTS
@@ -476,6 +482,18 @@ MEMORY REGISTRATION CACHE section.
 Obtains the local memory descriptor associated with a MR.
 The memory registration must have completed successfully before invoking
 this call.
+
+## fi_mr_get_desc
+
+The fi_mr_get_desc call retrieves a memory region descriptor into a
+caller-supplied buffer. When called with flags set to FI_XPU and a
+valid fid_xpu_ctx, the call retrieves the provider-specific raw
+descriptor (e.g., the hardware lkey) usable by the XPU when posting
+work requests. The size of the returned data is mr_desc_size from
+fi_xpu_ctx_query. When called without FI_XPU (flags = 0, ctx = NULL),
+the call retrieves the host-side descriptor. The caller allocates buf
+and sets *len to the buffer size on input; on output *len is set to
+the number of bytes written.
 
 ## fi_mr_key
 
@@ -1104,6 +1122,15 @@ memory monitors may be installed.  A memory monitor is a component of the cache
 responsible for detecting changes in virtual to physical address mappings.
 Some level of control over the cache is possible through the above mentioned
 environment variables.
+
+# XPU SUPPORT
+
+An MR is not bound to an XPU context — it is a shared domain-level resource.
+The application may call [`fi_mr_get_desc`](fi_xpu.3.html) with the `FI_XPU`
+flag and a `fid_xpu_ctx` to retrieve a provider-specific raw descriptor
+(e.g., the hardware lkey) for the MR that is usable by the XPU when posting
+work requests. The same MR can be queried with different XPU contexts. See
+[`fi_xpu`(3)](fi_xpu.3.html) for details.
 
 # SEE ALSO
 

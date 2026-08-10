@@ -49,6 +49,9 @@ fi_rx_size_left / fi_tx_size_left (DEPRECATED)
     an operation returning -FI_EAGAIN.  This functions have been deprecated
     and will be removed in a future version of the library.
 
+fi_ep_export_xpu
+:   Export an endpoint for XPU device-side access.
+
 # SYNOPSIS
 
 ```c
@@ -113,6 +116,9 @@ uint8_t fi_tc_dscp_get(uint32_t tclass);
 DEPRECATED ssize_t fi_rx_size_left(struct fid_ep *ep);
 
 DEPRECATED ssize_t fi_tx_size_left(struct fid_ep *ep);
+
+int fi_ep_export_xpu(struct fid_ep *ep, uint64_t flags,
+    struct fid_xpu_ep **xpu_ep, size_t *size);
 ```
 
 # ARGUMENTS
@@ -249,9 +255,18 @@ that had been used.
 
 ## fi_endpoint2
 
-Similar to fi_endpoint, buf accepts an extra parameter *flags*. Mainly used for
-opening endpoints that use peer transfer feature. See
-[`fi_peer`(3)](fi_peer.3.html)
+Similar to fi_endpoint, but accepts an extra parameter *flags*. Used for
+opening endpoints that use peer transfer feature (see
+[`fi_peer`(3)](fi_peer.3.html)) or XPU-initiated communication.
+
+When `FI_XPU` is set in flags and `fi_ep_attr->xpu_ctx` points to an open
+XPU context (see [`fi_xpu`(3)](fi_xpu.3.html)), the endpoint is created for
+XPU device-side data transfer. Data transfer operations on such an EP are
+only available to the given XPU. Control functions such as `fi_ep_bind`,
+`fi_enable`, `fi_setopt`, and CM operations remain host CPU-only. The EP
+may be bound to XPU CQs and XPU counters created with the same XPU context.
+Once bound and enabled, the EP is exported via `fi_ep_export_xpu` for
+device-side use.
 
 ## fi_close
 
@@ -666,6 +681,7 @@ struct fi_ep_attr {
 	size_t          rx_ctx_cnt;
 	size_t          auth_key_size;
 	uint8_t         *auth_key;
+	struct fid_xpu_ctx *xpu_ctx;
 };
 {% endhighlight %}
 
@@ -1020,6 +1036,14 @@ is set to 0.  This field is ignored unless the fabric is opened with API
 version 1.5 or greater.
 
 If the domain is opened with FI_AV_AUTH_KEY, auth_key is must be NULL.
+
+## xpu_ctx - XPU Context
+
+Optional pointer to an XPU context created via `fi_xpu_ctx`. When set
+together with `FI_XPU` in the flags parameter of `fi_endpoint2`, the endpoint
+is created for XPU device-side data transfer. See
+[`fi_xpu`(3)](fi_xpu.3.html) for details. This field must be NULL if the
+endpoint is not created with FI_XPU.
 
 # TRANSMIT CONTEXT ATTRIBUTES
 
@@ -1602,6 +1626,18 @@ Socket endpoints behave like non-blocking sockets.  In order to support
 select and poll semantics, active socket endpoints are associated with a
 file descriptor that is signaled whenever the endpoint is ready to send
 and/or receive data.  The file descriptor may be retrieved using fi_control.
+
+## fi_ep_export_xpu
+
+The fi_ep_export_xpu call exports an enabled endpoint for XPU access.
+The returned handle embeds a struct fid_xpu as its first member with
+the provider identifier set (see [`fi_xpu`(3)](fi_xpu.3.html) for
+provider dispatch details). The handle is directly accessible from
+XPU kernel code for device-side data transfer functions. The ep must
+have been created with FI_XPU and be in the enabled state. The size
+output parameter indicates the total size of the exported handle. The
+exported handle is cleaned up when the application closes the EP's
+fid.
 
 # OPERATION FLAGS
 

@@ -28,6 +28,9 @@ fi_cq_signal
 fi_cq_strerror
 : Converts provider specific error information into a printable string
 
+fi_cq_export_xpu
+:   Export a completion queue for XPU device-side access.
+
 # SYNOPSIS
 
 ```c
@@ -58,6 +61,9 @@ int fi_cq_signal(struct fid_cq *cq);
 
 const char * fi_cq_strerror(struct fid_cq *cq, int prov_errno,
       const void *err_data, char *buf, size_t len);
+
+int fi_cq_export_xpu(struct fid_cq *cq, uint64_t flags,
+    struct fid_xpu_cq **xpu_cq, size_t *size);
 ```
 
 # ARGUMENTS
@@ -137,6 +143,7 @@ struct fi_cq_attr {
 	int                  signaling_vector; /* interrupt affinity */
 	enum fi_cq_wait_cond wait_cond; /* wait condition format */
 	struct fid_wait     *wait_set;  /* optional wait set, deprecated */
+	struct fid_xpu_ctx  *xpu_ctx;   /* optional XPU context */
 };
 ```
 
@@ -296,6 +303,12 @@ struct fi_cq_tagged_entry {
   event and completion queues.  This field is ignored if wait_obj is
   not FI_WAIT_SET.
 
+*xpu_ctx*
+: Optional pointer to an XPU context created via `fi_xpu_ctx`. When set
+  together with `FI_XPU` in the flags field, the CQ is created for XPU
+  device-side access. See [`fi_xpu`(3)](fi_xpu.3.html) for details. This
+  field must be NULL if the CQ is not created with FI_XPU.
+
 ## fi_close
 
 The fi_close call releases all resources associated with a completion
@@ -326,6 +339,12 @@ commands are usable with a CQ.
 : This command retrieves the type of wait object associated with the CQ.
   The `fi_control` arg parameter should be an address where the wait object
   type will be written.
+
+When `FI_XPU` is set in `fi_cq_attr->flags` and `fi_cq_attr->xpu_ctx` points
+to an open XPU context (see [`fi_xpu`(3)](fi_xpu.3.html)), the CQ is created
+for XPU device-side access. Completion entries on such a CQ can only be read
+using device-side functions. Host-side read operations are not available.
+The CQ is exported via `fi_cq_export_xpu` for device-side use.
 
 ## fi_cq_read
 
@@ -1019,10 +1038,20 @@ to report additional completions once the overrun occurs.
 Fabric errno values are defined in
 `rdma/fi_errno.h`.
 
-# SEE ALSO
+## fi_cq_export_xpu
 
-[`fi_getinfo`(3)](fi_getinfo.3.html),
-[`fi_endpoint`(3)](fi_endpoint.3.html),
+The fi_cq_export_xpu call exports a completion queue for XPU-side
+polling. The CQ must have been created with an XPU context set in
+fi_cq_attr. The returned handle embeds a struct fid_xpu as its first
+member with the provider identifier set (see
+[`fi_xpu`(3)](fi_xpu.3.html) for provider dispatch details). The
+handle is directly accessible from XPU kernel code for device-side
+completion functions (fi_xpu_cq_read, fi_xpu_cq_readerr). The size
+output parameter indicates the total size of the exported handle. The
+exported handle is cleaned up when the application closes the CQ's
+fid.
+
+# SEE ALSO
 [`fi_domain`(3)](fi_domain.3.html),
 [`fi_eq`(3)](fi_eq.3.html),
 [`fi_cntr`(3)](fi_cntr.3.html),

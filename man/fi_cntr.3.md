@@ -27,6 +27,9 @@ fi_cntr_set
 fi_cntr_wait
 : Wait for a counter to be greater or equal to a threshold value
 
+fi_cntr_export_xpu
+:   Export a counter for XPU device-side access.
+
 # SYNOPSIS
 
 ```c
@@ -51,6 +54,9 @@ int fi_cntr_seterr(struct fid_cntr *cntr, uint64_t value);
 
 int fi_cntr_wait(struct fid_cntr *cntr, uint64_t threshold,
     int timeout);
+
+int fi_cntr_export_xpu(struct fid_cntr *cntr, uint64_t flags,
+    struct fid_xpu_cntr **xpu_cntr, size_t *size);
 ```
 
 # ARGUMENTS
@@ -108,6 +114,7 @@ struct fi_cntr_attr {
 	enum fi_wait_obj     wait_obj;  /* requested wait object */
 	struct fid_wait     *wait_set;  /* optional wait set, deprecated */
 	uint64_t             flags;     /* operation flags */
+	struct fid_xpu_ctx  *xpu_ctx;   /* optional XPU context */
 };
 ```
 
@@ -194,7 +201,17 @@ struct fi_cntr_attr {
   counters.  This field is ignored if wait_obj is not FI_WAIT_SET.
 
 *flags*
-: Flags are reserved for future use, and must be set to 0.
+: Flags that apply to the counter. Set `FI_XPU` to create a counter for
+  XPU device-side access. Must be set to 0 if XPU is not used.
+
+*xpu_ctx*
+: Optional pointer to an XPU context created via `fi_xpu_ctx`. When set
+  together with `FI_XPU` in the flags field, the counter is created for
+  XPU device-side access. Counter values on such a counter can only be read
+  or waited on using device-side functions. Host-side read operations are not
+  available. The counter is exported via `fi_cntr_export_xpu` for device-side
+  use. See [`fi_xpu`(3)](fi_xpu.3.html) for details. This field must be NULL
+  if the counter is not created with FI_XPU.
 
 ## fi_close
 
@@ -319,6 +336,18 @@ fi_cntr_set / fi_cntr_seterr is undefined, as updates to the counter may
 be lost.  A counter value is considered stable if all previous
 updates using fi_cntr_set / fi_cntr_seterr and results of related operations
 are reflected in the observed value of the counter.
+
+## fi_cntr_export_xpu
+
+The fi_cntr_export_xpu call exports a counter for XPU access. The
+counter must have been created with an XPU context set in fi_cntr_attr.
+The returned handle embeds a struct fid_xpu as its first member with
+the provider identifier set (see [`fi_xpu`(3)](fi_xpu.3.html) for
+provider dispatch details). The handle is directly accessible from XPU
+kernel code for device-side counter functions (fi_xpu_cntr_read,
+fi_xpu_cntr_wait). The size output parameter indicates the total size
+of the exported handle. The exported handle is cleaned up when the
+application closes the counter's fid.
 
 # SEE ALSO
 

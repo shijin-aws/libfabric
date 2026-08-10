@@ -34,6 +34,9 @@ fi_av_lookup_auth_key
 fi_av_set_user_id
 : Set the user-defined fi_addr_t for an inserted fi_addr_t.
 
+fi_av_lookup2
+:   Look up an address vector entry with extended options.
+
 # SYNOPSIS
 
 ```c
@@ -79,6 +82,10 @@ int fi_av_lookup_auth_key(struct fid_av *av, fi_addr_t addr,
 
 int fi_av_set_user_id(struct fid_av *av, fi_addr_t fi_addr,
       fi_addr_t user_id, uint64_t flags);
+
+int fi_av_lookup2(struct fid_av *av, fi_addr_t fi_addr,
+    void *buf, size_t *len, uint64_t flags,
+    struct fid_xpu_ctx *ctx);
 ```
 
 # ARGUMENTS
@@ -523,6 +530,18 @@ addr buffer. If the actual address is larger than what can fit into the buffer,
 it will be truncated.  On output, addrlen is set to the size of the buffer
 needed to store the address, which may be larger than the input value.
 
+## fi_av_lookup2
+
+The fi_av_lookup2 call is an extended version of fi_av_lookup that
+accepts flags and an optional XPU context. When called with flags set
+to FI_XPU and a valid fid_xpu_ctx, the call retrieves a
+provider-specific raw address usable by the XPU when posting work
+requests. The size of the returned data is av_addr_size from
+fi_xpu_ctx_query. When called without FI_XPU (flags = 0, ctx = NULL),
+the call behaves identically to fi_av_lookup. The caller allocates buf
+and sets *len to the buffer size on input; on output *len is set to
+the number of bytes written.
+
 ## fi_rx_addr
 
 This function is used to convert an endpoint address, returned by
@@ -721,6 +740,15 @@ FI_ADDR_NOTAVAIL.
 
 All other calls return FI_SUCCESS on success, or a negative value corresponding
 to fabric errno on error.  Fabric errno values are defined in `rdma/fi_errno.h`.
+
+# XPU SUPPORT
+
+An AV created in a domain that supports FI_XPU is not itself bound to an XPU
+context — it remains a host-only, domain-level resource. However, the
+application may call [`fi_av_lookup2`](fi_xpu.3.html) with the `FI_XPU` flag
+and a `fid_xpu_ctx` to retrieve a provider-specific raw address for each
+entry that is usable by the XPU when posting work requests. See
+[`fi_xpu`(3)](fi_xpu.3.html) for details.
 
 # SEE ALSO
 
