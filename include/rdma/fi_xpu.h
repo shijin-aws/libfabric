@@ -78,6 +78,57 @@ struct fid_xpu_ctx {
 };
 
 /*
+ * Provider identifiers for device-side dispatch.
+ * Values start at 1 and form a tight range suitable for a jump table.
+ * The provider must set prov_id to its assigned value during the
+ * export call (fi_ep_export_xpu, fi_cq_export_xpu, fi_cntr_export_xpu).
+ */
+enum fi_xpu_provider {
+	FI_XPU_PROV_EFA		= 1,
+	FI_XPU_PROV_VERBS,
+	FI_XPU_PROV_CXI,
+	FI_XPU_PROV_OPX,
+	FI_XPU_PROV_PSM2,
+	FI_XPU_PROV_PSM3,
+	FI_XPU_PROV_SHM,
+	FI_XPU_PROV_SM2,
+	FI_XPU_PROV_TCP,
+	FI_XPU_PROV_UDP,
+	FI_XPU_PROV_SOCKETS,
+	FI_XPU_PROV_USNIC,
+	FI_XPU_PROV_UCX,
+	FI_XPU_PROV_LPP,
+	FI_XPU_PROV_LNX,
+	FI_XPU_PROV_MAX,
+};
+
+/*
+ * XPU exported object base type.
+ * Every handle returned by fi_ep_export_xpu / fi_cq_export_xpu /
+ * fi_cntr_export_xpu embeds this as its first member.  The provider
+ * populates prov_id during the export call with its assigned value
+ * from enum fi_xpu_provider.  Device-side dispatch casts the handle
+ * to struct fid_xpu * to read prov_id and route to the correct
+ * provider implementation.
+ */
+struct fid_xpu {
+	uint32_t	fclass;		/* FI_CLASS_XPU_EP, _CQ, _CNTR */
+	uint32_t	prov_id;	/* enum fi_xpu_provider */
+};
+
+struct fid_xpu_ep {
+	struct fid_xpu	fid;
+};
+
+struct fid_xpu_cq {
+	struct fid_xpu	fid;
+};
+
+struct fid_xpu_cntr {
+	struct fid_xpu	fid;
+};
+
+/*
  * Inline wrappers
  */
 static inline int
