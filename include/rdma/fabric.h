@@ -462,6 +462,7 @@ struct fi_domain_attr {
 	uint32_t		max_group_id;
 	uint64_t		max_cntr_value;
 	uint64_t		max_err_cntr_value;
+	size_t			max_xpu_ctx_cnt;
 };
 
 struct fi_fabric_attr {
