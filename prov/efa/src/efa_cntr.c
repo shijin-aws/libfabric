@@ -7,6 +7,7 @@
 #include "efa_cntr.h"
 #include "efa_hw_cntr.h"
 #include "efa_cq.h"
+#include "efa_xpu.h"
 
 int efa_cntr_wait(struct fid_cntr *cntr_fid, uint64_t threshold, int timeout)
 {
@@ -59,7 +60,8 @@ static struct fi_ops_cntr efa_cntr_ops = {
 	.adderr = ofi_cntr_adderr,
 	.set = ofi_cntr_set,
 	.seterr = ofi_cntr_seterr,
-	.wait = efa_cntr_wait
+	.wait = efa_cntr_wait,
+	.export_xpu = efa_cntr_export_xpu,
 };
 
 static int efa_cntr_close(struct fid *fid)

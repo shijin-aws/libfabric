@@ -11,6 +11,7 @@
 
 #include "efa.h"
 #include "efa_av.h"
+#include "efa_xpu.h"
 #include "rdm/efa_rdm_domain.h"
 #include "rdm/efa_rdm_fabric.h"
 #include "rdm/efa_rdm_pke_utils.h"
@@ -823,7 +824,8 @@ static struct fi_ops_av efa_av_ops = {
 	.insertsym = fi_no_av_insertsym,
 	.remove = efa_av_remove,
 	.lookup = efa_av_lookup,
-	.straddr = efa_av_straddr
+	.straddr = efa_av_straddr,
+	.lookup2 = efa_av_lookup2,
 };
 
 static void efa_av_close_reverse_av(struct efa_av *av)

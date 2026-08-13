@@ -91,3 +91,12 @@ AS_IF([test "x$enable_efagda" = xyes], [
 
 AM_CONDITIONAL([EFAGDA], [test x$enable_efagda = xyes])
 AC_SUBST([EFA_DP_DIRECT], [$efa_dp_direct_path])
+
+dnl FI_XPU GDA support
+AC_ARG_ENABLE([fi-xpu-gda],
+	[AS_HELP_STRING([--enable-fi-xpu-gda],
+		[Enable FI_XPU GDA testing (requires CUDA)])],
+	[],
+	[enable_fi_xpu_gda=no])
+
+AM_CONDITIONAL([FI_XPU_GDA], [test x$enable_fi_xpu_gda = xyes])

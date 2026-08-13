@@ -64,6 +64,8 @@ enum {
  *       return fi_xpu_send_efa(ep, ...);
  */
 
+#include <rdma/fi_xpu_device_efa.h>
+
 
 FI_XPU_FUNC int
 fi_xpu_write(void *ep, const void *buf, size_t len, void *desc,
@@ -73,6 +75,9 @@ fi_xpu_write(void *ep, const void *buf, size_t len, void *desc,
 	struct fid_xpu *fid = (struct fid_xpu *)ep;
 
 	switch (fid->prov_id) {
+	case FI_XPU_PROV_EFA:
+		return fi_xpu_write_efa(ep, buf, len, desc, data, dest_addr,
+					addr, key, context, flags, scope);
 	default:
 		return -FI_ENOSYS;
 	}
@@ -86,6 +91,9 @@ fi_xpu_read(void *ep, void *buf, size_t len, void *desc,
 	struct fid_xpu *fid = (struct fid_xpu *)ep;
 
 	switch (fid->prov_id) {
+	case FI_XPU_PROV_EFA:
+		return fi_xpu_read_efa(ep, buf, len, desc, src_addr,
+				       addr, key, context, flags, scope);
 	default:
 		return -FI_ENOSYS;
 	}
@@ -100,6 +108,9 @@ fi_xpu_send(void *ep, const void *buf, size_t len, void *desc,
 	struct fid_xpu *fid = (struct fid_xpu *)ep;
 
 	switch (fid->prov_id) {
+	case FI_XPU_PROV_EFA:
+		return fi_xpu_send_efa(ep, buf, len, desc, data, dest_addr,
+				       context, flags, scope);
 	default:
 		return -FI_ENOSYS;
 	}
@@ -112,6 +123,9 @@ fi_xpu_recv(void *ep, void *buf, size_t len, void *desc,
 	struct fid_xpu *fid = (struct fid_xpu *)ep;
 
 	switch (fid->prov_id) {
+	case FI_XPU_PROV_EFA:
+		return fi_xpu_recv_efa(ep, buf, len, desc, src_addr,
+				       context, flags, scope);
 	default:
 		return -FI_ENOSYS;
 	}
@@ -197,6 +211,8 @@ fi_xpu_cntr_read(void *cntr, int scope)
 	struct fid_xpu *fid = (struct fid_xpu *)cntr;
 
 	switch (fid->prov_id) {
+	case FI_XPU_PROV_EFA:
+		return fi_xpu_cntr_read_efa(cntr, scope);
 	default:
 		return 0;
 	}
@@ -208,6 +224,8 @@ fi_xpu_cntr_readerr(void *cntr, int scope)
 	struct fid_xpu *fid = (struct fid_xpu *)cntr;
 
 	switch (fid->prov_id) {
+	case FI_XPU_PROV_EFA:
+		return fi_xpu_cntr_readerr_efa(cntr, scope);
 	default:
 		return 0;
 	}
@@ -219,6 +237,9 @@ fi_xpu_cntr_wait(void *cntr, uint64_t threshold, int timeout, int scope)
 	struct fid_xpu *fid = (struct fid_xpu *)cntr;
 
 	switch (fid->prov_id) {
+	case FI_XPU_PROV_EFA:
+		fi_xpu_cntr_wait_efa(cntr, threshold, timeout, scope);
+		return;
 	default:
 		return;
 	}
@@ -275,6 +296,8 @@ fi_xpu_cq_read(void *cq, void *buf, size_t count, int scope)
 	struct fid_xpu *fid = (struct fid_xpu *)cq;
 
 	switch (fid->prov_id) {
+	case FI_XPU_PROV_EFA:
+		return fi_xpu_cq_read_efa(cq, buf, count, scope);
 	default:
 		return -FI_ENOSYS;
 	}

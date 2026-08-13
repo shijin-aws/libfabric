@@ -6,6 +6,7 @@
 #include "efa.h"
 #include "efa_av.h"
 #include "efa_cq.h"
+#include "efa_xpu.h"
 
 #include <infiniband/efadv.h>
 
@@ -199,6 +200,7 @@ static struct fi_ops_ep efa_ep_base_ops = {
 	.rx_ctx = fi_no_rx_ctx,
 	.rx_size_left = fi_no_rx_size_left,
 	.tx_size_left = fi_no_tx_size_left,
+	.export_xpu = efa_ep_export_xpu,
 };
 
 static int efa_ep_close(fid_t fid)

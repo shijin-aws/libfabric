@@ -11,6 +11,7 @@
 #include "efa_cntr.h"
 #include "efa_cq.h"
 #include "efa_data_path_ops.h"
+#include "efa_xpu.h"
 #include <infiniband/verbs.h>
 #include "efa_data_path_direct.h"
 
@@ -877,7 +878,8 @@ struct fi_ops_cq efa_cq_bypass_util_cq_ops = {
 	.sread = efa_cq_sread,
 	.sreadfrom = efa_cq_sreadfrom,
 	.signal = efa_cq_signal,
-	.strerror = efa_cq_strerror
+	.strerror = efa_cq_strerror,
+	.export_xpu = efa_cq_export_xpu,
 };
 
 /* CQ ops with util readfrom/readerr that stages cqes and increments counters during cq read */
@@ -889,7 +891,8 @@ struct fi_ops_cq efa_cq_ops = {
 	.sread = efa_cq_sread,
 	.sreadfrom = efa_cq_sreadfrom,
 	.signal = efa_cq_signal,
-	.strerror = efa_cq_strerror
+	.strerror = efa_cq_strerror,
+	.export_xpu = efa_cq_export_xpu,
 };
 
 void efa_cq_progress(struct util_cq *cq)

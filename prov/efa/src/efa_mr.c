@@ -5,6 +5,7 @@
 #include <ofi_util.h>
 #include "efa.h"
 #include "efa_direct_ope.h"
+#include "efa_xpu.h"
 #include "rdm/efa_rdm_ep.h"
 #include "rdm/efa_rdm_ope.h"
 #if HAVE_CUDA
@@ -645,5 +646,6 @@ struct fi_ops_mr efa_domain_mr_ops = {
 	.reg = efa_mr_reg,
 	.regv = efa_mr_regv,
 	.regattr = efa_mr_regattr,
+	.get_desc = efa_mr_get_desc,
 };
 

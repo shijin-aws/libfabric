@@ -56,6 +56,9 @@ endif BUILD_EFA_RDMA_CHECKER
 if EFAGDA
 bin_PROGRAMS += prov/efa/src/fi_efa_gda
 endif EFAGDA
+if FI_XPU_GDA
+bin_PROGRAMS += prov/efa/src/fi_xpu_gda
+endif FI_XPU_GDA
 if HAVE_EFADV_CREATE_COMP_CNTR
 bin_PROGRAMS += prov/efa/src/fi_efa_hw_cntr
 endif HAVE_EFADV_CREATE_COMP_CNTR
@@ -162,6 +165,20 @@ $(srcdir)/prov/efa/src/efagda/libefagda.so:
 clean-local:
 	$(MAKE) -C $(srcdir)/prov/efa/src/efagda EFA_DP_DIRECT=$(EFA_DP_DIRECT) clean
 endif EFAGDA
+
+if FI_XPU_GDA
+prov_efa_src_fi_xpu_gda_SOURCES = prov/efa/src/fi_xpu_gda.c
+prov_efa_src_fi_xpu_gda_LDFLAGS = -L$(srcdir)/prov/efa/src/fi_xpu \
+    -Wl,-rpath=$(abs_srcdir)/prov/efa/src/fi_xpu
+prov_efa_src_fi_xpu_gda_LDADD = -lfixpukernels -lcudart -lcuda libfabtests.la
+EXTRA_prov_efa_src_fi_xpu_gda_DEPENDENCIES = $(srcdir)/prov/efa/src/fi_xpu/libfixpukernels.so
+
+$(srcdir)/prov/efa/src/fi_xpu/libfixpukernels.so:
+	$(MAKE) -C $(srcdir)/prov/efa/src/fi_xpu
+
+clean-local-fi-xpu:
+	$(MAKE) -C $(srcdir)/prov/efa/src/fi_xpu clean
+endif FI_XPU_GDA
 
 EXTRA_DIST += prov/efa/src/efagda
 
