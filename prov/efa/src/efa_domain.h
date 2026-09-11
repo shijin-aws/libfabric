@@ -5,6 +5,7 @@
 #define EFA_DOMAIN_H
 
 #include <infiniband/verbs.h>
+#include <infiniband/efadv.h>
 #include "efa_device.h"
 #include "efa_hmem.h"
 #include "efa_env.h"
@@ -47,7 +48,32 @@ struct efa_domain {
 	 * For efa_rdm the embedded gen counter detects slot reuse.
 	 */
 	struct ofi_bufpool *mr_pool;
+#if HAVE_EFADV_COMP_SIGNAL
+	/*
+	 * Completion-with-signal bookkeeping. The public fi_efa API only
+	 * exposes opaque comp_mem_id / signal_id numbers, so the provider keeps
+	 * the underlying efadv handles here in order to destroy them by ID.
+	 * Protected by comp_signal_lock.
+	 */
+	struct dlist_entry comp_mem_op_list;
+	struct dlist_entry comp_signal_list;
+	ofi_mutex_t comp_signal_lock;
+#endif
 };
+
+#if HAVE_EFADV_COMP_SIGNAL
+struct efa_comp_mem_op_entry {
+	struct dlist_entry entry;
+	struct efadv_comp_mem_op *mem_op;
+	uint32_t comp_mem_id;
+};
+
+struct efa_comp_signal_entry {
+	struct dlist_entry entry;
+	struct efadv_comp_signal *signal;
+	uint32_t signal_id;
+};
+#endif
 
 extern struct dlist_entry g_efa_domain_list;
 extern ofi_mutex_t g_efa_domain_list_lock;

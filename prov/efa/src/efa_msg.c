@@ -246,6 +246,16 @@ static inline ssize_t efa_post_send(struct efa_base_ep *base_ep, const struct fi
 	/* Prepare work request ID */
 	efa_ctx = efa_fill_context(msg->context, msg->addr, flags,
 				   FI_SEND | FI_MSG);
+	/*
+	 * Completion with signal is only supported on RDMA write
+	 * (fi_writemsg); reject FI_EFA_EXTENDED_MSG on the send path.
+	 */
+	if (flags & FI_EFA_EXTENDED_MSG) {
+		EFA_WARN(FI_LOG_EP_DATA,
+			 "FI_EFA_EXTENDED_MSG is not supported on fi_sendmsg\n");
+		ret = -FI_EINVAL;
+		goto out_err;
+	}
 	if (efa_env.track_mr && efa_ctx) {
 		direct_ope = efa_direct_ope_alloc(base_ep, efa_ctx, msg, NULL);
 		if (!direct_ope) {

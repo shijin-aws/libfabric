@@ -324,6 +324,90 @@ int efa_qp_create(struct efa_qp **qp, struct ibv_qp_init_attr_ex *init_attr_ex,
 #if HAVE_EFADV_WR_PROCESSING_HINTS
 		efa_attr.wr_flags |= EFADV_WR_EX_WITH_PROCESSING_HINTS;
 #endif
+#if HAVE_EFADV_COMP_SIGNAL
+		{
+			struct efa_base_ep *signal_ep = init_attr_ex->qp_context;
+
+			/*
+			 * A single opt-in enables both signal WQE feature
+			 * blocks (signal-id and signal-data), so the send queue
+			 * is sized for the with-data case and whether operand
+			 * data is present is chosen per work request on the
+			 * data path.
+			 */
+			if (signal_ep && signal_ep->comp_signal_enabled) {
+				struct efadv_inline_data_attr inl_attr = {0};
+				int max_inline;
+
+				efa_attr.wr_flags |= EFADV_WR_EX_WITH_COMP_SIGNAL;
+				efa_attr.wr_flags |= EFADV_WR_EX_WITH_COMP_SIGNAL_WITH_DATA;
+
+				/*
+				 * Signals carry per-WR feature blocks in the wide
+				 * WQE, shrinking the inline region below the
+				 * device's nominal inline_buf_size_ex. Clamp the
+				 * requested inline size to what the device allows
+				 * with signals on, otherwise QP creation fails
+				 * with -EINVAL.
+				 */
+				inl_attr.wr_flags = efa_attr.wr_flags &
+					(EFADV_WR_EX_WITH_COMP_SIGNAL |
+					 EFADV_WR_EX_WITH_COMP_SIGNAL_WITH_DATA);
+				max_inline = efadv_get_max_inline_data(
+					init_attr_ex->pd->context, &inl_attr,
+					sizeof(inl_attr));
+				if (max_inline >= 0 &&
+				    init_attr_ex->cap.max_inline_data >
+					    (uint32_t) max_inline) {
+					EFA_INFO(FI_LOG_EP_CTRL,
+						 "Clamping max_inline_data %u -> %d "
+						 "for completion-with-signal QP\n",
+						 init_attr_ex->cap.max_inline_data,
+						 max_inline);
+					init_attr_ex->cap.max_inline_data =
+						max_inline;
+				}
+
+				/*
+				 * Wide (128-byte) WQEs consume more send-queue
+				 * memory per entry, so the maximum SQ depth is
+				 * lower with signals on. Clamp max_send_wr to the
+				 * signal-mode SQ depth or QP creation fails with
+				 * -EINVAL.
+				 */
+				{
+					struct efadv_sq_depth_attr sq_attr = {0};
+					int max_sq;
+
+					/*
+					 * Query the signal-mode SQ depth. Use
+					 * minimal SGE values (1) which are always
+					 * valid; the depth limit reflects the wide
+					 * WQE size, not the SGE count.
+					 */
+					sq_attr.flags = EFADV_SQ_DEPTH_ATTR_COMP_SIGNAL;
+					sq_attr.max_send_sge = 1;
+					sq_attr.max_rdma_sge = 1;
+					sq_attr.max_inline_data =
+						init_attr_ex->cap.max_inline_data;
+					max_sq = efadv_get_max_sq_depth(
+						init_attr_ex->pd->context,
+						&sq_attr, sizeof(sq_attr));
+					if (max_sq > 0 &&
+					    init_attr_ex->cap.max_send_wr >
+						    (uint32_t) max_sq) {
+						EFA_INFO(FI_LOG_EP_CTRL,
+							 "Clamping max_send_wr %u -> %d "
+							 "for completion-with-signal QP\n",
+							 init_attr_ex->cap.max_send_wr,
+							 max_sq);
+						init_attr_ex->cap.max_send_wr =
+							max_sq;
+					}
+				}
+			}
+		}
+#endif
 		(*qp)->ibv_qp = efadv_create_qp_ex(
 			init_attr_ex->pd->context, init_attr_ex, &efa_attr,
 			sizeof(struct efadv_qp_init_attr));

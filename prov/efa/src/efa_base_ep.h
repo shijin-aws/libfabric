@@ -60,6 +60,20 @@ struct efa_qp {
 	bool unsolicited_write_recv_enabled;
 };
 
+/*
+ * Per-work-request completion-signal descriptor, passed by the message-form
+ * data path (fi_writemsg/fi_sendmsg with FI_EFA_EXTENDED_MSG) down to the WQE
+ * builder. Built on the stack for the current WR; a NULL pointer or
+ * feature_bits == 0 means no signals to attach. Not persistent state.
+ */
+struct efa_comp_signal_wr {
+	uint64_t feature_bits;
+	uint32_t local_signal_id;
+	uint32_t remote_signal_id;
+	uint32_t local_signal_data;
+	uint32_t remote_signal_data;
+};
+
 struct efa_av;
 
 struct efa_recv_wr {
@@ -96,6 +110,11 @@ struct efa_base_ep {
 	size_t inject_rma_size;		/**< #FI_OPT_INJECT_RMA_SIZE */
 
 	bool use_unsolicited_write_recv;
+
+	/* Whether completion-with-signal support is enabled on this endpoint
+	 * (via FI_OPT_EFA_COMP_SIGNAL). Must be set before the endpoint is
+	 * enabled because it governs QP send-queue allocation (wide WQEs). */
+	bool comp_signal_enabled;
 
 	/* Pool and list for outstanding operation entries. Shared by both
 	 * efa-direct (efa_direct_ope) and efa-rdm (efa_rdm_ope) endpoints;

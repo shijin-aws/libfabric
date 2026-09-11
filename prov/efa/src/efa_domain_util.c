@@ -126,6 +126,12 @@ int efa_domain_init_base(struct efa_domain *efa_domain,
 	if (efa_env.track_mr)
 		dlist_init(&efa_domain->base_ep_list);
 
+#if HAVE_EFADV_COMP_SIGNAL
+	dlist_init(&efa_domain->comp_mem_op_list);
+	dlist_init(&efa_domain->comp_signal_list);
+	ofi_mutex_init(&efa_domain->comp_signal_lock);
+#endif
+
 	return 0;
 }
 
@@ -180,6 +186,41 @@ void efa_domain_destruct(struct efa_domain *efa_domain)
 
 	efa_domain_remove_from_global_list(efa_domain);
 	efa_domain_cleanup_ah_map(efa_domain);
+
+#if HAVE_EFADV_COMP_SIGNAL
+	{
+		struct efa_comp_signal_entry *sig_entry;
+		struct efa_comp_mem_op_entry *mem_entry;
+		struct dlist_entry *sig_tmp, *mem_tmp;
+
+		/* Destroy signals before mem-ops (signals reference mem-ops). */
+		dlist_foreach_container_safe(&efa_domain->comp_signal_list,
+					     struct efa_comp_signal_entry,
+					     sig_entry, entry, sig_tmp) {
+			EFA_WARN(FI_LOG_DOMAIN,
+				 "Completion signal %u not deregistered before "
+				 "domain close! Cleaning up ...\n",
+				 sig_entry->signal_id);
+			dlist_remove(&sig_entry->entry);
+			efadv_destroy_comp_signal(sig_entry->signal);
+			free(sig_entry);
+		}
+
+		dlist_foreach_container_safe(&efa_domain->comp_mem_op_list,
+					     struct efa_comp_mem_op_entry,
+					     mem_entry, entry, mem_tmp) {
+			EFA_WARN(FI_LOG_DOMAIN,
+				 "Completion mem op %u not destroyed before "
+				 "domain close! Cleaning up ...\n",
+				 mem_entry->comp_mem_id);
+			dlist_remove(&mem_entry->entry);
+			efadv_destroy_comp_mem_op(mem_entry->mem_op);
+			free(mem_entry);
+		}
+
+		ofi_mutex_destroy(&efa_domain->comp_signal_lock);
+	}
+#endif
 
 	efa_mr_pool_destroy(efa_domain);
 

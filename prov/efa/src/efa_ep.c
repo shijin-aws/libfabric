@@ -12,6 +12,53 @@
 extern struct fi_ops_msg efa_msg_ops;
 extern struct fi_ops_rma efa_rma_ops;
 
+/**
+ * @brief Query the inline-data size actually available on this endpoint.
+ *
+ * When completion-with-signal is enabled the QP uses wide WQEs whose signal
+ * feature blocks reduce the inline region below the device-advertised
+ * inline_buf_size_ex. This queries the effective inline size for the endpoint's
+ * QP configuration via the efadv_get_max_inline_data verb. Falls back to the
+ * endpoint's configured inject size when the verb is unavailable or the
+ * endpoint has no QP yet.
+ *
+ * @param[in]  ep		efa base endpoint
+ * @param[out] inline_size	effective inline size in bytes
+ * @return 0 on success, negative fi errno on failure
+ */
+static int efa_ep_query_inline_size(struct efa_base_ep *ep, size_t *inline_size)
+{
+#if HAVE_EFADV_COMP_SIGNAL
+	struct efadv_inline_data_attr attr = {0};
+	int ret;
+
+	attr.qp_flags = 0;
+	attr.wr_flags = 0;
+	if (ep->comp_signal_enabled) {
+		attr.wr_flags |= EFADV_WR_EX_WITH_COMP_SIGNAL;
+		attr.wr_flags |= EFADV_WR_EX_WITH_COMP_SIGNAL_WITH_DATA;
+	}
+
+	/* Returns the max inline data (>= 0) or a negative errno. */
+	ret = efadv_get_max_inline_data(ep->domain->device->ibv_ctx, &attr,
+					sizeof(attr));
+	if (ret < 0) {
+		EFA_INFO(FI_LOG_EP_CTRL,
+			 "efadv_get_max_inline_data failed (%d); reporting "
+			 "configured inject size\n", ret);
+		*inline_size = ep->inject_msg_size;
+		return FI_SUCCESS;
+	}
+
+	/* The effective inject size is capped by the endpoint configuration. */
+	*inline_size = MIN((size_t) ret, ep->inject_msg_size);
+	return FI_SUCCESS;
+#else
+	*inline_size = ep->inject_msg_size;
+	return FI_SUCCESS;
+#endif
+}
+
 static int efa_ep_getopt(fid_t fid, int level, int optname,
 			 void *optval, size_t *optlen)
 {
@@ -51,13 +98,13 @@ static int efa_ep_getopt(fid_t fid, int level, int optname,
 	case FI_OPT_INJECT_MSG_SIZE:
 		if (*optlen < sizeof (size_t))
 			return -FI_ETOOSMALL;
-		*(size_t *) optval = ep->inject_msg_size;
+		efa_ep_query_inline_size(ep, (size_t *) optval);
 		*optlen = sizeof (size_t);
 		break;
 	case FI_OPT_INJECT_RMA_SIZE:
 		if (*optlen < sizeof (size_t))
 			return -FI_ETOOSMALL;
-		*(size_t *) optval = ep->inject_rma_size;
+		efa_ep_query_inline_size(ep, (size_t *) optval);
 		*optlen = sizeof (size_t);
 		break;
 	/* Emulated read/write is NOT used for efa direct ep */
@@ -181,6 +228,28 @@ static int efa_ep_setopt(fid_t fid, int level, int optname, const void *optval, 
 			return -FI_EOPNOTSUPP;
 		}
 		ep->use_unsolicited_write_recv = *(bool *)optval;
+		break;
+	case FI_OPT_EFA_COMP_SIGNAL:
+		if (optlen != sizeof(bool))
+			return -FI_EINVAL;
+		/*
+		 * Signal support governs how the send queue is allocated
+		 * (wide 128-byte WQEs), so it must be set before the endpoint
+		 * is enabled (before the QP is created).
+		 */
+		if (ep->efa_qp_enabled) {
+			EFA_WARN(FI_LOG_EP_CTRL,
+				 "The option FI_OPT_EFA_COMP_SIGNAL is required "
+				 "to be set before EP enabled\n");
+			return -FI_EINVAL;
+		}
+		if (*(bool *)optval && !efa_device_support_comp_signal()) {
+			EFA_WARN(FI_LOG_EP_CTRL,
+				 "Completion with signal is not supported by "
+				 "the device\n");
+			return -FI_EOPNOTSUPP;
+		}
+		ep->comp_signal_enabled = *(bool *)optval;
 		break;
 	default:
 		EFA_INFO(FI_LOG_EP_CTRL, "Unknown / unsupported endpoint option\n");
