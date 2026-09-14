@@ -5,6 +5,7 @@
 #define EFA_ABI_H
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -42,6 +43,17 @@ static_assert(offsetof(struct fi_efa_wq_attr, max_batch) ==
 static_assert(sizeof(struct fi_efa_wq_attr_2_3) <=
 		      sizeof(struct fi_efa_wq_attr),
 	      "struct fi_efa_wq_attr shapes must not shrink");
+
+/**
+ * @brief Whether the caller's version has completion actions
+ *
+ * @param api_version version the caller negotiated at fi_getinfo
+ * @return true if that version defines the completion action interface
+ */
+static inline bool efa_comp_action_api_available(uint32_t api_version)
+{
+	return FI_VERSION_GE(api_version, FI_VERSION(2, 8));
+}
 
 /**
  * @brief Size of the struct fi_efa_wq_attr a caller of this version allocated
