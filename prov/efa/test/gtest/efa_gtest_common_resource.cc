@@ -72,6 +72,15 @@ void efa_test_resource_construct_no_enable(struct efa_resource *resource,
 	ASSERT_NO_FATAL_FAILURE(efa_test_resource_open(resource));
 }
 
+void efa_test_resource_construct_no_enable_api_version(
+	struct efa_resource *resource, struct fi_info *hints,
+	uint32_t fi_version)
+{
+	ASSERT_NO_FATAL_FAILURE(efa_test_resource_getinfo_api_version(
+		resource, hints, fi_version));
+	ASSERT_NO_FATAL_FAILURE(efa_test_resource_open(resource));
+}
+
 void efa_test_resource_getinfo(struct efa_resource *resource,
 			       struct fi_info *hints)
 {

@@ -76,6 +76,14 @@ void efa_test_resource_construct_no_enable(struct efa_resource *resource,
 					   struct fi_info *hints);
 
 /**
+ * @brief Same as efa_test_resource_construct_no_enable but requests
+ * @p fi_version at fi_getinfo instead of the version the fabric name implies.
+ */
+void efa_test_resource_construct_no_enable_api_version(
+	struct efa_resource *resource, struct fi_info *hints,
+	uint32_t fi_version);
+
+/**
  * @brief Run only the fi_getinfo step of the construction above, leaving
  * resource->info for the test to inspect or modify before
  * efa_test_resource_open() creates the endpoint from it. Use this when a test
