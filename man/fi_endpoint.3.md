@@ -625,6 +625,24 @@ The following option levels and option names and parameters are defined.
   Providers that don't support this option will return -FI_ENOPROTOOPT. In that
   case, `tx_attr->inject_size` should be used.
 
+- *FI_OPT_TX_SIZE - size_t*
+: Define the size of the endpoint's transmit context, i.e. the number of
+  entries in the underlying transmit queue. The value is limited by the
+  endpoint's configuration and the provider's capabilities, and must be less
+  than or equal to `tx_attr->size`. This option only applies to the fi_getopt
+  call.
+  Providers that don't support this option will return -FI_ENOPROTOOPT. In that
+  case, `tx_attr->size` should be used.
+
+- *FI_OPT_RX_SIZE - size_t*
+: Define the size of the endpoint's receive context, i.e. the number of
+  entries in the underlying receive queue. The value is limited by the
+  endpoint's configuration and the provider's capabilities, and must be less
+  than or equal to `rx_attr->size`. This option only applies to the fi_getopt
+  call.
+  Providers that don't support this option will return -FI_ENOPROTOOPT. In that
+  case, `rx_attr->size` should be used.
+
 ## fi_tc_dscp_set
 
 This call converts a DSCP defined value into a libfabric traffic class value.
