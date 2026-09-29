@@ -34,6 +34,7 @@ enum {
 
 enum fi_efa_wq_caps {
     FI_EFA_WQ_CAPS_64_BIT_REQ_ID = 1 << 0,
+    FI_EFA_WQ_CAPS_COMP_ACTION_WITH_DATA = 1 << 1,
 };
 
 struct fi_efa_wq_attr {
@@ -43,6 +44,13 @@ struct fi_efa_wq_attr {
     uint32_t *doorbell;
     uint32_t max_batch;
     uint16_t caps;
+    /*
+     * Byte offset of the completion action block within a send queue entry.
+     * Only meaningful when caps carries FI_EFA_WQ_CAPS_COMP_ACTION_WITH_DATA;
+     * 0 otherwise. Where the block lives is the device's to say, so use this
+     * rather than deriving it from the queue entry layout.
+     */
+    uint16_t comp_action_with_data_block_offset;
 };
 
 struct fi_efa_cq_attr {
