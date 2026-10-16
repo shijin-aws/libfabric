@@ -612,7 +612,7 @@ void efa_rdm_ep_queue_rnr_pkt(struct efa_rdm_ep *ep, struct efa_rdm_pke *pkt_ent
 							  rand() %
 							  random_max_timeout);
 
-		EFA_DBG(FI_LOG_EP_DATA,
+		EFA_WARN(FI_LOG_EP_DATA,
 			"initializing backoff timeout for peer fi_addr: "
 			"%" PRIu64 " implicit fi_addr: %" PRIu64
 			" timeout: %ld rnr_queued_pkts: %d\n",
@@ -621,7 +621,7 @@ void efa_rdm_ep_queue_rnr_pkt(struct efa_rdm_ep *ep, struct efa_rdm_pke *pkt_ent
 	} else {
 		peer->rnr_backoff_wait_time = MIN(peer->rnr_backoff_wait_time * 2,
 						  efa_env.rnr_backoff_wait_time_cap);
-		EFA_DBG(FI_LOG_EP_DATA,
+		EFA_WARN(FI_LOG_EP_DATA,
 			"increasing backoff timeout for peer fi_addr: %" PRIu64
 			" implicit fi_addr %" PRIu64
 			" to %ld rnr_queued_pkts: %d\n",
