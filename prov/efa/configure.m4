@@ -97,6 +97,8 @@ AC_DEFUN([FI_EFA_CONFIGURE],[
 	have_ibv_query_comp_cntr_caps=0
 	have_efadv_create_mem_comp_action=0
 	have_efadv_destroy_comp_action=0
+	have_efadv_wqe_blocks=0
+	have_efadv_mem_modify_size=0
 	have_efadv_get_max_inline_data=0
 	have_efadv_action_block_offset=0
 	have_efadv_comp_action=0
@@ -277,11 +279,24 @@ AC_DEFUN([FI_EFA_CONFIGURE],[
 			[[#include <infiniband/efadv.h>]])
 
 		dnl The direct data path writes the action block at the offset
-		dnl efadv_query_qp_wqs reports, so the member is required.
+		dnl efadv_query_qp_wqs reports when wqe_blocks says the queue has
+		dnl one, so both members are required.
 		AC_CHECK_MEMBER(
 			[struct efadv_wq_attr.comp_action_with_data_block_offset],
 			[have_efadv_action_block_offset=1],
 			[have_efadv_action_block_offset=0],
+			[[#include <infiniband/efadv.h>]])
+
+		AC_CHECK_MEMBER([struct efadv_wq_attr.wqe_blocks],
+			[have_efadv_wqe_blocks=1],
+			[have_efadv_wqe_blocks=0],
+			[[#include <infiniband/efadv.h>]])
+
+		dnl Earlier drafts of the action interface named this op_mem_size.
+		AC_CHECK_MEMBER(
+			[struct efadv_mem_comp_action_init_attr.mem_modify_size],
+			[have_efadv_mem_modify_size=1],
+			[have_efadv_mem_modify_size=0],
 			[[#include <infiniband/efadv.h>]])
 
 		AC_CHECK_DECL([efadv_get_max_inline_data],
@@ -379,7 +394,9 @@ AC_DEFUN([FI_EFA_CONFIGURE],[
 	AS_IF([test "$have_efadv_create_mem_comp_action" = "1" -a \
 		    "$have_efadv_destroy_comp_action" = "1" -a \
 		    "$have_efadv_get_max_inline_data" = "1" -a \
-		    "$have_efadv_action_block_offset" = "1"],
+		    "$have_efadv_action_block_offset" = "1" -a \
+		    "$have_efadv_wqe_blocks" = "1" -a \
+		    "$have_efadv_mem_modify_size" = "1"],
 		[have_efadv_comp_action=1],
 		[have_efadv_comp_action=0])
 	AC_DEFINE_UNQUOTED([HAVE_EFADV_COMP_ACTION],
