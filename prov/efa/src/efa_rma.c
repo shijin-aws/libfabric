@@ -203,17 +203,23 @@ ssize_t efa_rma_read(struct fid_ep *ep_fid, void *buf, size_t len, void *desc,
  *
  * @param base_ep endpoint the WR is posted on
  * @param emsg    the caller's extended message descriptor
+ * @param flags   the WR's operation flags
  * @param sig[out] per-WR action descriptor handed to the WQE builders
  * @return 0 on success, otherwise a negative libfabric error code.
  */
 static inline int
 efa_rma_init_comp_action_wr(struct efa_base_ep *base_ep,
-			    const struct fi_efa_msg_rma *emsg,
+			    const struct fi_efa_msg_rma *emsg, uint64_t flags,
 			    struct efa_comp_action_wr *sig)
 {
 	uint64_t fb = emsg->feature_bits;
 	uint64_t unknown =
 		fb & ~(uint64_t) EFA_EXTENDED_MSG_SUPPORTED_FEATURE_BITS;
+	uint32_t supp_ops =
+		base_ep->domain->device->efa_attr.comp_action_supp_ops;
+	uint32_t remote_op = (flags & FI_REMOTE_CQ_DATA) ?
+		EFADV_DEVICE_ATTR_COMP_ACTION_SUPPORTED_OP_REMOTE_RDMA_WRITE_IMM :
+		EFADV_DEVICE_ATTR_COMP_ACTION_SUPPORTED_OP_REMOTE_RDMA_WRITE;
 
 	/*
 	 * Checked before the endpoint state so a descriptor built against a
@@ -244,6 +250,20 @@ efa_rma_init_comp_action_wr(struct efa_base_ep *base_ep,
 			 "FI_EFA_*_ACTION_VALUE set without the corresponding "
 			 "FI_EFA_*_ACTION_ID\n");
 		return -FI_EINVAL;
+	}
+
+	/*
+	 * The local action fires on the write's completion at the initiator,
+	 * the remote one on its completion at the target.
+	 */
+	if (((fb & FI_EFA_LOCAL_ACTION_ID) &&
+	     !(supp_ops & EFADV_DEVICE_ATTR_COMP_ACTION_SUPPORTED_OP_RDMA_WRITE)) ||
+	    ((fb & FI_EFA_REMOTE_ACTION_ID) && !(supp_ops & remote_op))) {
+		EFA_WARN(FI_LOG_EP_DATA,
+			 "The device cannot trigger the requested completion "
+			 "action on this RDMA write (supported ops 0x%x)\n",
+			 supp_ops);
+		return -FI_EOPNOTSUPP;
 	}
 
 	sig->feature_bits = fb;
@@ -301,7 +321,7 @@ static inline ssize_t efa_rma_post_write(struct efa_base_ep *base_ep,
 		const struct fi_efa_msg_rma *emsg =
 			(const struct fi_efa_msg_rma *) msg;
 
-		err = efa_rma_init_comp_action_wr(base_ep, emsg, &sig);
+		err = efa_rma_init_comp_action_wr(base_ep, emsg, flags, &sig);
 		if (err)
 			goto out_err;
 		sig_ptr = &sig;

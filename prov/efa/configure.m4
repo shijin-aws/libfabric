@@ -99,6 +99,7 @@ AC_DEFUN([FI_EFA_CONFIGURE],[
 	have_efadv_destroy_comp_action=0
 	have_efadv_wqe_blocks=0
 	have_efadv_mem_modify_size=0
+	have_efadv_comp_action_supp_ops=0
 	have_efadv_get_max_inline_data=0
 	have_efadv_action_block_offset=0
 	have_efadv_comp_action=0
@@ -292,6 +293,11 @@ AC_DEFUN([FI_EFA_CONFIGURE],[
 			[have_efadv_wqe_blocks=0],
 			[[#include <infiniband/efadv.h>]])
 
+		AC_CHECK_MEMBER([struct efadv_device_attr.comp_action_supp_ops],
+			[have_efadv_comp_action_supp_ops=1],
+			[have_efadv_comp_action_supp_ops=0],
+			[[#include <infiniband/efadv.h>]])
+
 		dnl Earlier drafts of the action interface named this op_mem_size.
 		AC_CHECK_MEMBER(
 			[struct efadv_mem_comp_action_init_attr.mem_modify_size],
@@ -396,7 +402,8 @@ AC_DEFUN([FI_EFA_CONFIGURE],[
 		    "$have_efadv_get_max_inline_data" = "1" -a \
 		    "$have_efadv_action_block_offset" = "1" -a \
 		    "$have_efadv_wqe_blocks" = "1" -a \
-		    "$have_efadv_mem_modify_size" = "1"],
+		    "$have_efadv_mem_modify_size" = "1" -a \
+		    "$have_efadv_comp_action_supp_ops" = "1"],
 		[have_efadv_comp_action=1],
 		[have_efadv_comp_action=0])
 	AC_DEFINE_UNQUOTED([HAVE_EFADV_COMP_ACTION],

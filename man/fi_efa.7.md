@@ -435,6 +435,11 @@ Constraints:
   and the endpoint is never action enabled, so the flag is rejected with
   *-FI_EINVAL* by the rule above.
 - Local and remote actions are independent: attach either or both.
+- The device decides which completions can trigger an action. A local action
+  fires on the write's completion at the initiator, a remote one on its
+  completion at the target, with or without *FI_REMOTE_CQ_DATA*. An action the
+  device cannot trigger for the write it is attached to is rejected with
+  *-FI_EOPNOTSUPP*, and the write is not posted.
 - *feature_bits* beyond the four bits defined above are rejected with
   *-FI_EOPNOTSUPP*. This is how the descriptor stays compatible across versions,
   and it is why the gated members are append-only: a new bit only ever gates a
