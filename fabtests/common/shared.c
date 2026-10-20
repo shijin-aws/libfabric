@@ -50,6 +50,7 @@
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_atomic.h>
 #include <rdma/fi_collective.h>
+#include <rdma/fi_ext.h>
 
 #include "shared.h"
 #include "hmem.h"
@@ -1539,6 +1540,23 @@ int ft_enable_ep(struct fid_ep *bind_ep, struct fid_eq *bind_eq, struct fid_av *
 		}
 	}
 
+	/*
+	 * FT_RNR_RETRY=<n>: set the EFA device RNR retry count, the same call
+	 * as prov/efa/src/efa_rnr_shared.c. Unset: provider default.
+	 */
+	if (getenv("FT_RNR_RETRY") && fi->fabric_attr->prov_name &&
+	    !strncasecmp(fi->fabric_attr->prov_name, "efa", 3)) {
+		size_t rnr_retry = strtoul(getenv("FT_RNR_RETRY"), NULL, 0);
+
+		ret = fi_setopt(&bind_ep->fid, FI_OPT_ENDPOINT,
+				FI_OPT_EFA_RNR_RETRY, &rnr_retry,
+				sizeof(rnr_retry));
+		if (ret) {
+			FT_PRINTERR("fi_setopt(FI_OPT_EFA_RNR_RETRY)", ret);
+			return ret;
+		}
+	}
+
 	ret = fi_enable(bind_ep);
 	if (ret) {
 		FT_PRINTERR("fi_enable", ret);
@@ -2771,6 +2789,67 @@ ft_tag_is_valid(struct fid_cq * cq, struct fi_cq_err_entry *comp, uint64_t tag)
 	return valid;
 }
 /*
+ * Receive pacing, receiver side only (the RX CQ in the spin poller):
+ *
+ * FT_RX_POLL_GAP_US=<us>: when a poll returns a completion after an empty
+ *   poll, wait <us> before draining what is available, so the receiver
+ *   consumes slower than the sender writes and its receive queue runs dry.
+ * FT_RX_STALL="<period_s> <stall_ms>": stop polling (so no provider
+ *   progress and no receive reposting) for <stall_ms> every <period_s>,
+ *   starting at a random point in each process's cycle.
+ *
+ * With neither set the poller behaves as before.
+ */
+static long ft_rx_gap_us = -1;
+static double ft_rx_stall_period, ft_rx_stall_sec, ft_rx_next_stall;
+static bool ft_rx_draining;
+
+static double ft_now_sec(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+static void ft_rx_pacing_init(void)
+{
+	char *env;
+	long period_s = 0, stall_ms = 0;
+
+	if (ft_rx_gap_us >= 0)
+		return;
+
+	env = getenv("FT_RX_POLL_GAP_US");
+	ft_rx_gap_us = env ? strtol(env, NULL, 0) : 0;
+
+	env = getenv("FT_RX_STALL");
+	if (env && sscanf(env, "%ld %ld", &period_s, &stall_ms) == 2 &&
+	    period_s > 0 && stall_ms > 0) {
+		ft_rx_stall_period = period_s;
+		ft_rx_stall_sec = stall_ms / 1000.0;
+		srand(getpid() ^ (unsigned) time(NULL));
+		ft_rx_next_stall = ft_now_sec() +
+				   (rand() % (period_s * 1000)) / 1000.0;
+	}
+}
+
+static void ft_rx_pacing_stall(void)
+{
+	double now;
+
+	if (ft_rx_stall_period <= 0)
+		return;
+	now = ft_now_sec();
+	if (now < ft_rx_next_stall)
+		return;
+	usleep((useconds_t) (ft_rx_stall_sec * 1e6));
+	ft_rx_next_stall += ft_rx_stall_period;
+	if (ft_rx_next_stall < ft_now_sec())
+		ft_rx_next_stall = ft_now_sec() + ft_rx_stall_period;
+}
+
+/*
  * fi_cq_err_entry can be cast to any CQ entry format.
  */
 static int ft_spin_for_comp(struct fid_cq *cq, uint64_t *cur,
@@ -2790,8 +2869,21 @@ static int ft_spin_for_comp(struct fid_cq *cq, uint64_t *cur,
 	 * once and can increment *cur causing an underflow in the
 	 * loop condition.
 	 */
+	if (cq == rxcq)
+		ft_rx_pacing_init();
+
 	do {
+		if (cq == rxcq)
+			ft_rx_pacing_stall();
 		ret = fi_cq_read(cq, &comp, 1);
+		if (cq == rxcq && ft_rx_gap_us > 0) {
+			if (ret > 0 && !ft_rx_draining) {
+				usleep(ft_rx_gap_us);
+				ft_rx_draining = true;
+			} else if (ret == -FI_EAGAIN) {
+				ft_rx_draining = false;
+			}
+		}
 		if (ret > 0) {
 			if (timeout >= 0)
 				clock_gettime(CLOCK_MONOTONIC, &a);
