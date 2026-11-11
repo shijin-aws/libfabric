@@ -48,6 +48,7 @@ struct efa_env efa_env = {
 	.use_hw_cntr = 1,
 	.use_sq_req_id_64_bit = 1,
 	.enable_comp_action = 0,
+	.lockless_cq_read = 0,
 	.rdm_force_send_proto = NULL,
 	.max_queued_copy = EFA_RDM_MAX_QUEUED_COPY,
 };
@@ -173,6 +174,7 @@ void efa_env_param_get(void)
 	}
 	fi_param_get_bool(&efa_prov, "use_data_path_direct", &efa_env.use_data_path_direct);
 	fi_param_get_bool(&efa_prov, "support_av_map", &efa_env.support_av_map);
+	fi_param_get_bool(&efa_prov, "lockless_cq_read", &efa_env.lockless_cq_read);
 	fi_param_get_bool(&efa_prov, "track_mr", &efa_env.track_mr);
 	fi_param_get_bool(&efa_prov, "strict_mode", &efa_env.strict_mode);
 
@@ -297,6 +299,13 @@ void efa_env_define()
 		"the CQ polling and TX/RX submissions, when it's available. Setting this variable as 0"
 		"will disable this feature (Default: %d)",
 		efa_env.use_data_path_direct);
+	fi_param_define(&efa_prov, "lockless_cq_read", FI_PARAM_BOOL,
+			"Read efa and efa-direct CQs without taking the CQ endpoint list lock, "
+			"regardless of the threading and progress model. Unsafe unless the "
+			"application serializes all reads of a CQ and never binds, enables, "
+			"or closes an endpoint bound to a CQ while that CQ, or a counter that "
+			"polls it, is being read. See fi_efa(7). (Default: %d)",
+			efa_env.lockless_cq_read);
 	fi_param_define(&efa_prov, "support_av_map", FI_PARAM_BOOL,
 			"Support FI_AV_MAP when the application requests it. "
 			"Setting this variable to 0 makes the provider use "

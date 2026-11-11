@@ -97,6 +97,14 @@ struct efa_env {
 	 */
 	int enable_comp_action;
 	/**
+	 * Skip util_cq.ep_list_lock when reading efa and efa-direct CQs
+	 * (FI_EFA_LOCKLESS_CQ_READ, default false), regardless of the
+	 * threading and progress model. The application must serialize all
+	 * reads of a CQ and never bind, enable, or close an endpoint bound to
+	 * a CQ while that CQ, or a counter polling it, is being read.
+	 */
+	int lockless_cq_read;
+	/**
 	 * Name of the RDM send protocol that selection is pinned to, as set by
 	 * FI_EFA_RDM_FORCE_SEND_PROTO, or NULL to use the default protocol
 	 * selection logic.

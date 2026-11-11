@@ -50,6 +50,39 @@ extern struct fi_ops_cq efa_cq_bypass_util_cq_ops;
 
 extern struct fi_ops efa_cq_fi_ops;
 
+/**
+ * @brief Take util_cq.ep_list_lock for a CQ read
+ *
+ * Skipped when FI_EFA_LOCKLESS_CQ_READ is set, for both efa-direct and efa
+ * (RDM) CQs, regardless of the threading and progress model. The application
+ * then takes over what the lock provides: it serializes all reads of the CQ,
+ * and never binds, enables, or closes an endpoint bound to the CQ while the
+ * CQ is being read. See FI_EFA_LOCKLESS_CQ_READ in fi_efa(7). Control paths
+ * (endpoint bind/enable/close, trywait) always take the lock.
+ */
+static inline void efa_cq_read_lock(struct efa_cq *cq)
+	OFI_TSA_ACQUIRE(efa_cq_ep_list_lock_sym)
+	OFI_TSA_NO_ANALYSIS // clang cannot reason about conditional locking
+{
+	if (!efa_env.lockless_cq_read)
+		ofi_genlock_lock(&cq->util_cq.ep_list_lock);
+}
+
+/* True if a CQ read may proceed: either the lock is held or reads are lockless */
+static inline bool efa_cq_read_lock_held(struct efa_cq *cq)
+{
+	return efa_env.lockless_cq_read ||
+	       EFA_GENLOCK_HELD(&cq->util_cq.ep_list_lock, efa_cq_ep_list_lock_sym);
+}
+
+static inline void efa_cq_read_unlock(struct efa_cq *cq)
+	OFI_TSA_RELEASE(efa_cq_ep_list_lock_sym)
+	OFI_TSA_NO_ANALYSIS // clang cannot reason about conditional locking
+{
+	if (!efa_env.lockless_cq_read)
+		ofi_genlock_unlock(&cq->util_cq.ep_list_lock);
+}
+
 static inline void efa_cq_lock_ep_list(struct efa_base_ep *base_ep)
 	OFI_TSA_ACQUIRE(efa_cq_ep_list_lock_sym) 
 	OFI_TSA_NO_ANALYSIS // clang cannot reason about conditional locking

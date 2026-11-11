@@ -866,7 +866,7 @@ ssize_t efa_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count,
 		return -FI_EAGAIN;
 
 	/* Acquire the lock to prevent race conditions when qp_table is being updated */
-	EFA_GENLOCK_LOCK(&efa_cq->util_cq.ep_list_lock, efa_cq_ep_list_lock_sym);
+	efa_cq_read_lock(efa_cq);
 
 	/* If there are cqes in the util cq (due to the cq flush in ep close or efa_trywait) */
 	if (!ofi_cirque_isempty(efa_cq->util_cq.cirq)) {
@@ -914,7 +914,7 @@ ssize_t efa_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count,
 	efa_cq_end_poll(ibv_cq);
 
 out:
-	EFA_GENLOCK_UNLOCK(&efa_cq->util_cq.ep_list_lock, efa_cq_ep_list_lock_sym);
+	efa_cq_read_unlock(efa_cq);
 	return num_cqe ? num_cqe : err;
 }
 
@@ -927,7 +927,7 @@ ssize_t efa_cq_readerr(struct fid_cq *cq_fid, struct fi_cq_err_entry *buf,
 
 	efa_cq = container_of(cq_fid, struct efa_cq, util_cq.cq_fid);
 
-	EFA_GENLOCK_LOCK(&efa_cq->util_cq.ep_list_lock, efa_cq_ep_list_lock_sym);
+	efa_cq_read_lock(efa_cq);
 
 	ibv_cq = &efa_cq->ibv_cq;
 
@@ -956,7 +956,7 @@ ssize_t efa_cq_readerr(struct fid_cq *cq_fid, struct fi_cq_err_entry *buf,
 	ret = 1;
 
 out:
-	EFA_GENLOCK_UNLOCK(&efa_cq->util_cq.ep_list_lock, efa_cq_ep_list_lock_sym);
+	efa_cq_read_unlock(efa_cq);
 	return ret;
 }
 
@@ -992,7 +992,10 @@ void efa_cq_progress(struct util_cq *cq)
 	if (efa_cq_device_is_empty_unlocked(&efa_cq->ibv_cq))
 		return;
 
-	efa_cq_progress_locked(efa_cq);
+	/* Acquire the lock to prevent race conditions when qp_table is being updated */
+	efa_cq_read_lock(efa_cq);
+	(void) efa_cq_poll_ibv_cq(efa_env.efa_cq_read_size, &efa_cq->ibv_cq);
+	efa_cq_read_unlock(efa_cq);
 }
 
 int efa_cq_close(fid_t fid)

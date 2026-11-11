@@ -1334,6 +1334,35 @@ minimum rx size, see FI_EFA_RX_SIZE.
 : Use the direct data path implementation that bypasses rdma-core on data path, including the CQ polling and TX/RX submissions, when it's available.
 Setting this variable as 0 will disable this feature (Default: true).
 
+*FI_EFA_LOCKLESS_CQ_READ*
+
+: Read completion queues of both the efa and efa-direct fabrics without taking
+the CQ's endpoint list lock (Default: false). That lock serializes reads of a
+CQ, and keeps completion processing from racing with an endpoint bound to the
+CQ being bound, enabled, or closed, which updates the table used to map each
+completion to its endpoint. When this variable is set, the lock is skipped on
+every CQ read path (*fi_cq_read*, *fi_cq_readfrom*, *fi_cq_readerr*, and
+counter progress) regardless of the threading and progress models the
+application requested, and the application takes over that responsibility.
+It must guarantee that:
+
+  - All reads of a given CQ, including counter reads that progress it, are
+    serialized. This holds even with *FI_THREAD_SAFE*. On the efa fabric,
+    reading a CQ also polls the other CQ of each endpoint bound to it, so
+    reads of CQs that share an endpoint must be serialized with each other.
+  - No endpoint bound to a CQ is bound, enabled, or closed while that CQ, or a
+    counter that polls it, is being read.
+
+Endpoint creation and teardown on other CQs, memory registration, and address
+vector operations are unaffected and may still run concurrently. Endpoint
+binding, enabling, and closing, and *fi_trywait*, still take the lock.
+
+This variable bypasses the provider's thread safety on the CQ read path and
+should only be set by applications whose threading model is known to meet the
+requirements above. Violating them can result in use-after-free of endpoint
+resources, completions reported for the wrong endpoint or lost, corrupted CQ
+state, or crashes, and such failures may be intermittent and hard to diagnose.
+
 *FI_EFA_SUPPORT_AV_MAP*
 
 : Support *FI_AV_MAP* when the application requests it. Setting this variable to 0
