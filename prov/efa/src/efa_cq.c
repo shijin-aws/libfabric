@@ -547,6 +547,21 @@ void efa_cq_signal_fini(struct efa_cq *cq)
 }
 
 /**
+ * @brief Poll the device CQ into the util CQ under ep_list_lock
+ *
+ * Always takes the lock, so it also acts as a full barrier before the poll.
+ *
+ * @param[in]	efa_cq	EFA CQ to poll
+ */
+static void efa_cq_progress_locked(struct efa_cq *efa_cq)
+{
+	/* Acquire the lock to prevent race conditions when qp_table is being updated */
+	EFA_GENLOCK_LOCK(&efa_cq->util_cq.ep_list_lock, efa_cq_ep_list_lock_sym);
+	(void) efa_cq_poll_ibv_cq(efa_env.efa_cq_read_size, &efa_cq->ibv_cq);
+	EFA_GENLOCK_UNLOCK(&efa_cq->util_cq.ep_list_lock, efa_cq_ep_list_lock_sym);
+}
+
+/**
  * @brief Try to wait on CQ - check if ready for blocking
  *
  * @param[in] cq EFA completion queue
@@ -586,8 +601,12 @@ int efa_cq_trywait(struct efa_cq *cq)
 		return ret;
 	}
 
-	/* Fetch any completions that we might have missed while rearming */
-	efa_cq_progress(&cq->util_cq);
+	/*
+	 * Fetch any completions that we might have missed while rearming.
+	 * Use the locked poll: its lock acquire orders the poll after the
+	 * arm, which a lock-free emptiness check would not.
+	 */
+	efa_cq_progress_locked(cq);
 
 	return ofi_cirque_isempty(cq->util_cq.cirq) ? FI_SUCCESS : -FI_EAGAIN;
 }
@@ -795,6 +814,38 @@ static inline fi_addr_t efa_cq_get_src_addr(struct efa_ibv_cq *ibv_cq, int opcod
 	}
 }
 
+/**
+ * @brief Lock-free check that the device CQ has nothing to poll
+ *
+ * True only when no poll was left active by an error CQE and the device CQ
+ * has no new entry. These fields are updated under ep_list_lock, and a
+ * concurrent EP close (which drains the CQ) can make them momentarily
+ * stale. A stale "not empty" takes the lock and finds nothing; a stale
+ * "empty" skips one poll and the next read picks the entry up. The check
+ * never touches qp_table or a QP, so it cannot race with QP destruction.
+ */
+static inline bool efa_cq_device_is_empty_unlocked(struct efa_ibv_cq *ibv_cq)
+{
+	if (__atomic_load_n(&ibv_cq->poll_active, __ATOMIC_RELAXED))
+		return false;
+
+	return efa_ibv_cq_is_empty_unlocked(ibv_cq);
+}
+
+/**
+ * @brief Lock-free check that a CQ has nothing to read
+ *
+ * True only when the util CQ holds no entries and the device CQ has nothing
+ * to poll. See efa_cq_device_is_empty_unlocked().
+ */
+static inline bool efa_cq_is_empty_unlocked(struct efa_cq *efa_cq)
+{
+	if (!ofi_cirque_isempty(efa_cq->util_cq.cirq))
+		return false;
+
+	return efa_cq_device_is_empty_unlocked(&efa_cq->ibv_cq);
+}
+
 static
 ssize_t efa_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count,
 			fi_addr_t *src_addr)
@@ -809,6 +860,10 @@ ssize_t efa_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count,
 		return -FI_EAGAIN;
 
 	efa_cq = container_of(cq_fid, struct efa_cq, util_cq.cq_fid);
+
+	/* Most reads in a busy-poll loop find nothing; skip the lock for those */
+	if (efa_cq_is_empty_unlocked(efa_cq))
+		return -FI_EAGAIN;
 
 	/* Acquire the lock to prevent race conditions when qp_table is being updated */
 	EFA_GENLOCK_LOCK(&efa_cq->util_cq.ep_list_lock, efa_cq_ep_list_lock_sym);
@@ -933,10 +988,11 @@ void efa_cq_progress(struct util_cq *cq)
 {
 	struct efa_cq *efa_cq = container_of(cq, struct efa_cq, util_cq);
 
-	/* Acquire the lock to prevent race conditions when qp_table is being updated */
-	EFA_GENLOCK_LOCK(&cq->ep_list_lock, efa_cq_ep_list_lock_sym);
-	(void) efa_cq_poll_ibv_cq(efa_env.efa_cq_read_size, &efa_cq->ibv_cq);
-	EFA_GENLOCK_UNLOCK(&cq->ep_list_lock, efa_cq_ep_list_lock_sym);
+	/* Nothing to poll; skip the lock. ofi_cq_readfrom() still reads the util CQ */
+	if (efa_cq_device_is_empty_unlocked(&efa_cq->ibv_cq))
+		return;
+
+	efa_cq_progress_locked(efa_cq);
 }
 
 int efa_cq_close(fid_t fid)
